@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+
+.sidebar-item { @apply flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-lg transition-all cursor-pointer text-slate-300 hover:text-white hover:bg-white/10; }
+.sidebar-item.active { @apply bg-white/15 text-white; }
+
+.btn-primary { @apply px-4 py-2 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors; }
+.btn-success { @apply px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors; }
+.btn-danger { @apply px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors; }
+.btn-ghost { @apply px-4 py-2 bg-white text-slate-700 text-sm font-semibold rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors; }
+
+.stat-card { @apply bg-white rounded-2xl border border-slate-100 shadow-sm p-5; }
+.card { @apply bg-white rounded-2xl border border-slate-100 shadow-sm p-6; }
+
+.badge { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold; }
+.badge-green { @apply bg-emerald-50 text-emerald-700; }
+.badge-amber { @apply bg-amber-50 text-amber-700; }
+.badge-red { @apply bg-red-50 text-red-700; }
+.badge-blue { @apply bg-blue-50 text-blue-700; }
+.badge-purple { @apply bg-purple-50 text-purple-700; }
+.badge-gray { @apply bg-slate-100 text-slate-600; }
+
+.table-wrap { @apply overflow-x-auto; }
+table { @apply w-full; }
+th { @apply text-left text-xs font-bold text-slate-400 uppercase tracking-wider px-4 py-3 bg-slate-50 border-b border-slate-100; }
+td { @apply px-4 py-3 text-sm text-slate-700 border-b border-slate-50; }
+tr:last-child td { @apply border-b-0; }
+tr:hover td { @apply bg-slate-50/50; }
+
+input, select, textarea { @apply w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 bg-white transition; }
+label { @apply block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5; }
