@@ -9,19 +9,36 @@ const jwt = require('jsonwebtoken');
 const mysql = require('mysql2/promise');
 
 const app = express();
-app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'], credentials: true }));
+app.use(cors({ 
+  origin: [
+    'http://localhost:5173', 
+    'http://localhost:5174', 
+    'http://localhost:5175',
+    'https://client-af1k9zq7z-canamprojects-projects.vercel.app',
+    'https://client-5de2r4tul-canamprojects-projects.vercel.app',
+    /\.vercel\.app$/
+  ], 
+  credentials: true 
+}));
 app.use(express.json());
 
 // ─── DB Pool ────────────────────────────────────────────────
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 3306,
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'testprep_platform',
-  waitForConnections: true,
-  connectionLimit: 10,
-});
+// Support Railway DATABASE_URL or individual env vars
+let dbConfig;
+if (process.env.DATABASE_URL || process.env.MYSQL_URL) {
+  dbConfig = process.env.DATABASE_URL || process.env.MYSQL_URL;
+} else {
+  dbConfig = {
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 3306,
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'testprep_platform',
+    waitForConnections: true,
+    connectionLimit: 10,
+  };
+}
+const pool = mysql.createPool(dbConfig);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'testprep_secret';
 
