@@ -24,21 +24,28 @@ app.use(express.json());
 
 // ─── DB Pool ────────────────────────────────────────────────
 // Support Railway DATABASE_URL or individual env vars
-let dbConfig;
-if (process.env.DATABASE_URL || process.env.MYSQL_URL) {
-  dbConfig = process.env.DATABASE_URL || process.env.MYSQL_URL;
-} else {
-  dbConfig = {
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 3306,
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'testprep_platform',
-    waitForConnections: true,
-    connectionLimit: 10,
-  };
+let pool;
+let dbConnected = false;
+
+function createPool() {
+  let dbConfig;
+  if (process.env.DATABASE_URL || process.env.MYSQL_URL) {
+    dbConfig = process.env.DATABASE_URL || process.env.MYSQL_URL;
+  } else {
+    dbConfig = {
+      host: process.env.DB_HOST || 'localhost',
+      port: process.env.DB_PORT || 3306,
+      user: process.env.DB_USER || 'root',
+      password: process.env.DB_PASSWORD || '',
+      database: process.env.DB_NAME || 'testprep_platform',
+      waitForConnections: true,
+      connectionLimit: 10,
+    };
+  }
+  return mysql.createPool(dbConfig);
 }
-const pool = mysql.createPool(dbConfig);
+
+pool = createPool();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'testprep_secret';
 
@@ -955,9 +962,23 @@ app.post('/api/progress/update', authMiddleware(['student']), async (req, res) =
   }
 });
 
+// ─── DB Connection Retry ─────────────────────────────────────
+async function checkDBConnection() {
+  try {
+    await pool.query('SELECT 1');
+    dbConnected = true;
+    console.log('✅ Database connected');
+  } catch (err) {
+    dbConnected = false;
+    console.log('⏳ Waiting for database...');
+    setTimeout(checkDBConnection, 3000);
+  }
+}
+
 // ─── START ────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`\n🚀 TestPrepGPT API running at http://localhost:${PORT}`);
   console.log(`📋 Health check: http://localhost:${PORT}/api/health\n`);
+  checkDBConnection();
 });
