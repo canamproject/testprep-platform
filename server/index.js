@@ -981,8 +981,9 @@ async function checkDBConnection() {
 
 // ─── START ────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`\n🚀 TestPrepGPT API running at http://localhost:${PORT}`);
-  console.log(`📋 Health check: http://localhost:${PORT}/api/health\n`);
+const HOST = '0.0.0.0';
+app.listen(PORT, HOST, () => {
+  console.log(`\n🚀 TestPrepGPT API running at http://${HOST}:${PORT}`);
+  console.log(`📋 Health check: http://${HOST}:${PORT}/api/health\n`);
   checkDBConnection();
 });
