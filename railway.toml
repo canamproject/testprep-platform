@@ -5,3 +5,6 @@ builder = "nixpacks"
 startCommand = "node index.js"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
+
+[nixpacks]
+port = 8080
