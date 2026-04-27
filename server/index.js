@@ -24,10 +24,12 @@ app.use(express.json());
 
 // ─── DB Pool ────────────────────────────────────────────────
 // Support Railway DATABASE_URL or individual env vars
-let pool;
+let pool = null;
 let dbConnected = false;
 
-function createPool() {
+function getPool() {
+  if (pool) return pool;
+  
   let dbConfig;
   if (process.env.DATABASE_URL || process.env.MYSQL_URL) {
     dbConfig = process.env.DATABASE_URL || process.env.MYSQL_URL;
@@ -42,10 +44,9 @@ function createPool() {
       connectionLimit: 10,
     };
   }
-  return mysql.createPool(dbConfig);
+  pool = mysql.createPool(dbConfig);
+  return pool;
 }
-
-pool = createPool();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'testprep_secret';
 
@@ -70,10 +71,13 @@ function authMiddleware(roles = []) {
 // ─── HEALTH ──────────────────────────────────────────────────
 app.get('/api/health', async (req, res) => {
   try {
-    await pool.query('SELECT 1');
+    const p = getPool();
+    if (!p) throw new Error('No DB config');
+    await p.query('SELECT 1');
+    dbConnected = true;
     res.json({ status: 'ok', db: 'connected' });
   } catch (e) {
-    res.status(500).json({ status: 'error', message: e.message });
+    res.json({ status: 'ok', db: 'disconnected', message: 'DB not configured yet' });
   }
 });
 
@@ -82,7 +86,7 @@ app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Missing fields' });
   try {
-    const [rows] = await pool.query(
+    const [rows] = await getPool().query(
       'SELECT u.*, a.name as agency_name, a.slug as agency_slug, a.brand_color, a.logo_initials, a.commission_rate FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.email = ?',
       [email]
     );
@@ -110,7 +114,7 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', authMiddleware(), async (req, res) => {
   try {
-    const [rows] = await pool.query(
+    const [rows] = await getPool().query(
       'SELECT u.id, u.name, u.email, u.role, u.agency_id, u.phone, u.lms_user_id, a.name as agency_name, a.slug, a.brand_color, a.logo_initials, a.commission_rate, a.email as agency_email, a.phone as agency_phone, a.city FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.id = ?',
       [req.user.id]
     );
@@ -122,7 +126,7 @@ app.get('/api/auth/me', authMiddleware(), async (req, res) => {
 
 // ─── ADMIN: AGENCIES ──────────────────────────────────────────
 app.get('/api/admin/agencies', authMiddleware(['super_admin']), async (req, res) => {
-  const [rows] = await pool.query(`
+  const [rows] = await getPool().query(`
     SELECT a.*, 
       COUNT(DISTINCT u.id) as student_count,
       COALESCE(SUM(e.fee_paid), 0) as total_revenue
@@ -137,7 +141,7 @@ app.get('/api/admin/agencies', authMiddleware(['super_admin']), async (req, res)
 app.post('/api/admin/agencies', authMiddleware(['super_admin']), async (req, res) => {
   const { name, slug, email, phone, city, brand_color, commission_rate, logo_initials } = req.body;
   try {
-    const [result] = await pool.query(
+    const [result] = await getPool().query(
       'INSERT INTO agencies (name, slug, email, phone, city, brand_color, commission_rate, logo_initials) VALUES (?,?,?,?,?,?,?,?)',
       [name, slug, email, phone, city, brand_color || '#1e40af', commission_rate || 60, logo_initials || name.slice(0,2).toUpperCase()]
     );
@@ -149,7 +153,7 @@ app.post('/api/admin/agencies', authMiddleware(['super_admin']), async (req, res
 
 app.put('/api/admin/agencies/:id', authMiddleware(['super_admin']), async (req, res) => {
   const { name, email, phone, city, brand_color, commission_rate, status } = req.body;
-  await pool.query(
+  await getPool().query(
     'UPDATE agencies SET name=?, email=?, phone=?, city=?, brand_color=?, commission_rate=?, status=? WHERE id=?',
     [name, email, phone, city, brand_color, commission_rate, status, req.params.id]
   );
@@ -158,16 +162,16 @@ app.put('/api/admin/agencies/:id', authMiddleware(['super_admin']), async (req, 
 
 // ─── ADMIN: OVERVIEW STATS ────────────────────────────────────
 app.get('/api/admin/stats', authMiddleware(['super_admin']), async (req, res) => {
-  const [[revenue]] = await pool.query('SELECT COALESCE(SUM(fee_paid),0) as total FROM enrollments WHERE payment_status="paid"');
-  const [[students]] = await pool.query('SELECT COUNT(*) as count FROM users WHERE role="student"');
-  const [[agencies]] = await pool.query('SELECT COUNT(*) as count FROM agencies WHERE status="active"');
-  const [[pending]] = await pool.query('SELECT COALESCE(SUM(amount),0) as total, COUNT(*) as count FROM payouts WHERE status="pending"');
+  const [[revenue]] = await getPool().query('SELECT COALESCE(SUM(fee_paid),0) as total FROM enrollments WHERE payment_status="paid"');
+  const [[students]] = await getPool().query('SELECT COUNT(*) as count FROM users WHERE role="student"');
+  const [[agencies]] = await getPool().query('SELECT COUNT(*) as count FROM agencies WHERE status="active"');
+  const [[pending]] = await getPool().query('SELECT COALESCE(SUM(amount),0) as total, COUNT(*) as count FROM payouts WHERE status="pending"');
   res.json({ total_revenue: revenue.total, total_students: students.count, active_agencies: agencies.count, pending_payouts: pending.total, pending_payout_count: pending.count });
 });
 
 // ─── ADMIN: ALL STUDENTS ──────────────────────────────────────
 app.get('/api/admin/students', authMiddleware(['super_admin']), async (req, res) => {
-  const [rows] = await pool.query(`
+  const [rows] = await getPool().query(`
     SELECT u.id, u.name, u.email, u.phone, u.lms_user_id, u.created_at,
       a.name as agency_name, a.brand_color, a.slug as agency_slug,
       COUNT(e.id) as enrollment_count,
@@ -183,7 +187,7 @@ app.get('/api/admin/students', authMiddleware(['super_admin']), async (req, res)
 
 // ─── ADMIN: PAYOUTS ───────────────────────────────────────────
 app.get('/api/admin/payouts', authMiddleware(['super_admin']), async (req, res) => {
-  const [rows] = await pool.query(`
+  const [rows] = await getPool().query(`
     SELECT p.*, a.name as agency_name, a.brand_color, a.slug 
     FROM payouts p JOIN agencies a ON p.agency_id = a.id ORDER BY p.requested_at DESC
   `);
@@ -192,7 +196,7 @@ app.get('/api/admin/payouts', authMiddleware(['super_admin']), async (req, res) 
 
 app.put('/api/admin/payouts/:id', authMiddleware(['super_admin']), async (req, res) => {
   const { status, admin_note } = req.body;
-  await pool.query(
+  await getPool().query(
     'UPDATE payouts SET status=?, admin_note=?, processed_at=NOW() WHERE id=?',
     [status, admin_note, req.params.id]
   );
@@ -201,7 +205,7 @@ app.put('/api/admin/payouts/:id', authMiddleware(['super_admin']), async (req, r
 
 // ─── ADMIN: COUPONS ───────────────────────────────────────────
 app.get('/api/admin/coupons', authMiddleware(['super_admin']), async (req, res) => {
-  const [rows] = await pool.query(`
+  const [rows] = await getPool().query(`
     SELECT c.*, a.name as agency_name, a.brand_color FROM coupons c JOIN agencies a ON c.agency_id = a.id ORDER BY c.created_at DESC
   `);
   res.json(rows);
@@ -209,7 +213,7 @@ app.get('/api/admin/coupons', authMiddleware(['super_admin']), async (req, res) 
 
 // ─── ADMIN: ALL ENROLLMENTS ───────────────────────────────────
 app.get('/api/admin/enrollments', authMiddleware(['super_admin']), async (req, res) => {
-  const [rows] = await pool.query(`
+  const [rows] = await getPool().query(`
     SELECT e.*, u.name as student_name, u.email as student_email,
       c.title as course_title, c.category,
       a.name as agency_name, a.brand_color
@@ -224,13 +228,13 @@ app.get('/api/admin/enrollments', authMiddleware(['super_admin']), async (req, r
 
 // ─── COURSES ──────────────────────────────────────────────────
 app.get('/api/courses', async (req, res) => {
-  const [rows] = await pool.query('SELECT id, title, category, description, price, duration_weeks FROM courses WHERE is_active=1 ORDER BY category, title');
+  const [rows] = await getPool().query('SELECT id, title, category, description, price, duration_weeks FROM courses WHERE is_active=1 ORDER BY category, title');
   res.json(rows);
 });
 
 app.post('/api/admin/courses', authMiddleware(['super_admin']), async (req, res) => {
   const { title, category, description, price, duration_weeks } = req.body;
-  const [result] = await pool.query(
+  const [result] = await getPool().query(
     'INSERT INTO courses (title, category, description, price, duration_weeks) VALUES (?,?,?,?,?)',
     [title, category, description, price, duration_weeks || 12]
   );
@@ -240,11 +244,11 @@ app.post('/api/admin/courses', authMiddleware(['super_admin']), async (req, res)
 // ─── PARTNER: DASHBOARD ───────────────────────────────────────
 app.get('/api/partner/stats', authMiddleware(['partner_admin']), async (req, res) => {
   const agencyId = req.user.agency_id;
-  const [[rev]] = await pool.query('SELECT COALESCE(SUM(fee_paid),0) as total FROM enrollments WHERE agency_id=? AND payment_status="paid"', [agencyId]);
-  const [[students]] = await pool.query('SELECT COUNT(*) as count FROM users WHERE agency_id=? AND role="student"', [agencyId]);
-  const [[paid]] = await pool.query('SELECT COUNT(*) as count FROM enrollments WHERE agency_id=? AND payment_status="paid"', [agencyId]);
-  const [[pending]] = await pool.query('SELECT COALESCE(SUM(amount),0) as total FROM payouts WHERE agency_id=? AND status="pending"', [agencyId]);
-  const [agency] = await pool.query('SELECT commission_rate FROM agencies WHERE id=?', [agencyId]);
+  const [[rev]] = await getPool().query('SELECT COALESCE(SUM(fee_paid),0) as total FROM enrollments WHERE agency_id=? AND payment_status="paid"', [agencyId]);
+  const [[students]] = await getPool().query('SELECT COUNT(*) as count FROM users WHERE agency_id=? AND role="student"', [agencyId]);
+  const [[paid]] = await getPool().query('SELECT COUNT(*) as count FROM enrollments WHERE agency_id=? AND payment_status="paid"', [agencyId]);
+  const [[pending]] = await getPool().query('SELECT COALESCE(SUM(amount),0) as total FROM payouts WHERE agency_id=? AND status="pending"', [agencyId]);
+  const [agency] = await getPool().query('SELECT commission_rate FROM agencies WHERE id=?', [agencyId]);
   const commRate = agency[0]?.commission_rate || 60;
   res.json({
     total_revenue: rev.total,
@@ -258,7 +262,7 @@ app.get('/api/partner/stats', authMiddleware(['partner_admin']), async (req, res
 });
 
 app.get('/api/partner/students', authMiddleware(['partner_admin']), async (req, res) => {
-  const [rows] = await pool.query(`
+  const [rows] = await getPool().query(`
     SELECT u.id, u.name, u.email, u.phone, u.lms_user_id, u.created_at,
       COUNT(e.id) as enrollment_count,
       COALESCE(SUM(CASE WHEN e.payment_status='paid' THEN e.fee_paid ELSE 0 END),0) as total_paid,
@@ -277,7 +281,7 @@ app.post('/api/partner/students', authMiddleware(['partner_admin']), async (req,
   const passwordHash = await bcrypt.hash('Student@123', 10);
   const lmsUserId = `lms_u_${Date.now()}`;
   try {
-    const [result] = await pool.query(
+    const [result] = await getPool().query(
       'INSERT INTO users (name, email, password_hash, role, agency_id, phone, lms_user_id) VALUES (?,?,?,?,?,?,?)',
       [name, email, passwordHash, 'student', agencyId, phone, lmsUserId]
     );
@@ -288,7 +292,7 @@ app.post('/api/partner/students', authMiddleware(['partner_admin']), async (req,
 });
 
 app.get('/api/partner/enrollments', authMiddleware(['partner_admin']), async (req, res) => {
-  const [rows] = await pool.query(`
+  const [rows] = await getPool().query(`
     SELECT e.*, u.name as student_name, u.email as student_email,
       c.title as course_title, c.category, c.price as course_price
     FROM enrollments e
@@ -305,14 +309,14 @@ app.post('/api/partner/enrollments', authMiddleware(['partner_admin']), async (r
   const agencyId = req.user.agency_id;
   let discount = 0;
   if (coupon_code) {
-    const [coup] = await pool.query('SELECT * FROM coupons WHERE code=? AND agency_id=? AND is_active=1', [coupon_code, agencyId]);
+    const [coup] = await getPool().query('SELECT * FROM coupons WHERE code=? AND agency_id=? AND is_active=1', [coupon_code, agencyId]);
     if (coup.length) {
       const c = coup[0];
       discount = c.discount_type === 'percentage' ? Math.round(fee_paid * c.value / 100) : c.value;
-      await pool.query('UPDATE coupons SET used_count=used_count+1 WHERE id=?', [c.id]);
+      await getPool().query('UPDATE coupons SET used_count=used_count+1 WHERE id=?', [c.id]);
     }
   }
-  const [result] = await pool.query(
+  const [result] = await getPool().query(
     'INSERT INTO enrollments (student_id, agency_id, course_id, fee_paid, coupon_code, discount_amount, lms_enrolled) VALUES (?,?,?,?,?,?,1)',
     [student_id, agencyId, course_id, fee_paid - discount, coupon_code || null, discount]
   );
@@ -320,7 +324,7 @@ app.post('/api/partner/enrollments', authMiddleware(['partner_admin']), async (r
 });
 
 app.put('/api/partner/enrollments/:id/payment', authMiddleware(['partner_admin']), async (req, res) => {
-  await pool.query(
+  await getPool().query(
     "UPDATE enrollments SET payment_status='paid', payment_date=NOW() WHERE id=? AND agency_id=?",
     [req.params.id, req.user.agency_id]
   );
@@ -329,18 +333,18 @@ app.put('/api/partner/enrollments/:id/payment', authMiddleware(['partner_admin']
 
 // ─── PARTNER: PAYOUTS ─────────────────────────────────────────
 app.get('/api/partner/payouts', authMiddleware(['partner_admin']), async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM payouts WHERE agency_id=? ORDER BY requested_at DESC', [req.user.agency_id]);
+  const [rows] = await getPool().query('SELECT * FROM payouts WHERE agency_id=? ORDER BY requested_at DESC', [req.user.agency_id]);
   res.json(rows);
 });
 
 app.post('/api/partner/payouts/claim', authMiddleware(['partner_admin']), async (req, res) => {
   const agencyId = req.user.agency_id;
-  const [[rev]] = await pool.query('SELECT COALESCE(SUM(fee_paid),0) as total, COUNT(*) as count FROM enrollments WHERE agency_id=? AND payment_status="paid"', [agencyId]);
-  const [agency] = await pool.query('SELECT commission_rate FROM agencies WHERE id=?', [agencyId]);
+  const [[rev]] = await getPool().query('SELECT COALESCE(SUM(fee_paid),0) as total, COUNT(*) as count FROM enrollments WHERE agency_id=? AND payment_status="paid"', [agencyId]);
+  const [agency] = await getPool().query('SELECT commission_rate FROM agencies WHERE id=?', [agencyId]);
   const commRate = agency[0]?.commission_rate || 60;
   const claimable = Math.round(rev.total * commRate / 100);
   if (claimable <= 0) return res.status(400).json({ error: 'No claimable amount' });
-  const [result] = await pool.query(
+  const [result] = await getPool().query(
     'INSERT INTO payouts (agency_id, amount, eligible_students, status) VALUES (?,?,?,?)',
     [agencyId, claimable, rev.count, 'pending']
   );
@@ -349,14 +353,14 @@ app.post('/api/partner/payouts/claim', authMiddleware(['partner_admin']), async 
 
 // ─── PARTNER: COUPONS ─────────────────────────────────────────
 app.get('/api/partner/coupons', authMiddleware(['partner_admin']), async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM coupons WHERE agency_id=? ORDER BY created_at DESC', [req.user.agency_id]);
+  const [rows] = await getPool().query('SELECT * FROM coupons WHERE agency_id=? ORDER BY created_at DESC', [req.user.agency_id]);
   res.json(rows);
 });
 
 app.post('/api/partner/coupons', authMiddleware(['partner_admin']), async (req, res) => {
   const { code, discount_type, value, min_order, max_uses, expires_at } = req.body;
   try {
-    const [result] = await pool.query(
+    const [result] = await getPool().query(
       'INSERT INTO coupons (code, agency_id, discount_type, value, min_order, max_uses, expires_at) VALUES (?,?,?,?,?,?,?)',
       [code.toUpperCase(), req.user.agency_id, discount_type, value, min_order || 0, max_uses || 100, expires_at]
     );
@@ -368,13 +372,13 @@ app.post('/api/partner/coupons', authMiddleware(['partner_admin']), async (req, 
 
 // ─── PARTNER: CRM LEADS ───────────────────────────────────────
 app.get('/api/partner/leads', authMiddleware(['partner_admin']), async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM leads WHERE agency_id=? ORDER BY updated_at DESC', [req.user.agency_id]);
+  const [rows] = await getPool().query('SELECT * FROM leads WHERE agency_id=? ORDER BY updated_at DESC', [req.user.agency_id]);
   res.json(rows);
 });
 
 app.post('/api/partner/leads', authMiddleware(['partner_admin']), async (req, res) => {
   const { name, email, phone, course_interest, notes } = req.body;
-  const [result] = await pool.query(
+  const [result] = await getPool().query(
     'INSERT INTO leads (agency_id, name, email, phone, course_interest, notes) VALUES (?,?,?,?,?,?)',
     [req.user.agency_id, name, email, phone, course_interest, notes]
   );
@@ -383,13 +387,13 @@ app.post('/api/partner/leads', authMiddleware(['partner_admin']), async (req, re
 
 app.put('/api/partner/leads/:id', authMiddleware(['partner_admin']), async (req, res) => {
   const { status, notes } = req.body;
-  await pool.query('UPDATE leads SET status=?, notes=? WHERE id=? AND agency_id=?', [status, notes, req.params.id, req.user.agency_id]);
+  await getPool().query('UPDATE leads SET status=?, notes=? WHERE id=? AND agency_id=?', [status, notes, req.params.id, req.user.agency_id]);
   res.json({ message: 'Lead updated' });
 });
 
 // ─── PARTNER: EARNINGS ────────────────────────────────────────
 app.get('/api/partner/earnings', authMiddleware(['partner_admin']), async (req, res) => {
-  const [rows] = await pool.query(`
+  const [rows] = await getPool().query(`
     SELECT e.id, e.fee_paid, e.payment_status, e.payment_date, e.enrolled_at,
       u.name as student_name,
       c.title as course_title, c.category,
@@ -407,7 +411,7 @@ app.get('/api/partner/earnings', authMiddleware(['partner_admin']), async (req, 
 
 // ─── STUDENT: DASHBOARD ───────────────────────────────────────
 app.get('/api/student/dashboard', authMiddleware(['student']), async (req, res) => {
-  const [enrollments] = await pool.query(`
+  const [enrollments] = await getPool().query(`
     SELECT e.id, e.fee_paid, e.payment_status, e.enrolled_at, e.progress_percent, e.status,
       c.title as course_title, c.category, c.duration_weeks,
       a.name as agency_name, a.brand_color, a.logo_initials, a.email as agency_email
@@ -422,7 +426,7 @@ app.get('/api/student/dashboard', authMiddleware(['student']), async (req, res) 
 
 // ─── STUDENT: SSO TOKEN (LMS Access) ─────────────────────────
 app.post('/api/student/sso/:enrollmentId', authMiddleware(['student']), async (req, res) => {
-  const [[enrollment]] = await pool.query(
+  const [[enrollment]] = await getPool().query(
     'SELECT e.*, u.lms_user_id, c.lms_course_id FROM enrollments e JOIN users u ON e.student_id = u.id JOIN courses c ON e.course_id = c.id WHERE e.id=? AND e.student_id=?',
     [req.params.enrollmentId, req.user.id]
   );
@@ -435,7 +439,7 @@ app.post('/api/student/sso/:enrollmentId', authMiddleware(['student']), async (r
     { expiresIn: '1h' }
   );
   // Update token in DB
-  await pool.query('UPDATE enrollments SET sso_token=? WHERE id=?', [ssoToken, enrollment.id]);
+  await getPool().query('UPDATE enrollments SET sso_token=? WHERE id=?', [ssoToken, enrollment.id]);
   // In production: POST to LMS API with this token, get redirect URL
   // LMS URL is NEVER exposed to frontend — handled server-side only
   res.json({
@@ -447,7 +451,7 @@ app.post('/api/student/sso/:enrollmentId', authMiddleware(['student']), async (r
 
 // ─── TENANT IDENTIFICATION ────────────────────────────────────
 app.get('/api/tenant/:slug', async (req, res) => {
-  const [rows] = await pool.query(
+  const [rows] = await getPool().query(
     'SELECT id, name, slug, brand_color, logo_initials, email, phone, city, status FROM agencies WHERE slug=? AND status="active"',
     [req.params.slug]
   );
@@ -461,7 +465,7 @@ app.get('/api/tenant/:slug', async (req, res) => {
 
 // ─── BATCHES: ADMIN ───────────────────────────────────────────
 app.get('/api/admin/batches', authMiddleware(['super_admin']), async (req, res) => {
-  const [rows] = await pool.query(`
+  const [rows] = await getPool().query(`
     SELECT b.*, a.name as agency_name, c.title as course_title,
       u.name as trainer_name,
       COUNT(be.id) as enrolled_students
@@ -485,7 +489,7 @@ app.post('/api/admin/batches', authMiddleware(['super_admin']), async (req, res)
   
   try {
     const meetingId = `${jitsi_room_prefix || 'batch'}-${Date.now()}`;
-    const [result] = await pool.query(
+    const [result] = await getPool().query(
       `INSERT INTO batches (agency_id, course_id, name, description, start_date, end_date,
         schedule_days, class_time, duration_minutes, timezone, trainer_id, trainer_name,
         max_students, jitsi_room_prefix, jitsi_meeting_id, created_by, status)
@@ -508,7 +512,7 @@ app.put('/api/admin/batches/:id', authMiddleware(['super_admin']), async (req, r
   } = req.body;
   
   try {
-    await pool.query(
+    await getPool().query(
       `UPDATE batches SET name=?, description=?, start_date=?, end_date=?,
        schedule_days=?, class_time=?, duration_minutes=?, trainer_id=?,
        trainer_name=?, max_students=?, status=?, updated_at=NOW()
@@ -524,7 +528,7 @@ app.put('/api/admin/batches/:id', authMiddleware(['super_admin']), async (req, r
 
 // ─── BATCHES: PARTNER ─────────────────────────────────────────
 app.get('/api/partner/batches', authMiddleware(['partner_admin']), async (req, res) => {
-  const [rows] = await pool.query(`
+  const [rows] = await getPool().query(`
     SELECT b.*, c.title as course_title,
       u.name as trainer_name,
       COUNT(be.id) as enrolled_students
@@ -550,7 +554,7 @@ app.post('/api/partner/batches', authMiddleware(['partner_admin']), async (req, 
     const prefix = req.user.agency_slug || 'batch';
     const meetingId = `${prefix}-${Date.now()}`;
     
-    const [result] = await pool.query(
+    const [result] = await getPool().query(
       `INSERT INTO batches (agency_id, course_id, name, description, start_date, end_date,
         schedule_days, class_time, duration_minutes, trainer_id, trainer_name,
         max_students, jitsi_room_prefix, jitsi_meeting_id, created_by, status)
@@ -568,7 +572,7 @@ app.post('/api/partner/batches', authMiddleware(['partner_admin']), async (req, 
 
 // ─── BATCH ENROLLMENTS ────────────────────────────────────────
 app.get('/api/batches/:id/students', authMiddleware(), async (req, res) => {
-  const [rows] = await pool.query(`
+  const [rows] = await getPool().query(`
     SELECT be.*, u.name, u.email, u.phone, e.payment_status
     FROM batch_enrollments be
     JOIN users u ON be.student_id = u.id
@@ -586,13 +590,13 @@ app.post('/api/batches/:id/enroll', authMiddleware(['partner_admin', 'super_admi
   try {
     // Verify student belongs to partner's agency
     if (req.user.role === 'partner_admin') {
-      const [[batch]] = await pool.query('SELECT agency_id FROM batches WHERE id=?', [batchId]);
+      const [[batch]] = await getPool().query('SELECT agency_id FROM batches WHERE id=?', [batchId]);
       if (!batch || batch.agency_id !== req.user.agency_id) {
         return res.status(403).json({ error: 'Access denied' });
       }
     }
     
-    const [result] = await pool.query(
+    const [result] = await getPool().query(
       `INSERT INTO batch_enrollments (batch_id, student_id, enrollment_id, access_type, status)
        VALUES (?,?,?,?,?)`,
       [batchId, student_id, enrollment_id, access_type || 'full', 'active']
@@ -626,7 +630,7 @@ app.get('/api/live-classes', authMiddleware(), async (req, res) => {
        WHERE lc.agency_id = ?
        ORDER BY lc.scheduled_at DESC`;
   
-  const [rows] = await pool.query(query, isAdmin ? [] : [agencyId]);
+  const [rows] = await getPool().query(query, isAdmin ? [] : [agencyId]);
   res.json(rows);
 });
 
@@ -673,7 +677,7 @@ app.get('/api/live-classes/upcoming', authMiddleware(), async (req, res) => {
     params = [agencyId];
   }
   
-  const [rows] = await pool.query(query, params);
+  const [rows] = await getPool().query(query, params);
   res.json(rows);
 });
 
@@ -685,7 +689,7 @@ app.post('/api/live-classes', authMiddleware(['partner_admin', 'super_admin']), 
   
   try {
     // Get batch details for Jitsi room name
-    const [[batch]] = await pool.query(
+    const [[batch]] = await getPool().query(
       'SELECT b.*, a.slug as agency_slug FROM batches b JOIN agencies a ON b.agency_id = a.id WHERE b.id=?',
       [batch_id]
     );
@@ -700,7 +704,7 @@ app.post('/api/live-classes', authMiddleware(['partner_admin', 'super_admin']), 
     const roomName = `${batch.jitsi_room_prefix || batch.agency_slug}-class-${Date.now()}`;
     const meetingUrl = `https://meet.jit.si/${roomName}`;
     
-    const [result] = await pool.query(
+    const [result] = await getPool().query(
       `INSERT INTO live_classes (batch_id, agency_id, title, description, lesson_id,
         scheduled_at, duration_minutes, jitsi_room_name, jitsi_meeting_url,
         class_mode, auto_record, created_by, status)
@@ -727,13 +731,13 @@ app.put('/api/live-classes/:id', authMiddleware(['partner_admin', 'super_admin']
   try {
     // Verify access
     if (req.user.role === 'partner_admin') {
-      const [[lc]] = await pool.query('SELECT agency_id FROM live_classes WHERE id=?', [req.params.id]);
+      const [[lc]] = await getPool().query('SELECT agency_id FROM live_classes WHERE id=?', [req.params.id]);
       if (!lc || lc.agency_id !== req.user.agency_id) {
         return res.status(403).json({ error: 'Access denied' });
       }
     }
     
-    await pool.query(
+    await getPool().query(
       `UPDATE live_classes SET title=?, description=?, scheduled_at=?,
        duration_minutes=?, class_mode=?, status=?, updated_at=NOW()
        WHERE id=?`,
@@ -753,7 +757,7 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
   
   try {
     // Get class details
-    const [[liveClass]] = await pool.query(`
+    const [[liveClass]] = await getPool().query(`
       SELECT lc.*, b.agency_id, b.name as batch_name
       FROM live_classes lc
       JOIN batches b ON lc.batch_id = b.id
@@ -774,7 +778,7 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
       isModerator = true;
     } else if (userRole === 'student') {
       // Check if enrolled in batch
-      const [[enrollment]] = await pool.query(`
+      const [[enrollment]] = await getPool().query(`
         SELECT be.* FROM batch_enrollments be
         WHERE be.batch_id = ? AND be.student_id = ? AND be.status = 'active'
         AND (be.access_type != 'demo' OR be.demo_expires_at > NOW())
@@ -787,7 +791,7 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
     }
     
     // Record attendance entry
-    await pool.query(`
+    await getPool().query(`
       INSERT INTO class_attendance (live_class_id, student_id, batch_id, joined_at, attendance_status)
       VALUES (?, ?, ?, NOW(), 'present')
       ON DUPLICATE KEY UPDATE joined_at = NOW(), attendance_status = 'present'
@@ -821,7 +825,7 @@ app.post('/api/live-classes/:id/attendance', authMiddleware(['student']), async 
   const studentId = req.user.id;
   
   try {
-    await pool.query(`
+    await getPool().query(`
       UPDATE class_attendance 
       SET duration_seconds = ?, time_in_class_percent = ?, updated_at = NOW()
       WHERE live_class_id = ? AND student_id = ?
@@ -838,7 +842,7 @@ app.post('/api/live-classes/:id/leave', authMiddleware(), async (req, res) => {
   const userId = req.user.id;
   
   try {
-    await pool.query(`
+    await getPool().query(`
       UPDATE class_attendance 
       SET left_at = NOW(), updated_at = NOW()
       WHERE live_class_id = ? AND student_id = ?
@@ -855,7 +859,7 @@ app.post('/api/demo/request', async (req, res) => {
   const { agency_id, name, email, phone, course_id, preferred_demo_date } = req.body;
   
   try {
-    const [result] = await pool.query(
+    const [result] = await getPool().query(
       `INSERT INTO demo_access_requests (agency_id, name, email, phone, course_id, preferred_demo_date, status, source)
        VALUES (?,?,?,?,?,?,?,?)`,
       [agency_id, name, email, phone, course_id, preferred_demo_date, 'pending', 'website']
@@ -883,7 +887,7 @@ app.get('/api/demo/requests', authMiddleware(['partner_admin', 'super_admin']), 
        WHERE d.agency_id = ?
        ORDER BY d.created_at DESC`;
   
-  const [rows] = await pool.query(query, isAdmin ? [] : [agencyId]);
+  const [rows] = await getPool().query(query, isAdmin ? [] : [agencyId]);
   res.json(rows);
 });
 
@@ -891,7 +895,7 @@ app.put('/api/demo/requests/:id/approve', authMiddleware(['partner_admin', 'supe
   const { demo_batch_id, scheduled_class_id, demo_duration_hours } = req.body;
   
   try {
-    await pool.query(
+    await getPool().query(
       `UPDATE demo_access_requests 
        SET status='approved', demo_batch_id=?, scheduled_demo_class_id=?,
        demo_duration_hours=?, approved_at=NOW(), approved_by=?
@@ -911,13 +915,13 @@ app.get('/api/progress/:enrollmentId', authMiddleware(), async (req, res) => {
   
   try {
     // Verify enrollment belongs to student
-    const [[enrollment]] = await pool.query(
+    const [[enrollment]] = await getPool().query(
       'SELECT * FROM enrollments WHERE id=? AND student_id=?',
       [enrollmentId, studentId]
     );
     if (!enrollment) return res.status(403).json({ error: 'Access denied' });
     
-    const [progress] = await pool.query(`
+    const [progress] = await getPool().query(`
       SELECT pt.*, l.title as lesson_title, l.module_name, l.content_type
       FROM progress_tracking pt
       JOIN lessons l ON pt.lesson_id = l.id
@@ -940,7 +944,7 @@ app.post('/api/progress/update', authMiddleware(['student']), async (req, res) =
       ? Math.round((video_watched_seconds / video_total_seconds) * 100)
       : 0;
     
-    await pool.query(`
+    await getPool().query(`
       INSERT INTO progress_tracking (enrollment_id, student_id, course_id, lesson_id,
         video_watched_seconds, video_total_seconds, video_completion_percent, status,
         first_accessed_at, last_watched_at)
@@ -965,7 +969,7 @@ app.post('/api/progress/update', authMiddleware(['student']), async (req, res) =
 // ─── DB Connection Retry ─────────────────────────────────────
 async function checkDBConnection() {
   try {
-    await pool.query('SELECT 1');
+    await getPool().query('SELECT 1');
     dbConnected = true;
     console.log('✅ Database connected');
   } catch (err) {
