@@ -1705,12 +1705,9 @@ async function runMigrations() {
         ADD COLUMN IF NOT EXISTS ended_at TIMESTAMP NULL
     `).catch(() => {});
 
-    // Faculty assignment + approval workflow
-    await getPool().query(`
-      ALTER TABLE live_classes
-        ADD COLUMN IF NOT EXISTS faculty_id INT DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS approved_by INT DEFAULT NULL
-    `).catch(() => {});
+    // Faculty assignment + approval workflow (separate statements for compatibility)
+    await getPool().query(`ALTER TABLE live_classes ADD COLUMN faculty_id INT DEFAULT NULL`).catch(() => {});
+    await getPool().query(`ALTER TABLE live_classes ADD COLUMN approved_by INT DEFAULT NULL`).catch(() => {});
 
     // Extend status enum to include pending_approval
     await getPool().query(`
