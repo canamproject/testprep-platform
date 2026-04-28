@@ -618,7 +618,7 @@ function Branding({ user, accent, logoUrl, onLogoChange }) {
           }
           <div>
             <div className="text-xl font-black text-slate-900">{user?.agency_name}</div>
-            <div className="text-sm font-mono" style={{ color: accent }}>testprep.com/agent/{slug}</div>
+            <div className="text-sm font-mono" style={{ color: accent }}>testprep.com/{slug}</div>
             <div className="text-sm text-slate-400 mt-1">{user?.agency_email}</div>
           </div>
         </div>
@@ -639,9 +639,9 @@ function Branding({ user, accent, logoUrl, onLogoChange }) {
         <p className="text-sm text-slate-500 mb-3">Your portal is completely white-labeled. Students see only your branding.</p>
         <div className="space-y-2 text-sm">
           {[
-            ['Student-facing URL', `/agent/${slug}`],
-            ['Student signup URL', `/agent/${slug}/signup`],
-            ['Admin login URL', `/agent/${slug}/login`],
+            ['Student portal', `/${slug}`],
+            ['Student signup', `/${slug}/signup`],
+            ['Partner login', `/${slug}/login`],
             ['LMS exposure', 'None — fully hidden'],
           ].map(([k, v]) => (
             <div key={k} className="flex gap-4 p-2 bg-slate-50 rounded-lg">
@@ -659,7 +659,7 @@ function Branding({ user, accent, logoUrl, onLogoChange }) {
 function SignupLinkBox({ slug, accent }) {
   const [copied, setCopied] = useState(false);
   const base = window.location.origin;
-  const signupUrl = `${base}/agent/${slug}/signup`;
+  const signupUrl = `${base}/${slug}/signup`;
   const copy = () => {
     navigator.clipboard.writeText(signupUrl);
     setCopied(true);
@@ -1223,7 +1223,7 @@ export default function PartnerDashboard() {
               }
               <div className="text-white font-bold text-sm truncate">{user?.agency_name}</div>
             </div>
-            <div className="text-xs text-white/50 font-mono">testprep.com/agent/{slug}</div>
+            <div className="text-xs text-white/50 font-mono">testprep.com/{slug}</div>
           </div>
         ),
         items: SECTIONS.map(s => (

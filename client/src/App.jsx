@@ -50,11 +50,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<HomeRedirect />} />
           <Route path="/login" element={<Login />} />
-          {/* Tenant-specific entry points */}
-          <Route path="/agent/:slug" element={<TenantEntry />} />
-          <Route path="/agent/:slug/login" element={<TenantEntry />} />
-          <Route path="/agent/:slug/signup" element={<TenantSignup />} />
-
+          {/* Named app routes — must come before /:slug catch */}
           <Route path="/admin/*" element={
             <RequireAuth role="super_admin"><AdminDashboard /></RequireAuth>
           } />
@@ -70,6 +66,17 @@ export default function App() {
           <Route path="/live-class/:id" element={
             <RequireAuth><LiveClassRoom /></RequireAuth>
           } />
+
+          {/* Legacy /agent/:slug routes — kept for backward compat */}
+          <Route path="/agent/:slug" element={<TenantEntry />} />
+          <Route path="/agent/:slug/login" element={<TenantEntry />} />
+          <Route path="/agent/:slug/signup" element={<TenantSignup />} />
+
+          {/* Clean partner URLs: /:slug, /:slug/login, /:slug/signup */}
+          <Route path="/:slug/login" element={<TenantEntry />} />
+          <Route path="/:slug/signup" element={<TenantSignup />} />
+          <Route path="/:slug" element={<TenantEntry />} />
+
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
