@@ -32,13 +32,19 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
+  function loginWithToken(token, userData) {
+    setToken(token);
+    localStorage.setItem('tp_user', JSON.stringify(userData));
+    setUser(userData);
+  }
+
   function logout() {
     clearToken();
     setUser(null);
   }
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, isAdmin: user?.role === 'super_admin', isPartner: user?.role === 'partner_admin', isStudent: user?.role === 'student' }}>
+    <AuthContext.Provider value={{ user, login, loginWithToken, logout, loading, isAdmin: user?.role === 'super_admin', isPartner: user?.role === 'partner_admin', isStudent: user?.role === 'student' }}>
       {children}
     </AuthContext.Provider>
   );

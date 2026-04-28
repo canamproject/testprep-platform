@@ -162,6 +162,53 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// Student self-registration (with optional agency slug for partner-referred signups)
+app.post('/api/auth/signup', async (req, res) => {
+  const { name, email, password, phone, agency_slug } = req.body;
+  if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required' });
+  if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+  try {
+    // Check email not already taken
+    const [[existing]] = await getPool().query('SELECT id FROM users WHERE email=?', [email]);
+    if (existing) return res.status(400).json({ error: 'An account with this email already exists' });
+
+    // Resolve agency from slug if provided
+    let agencyId = null;
+    if (agency_slug) {
+      const [[agency]] = await getPool().query('SELECT id FROM agencies WHERE slug=? AND status="active"', [agency_slug]);
+      if (agency) agencyId = agency.id;
+    }
+
+    const hash = await bcrypt.hash(password, 10);
+    const [result] = await getPool().query(
+      `INSERT INTO users (name, email, password_hash, role, phone, agency_id, is_active) VALUES (?,?,?,'student',?,?,1)`,
+      [name.trim(), email.toLowerCase().trim(), hash, phone || null, agencyId]
+    );
+
+    // Auto-login: return token
+    const [[newUser]] = await getPool().query(
+      'SELECT u.*, a.name as agency_name, a.slug as agency_slug, a.brand_color, a.logo_initials FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.id=?',
+      [result.insertId]
+    );
+    const token = jwt.sign(
+      { id: newUser.id, email: newUser.email, role: 'student', agency_id: agencyId },
+      JWT_SECRET, { expiresIn: '24h' }
+    );
+    res.json({
+      token,
+      user: {
+        id: newUser.id, name: newUser.name, email: newUser.email, role: 'student',
+        agency_id: agencyId, agency_name: newUser.agency_name,
+        agency_slug: newUser.agency_slug, brand_color: newUser.brand_color,
+        logo_initials: newUser.logo_initials
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/auth/me', authMiddleware(), async (req, res) => {
   try {
     const [rows] = await getPool().query(

@@ -569,12 +569,18 @@ function Branding({ user, accent }) {
           <div className="p-3 bg-slate-50 rounded-xl"><div className="text-xs font-bold text-slate-400 uppercase mb-1">Phone</div>{user.agency_phone || '—'}</div>
         </div>
       </div>
+      <div className="card mb-6">
+        <h3 className="text-sm font-bold text-slate-700 mb-2">Student Signup Link</h3>
+        <p className="text-sm text-slate-500 mb-3">Share this link with prospective students. They'll sign up under your institute automatically.</p>
+        <SignupLinkBox slug={user.slug} accent={accent} />
+      </div>
       <div className="card">
         <h3 className="text-sm font-bold text-slate-700 mb-2">White-Label Info</h3>
         <p className="text-sm text-slate-500 mb-3">Your portal is completely white-labeled. Students see only your branding. The underlying LMS (TestPrepGPT.ai) is never visible.</p>
         <div className="space-y-2 text-sm">
           {[
             ['Student-facing URL', `/agent/${user.slug}`],
+            ['Student signup URL', `/agent/${user.slug}/signup`],
             ['Admin login URL', `/agent/${user.slug}/login`],
             ['LMS exposure', 'None — fully hidden'],
           ].map(([k, v]) => (
@@ -585,6 +591,28 @@ function Branding({ user, accent }) {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── SIGNUP LINK BOX ─────────────────────────────────────────
+function SignupLinkBox({ slug, accent }) {
+  const [copied, setCopied] = useState(false);
+  const base = window.location.origin;
+  const signupUrl = `${base}/agent/${slug}/signup`;
+  const copy = () => {
+    navigator.clipboard.writeText(signupUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <div className="flex items-center gap-2 p-3 rounded-xl border-2 border-dashed" style={{ borderColor: accent + '60', background: accent + '08' }}>
+      <span className="font-mono text-xs text-slate-700 flex-1 truncate">{signupUrl}</span>
+      <button onClick={copy}
+        className="flex-shrink-0 px-4 py-1.5 rounded-lg text-sm font-bold text-white transition hover:opacity-90"
+        style={{ background: accent }}>
+        {copied ? '✓ Copied!' : 'Copy Link'}
+      </button>
     </div>
   );
 }

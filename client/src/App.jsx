@@ -38,6 +38,11 @@ function TenantEntry() {
   return <Login tenantSlug={slug} />;
 }
 
+function TenantSignup() {
+  const { slug } = useParams();
+  return <Login tenantSlug={slug} defaultMode="signup" />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -48,6 +53,7 @@ export default function App() {
           {/* Tenant-specific entry points */}
           <Route path="/agent/:slug" element={<TenantEntry />} />
           <Route path="/agent/:slug/login" element={<TenantEntry />} />
+          <Route path="/agent/:slug/signup" element={<TenantSignup />} />
 
           <Route path="/admin/*" element={
             <RequireAuth role="super_admin"><AdminDashboard /></RequireAuth>
