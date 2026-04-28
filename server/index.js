@@ -20,7 +20,7 @@ app.use(cors({
   ], 
   credentials: true 
 }));
-app.use(express.json({ limit: '4mb' })); // allow base64 logo uploads
+app.use(express.json({ limit: '16mb' })); // allow base64 logo + QR code uploads
 
 // ─── DB Pool ────────────────────────────────────────────────
 // Support Railway DATABASE_URL or individual env vars
@@ -2044,7 +2044,7 @@ async function runMigrations() {
         agency_id INT NOT NULL UNIQUE,
         upi_id VARCHAR(100),
         upi_name VARCHAR(100),
-        qr_code_image TEXT,
+        qr_code_image MEDIUMTEXT,
         payment_link TEXT,
         mobile_number VARCHAR(20),
         mobile_instructions TEXT,
@@ -2052,6 +2052,9 @@ async function runMigrations() {
         FOREIGN KEY (agency_id) REFERENCES agencies(id)
       )
     `).catch(() => {});
+
+    // Widen qr_code_image if created as TEXT (older migration)
+    await getPool().query(`ALTER TABLE agency_payment_config MODIFY COLUMN qr_code_image MEDIUMTEXT`).catch(() => {});
 
     // Payment proofs submitted by students
     await getPool().query(`
@@ -2062,7 +2065,7 @@ async function runMigrations() {
         agency_id INT NOT NULL,
         amount DECIMAL(10,2),
         payment_method ENUM('upi','qr','link','mobile','other') DEFAULT 'other',
-        proof_image TEXT,
+        proof_image MEDIUMTEXT,
         notes TEXT,
         status ENUM('pending','verified','rejected') DEFAULT 'pending',
         admin_note TEXT,
