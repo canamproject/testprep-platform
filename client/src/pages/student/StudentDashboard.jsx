@@ -363,11 +363,35 @@ function BatchBrowser({ accent, user }) {
 function StudentLiveClasses({ accent }) {
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [myCoupons, setMyCoupons] = useState([]);
+  const [couponInput, setCouponInput] = useState('');
+  const [couponMsg, setCouponMsg] = useState({ text: '', ok: false });
   const navigate = useNavigate();
 
-  useEffect(() => {
-    api.get('/student/all-classes').then(setClasses).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+  const loadAll = () => {
+    setLoading(true);
+    Promise.all([
+      api.get('/student/all-classes').catch(() => []),
+      api.get('/student/my-coupons').catch(() => []),
+    ]).then(([cls, coupons]) => {
+      setClasses(cls);
+      setMyCoupons(coupons);
+    }).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { loadAll(); }, []);
+
+  const redeemCoupon = async () => {
+    if (!couponInput.trim()) return;
+    try {
+      const res = await api.post('/student/redeem-coupon', { code: couponInput.trim() });
+      setCouponMsg({ text: res.message, ok: true });
+      setCouponInput('');
+      loadAll();
+    } catch (e) {
+      setCouponMsg({ text: e.message, ok: false });
+    }
+  };
 
   const isLive = (scheduledAt) => Math.abs(new Date() - new Date(scheduledAt)) / 60000 < 60;
   const canJoin = (scheduledAt) => (new Date(scheduledAt) - new Date()) / 60000 <= 15;
@@ -377,7 +401,41 @@ function StudentLiveClasses({ accent }) {
   return (
     <div>
       <h2 className="text-xl font-black text-slate-900 mb-2">Live Classes</h2>
-      <p className="text-sm text-slate-400 mb-6">Your enrolled classes + previews available for other courses</p>
+      <p className="text-sm text-slate-400 mb-4">Your enrolled classes + previews available for other courses</p>
+
+      {/* Coupon redemption box */}
+      <div className="card mb-5 p-4" style={{border:`1px solid ${accent}30`, background:`${accent}06`}}>
+        <p className="text-xs font-bold uppercase tracking-wide mb-2" style={{color:accent}}>Got a Class-Access Coupon?</p>
+        <div className="flex gap-2">
+          <input className="input flex-1" placeholder="Enter coupon code (e.g. DEMO2024)"
+            value={couponInput} onChange={e => setCouponInput(e.target.value.toUpperCase())}
+            onKeyDown={e => e.key === 'Enter' && redeemCoupon()} />
+          <button className="px-4 py-2 rounded-xl text-white font-bold text-sm hover:opacity-90 transition"
+            style={{background:accent}} onClick={redeemCoupon}>
+            Redeem
+          </button>
+        </div>
+        {couponMsg.text && (
+          <p className={`text-xs mt-2 font-medium ${couponMsg.ok ? 'text-green-600' : 'text-red-500'}`}>
+            {couponMsg.ok ? '✓ ' : '✗ '}{couponMsg.text}
+          </p>
+        )}
+        {/* Active coupons summary */}
+        {myCoupons.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {myCoupons.map(c => (
+              <div key={c.code} className="flex items-center gap-1.5 bg-white border rounded-lg px-2.5 py-1 text-xs">
+                <span className="font-mono font-bold text-slate-700">{c.code}</span>
+                <span className="text-slate-400">·</span>
+                <span className="text-slate-500">
+                  {c.access_type === 'unlimited' ? 'Unlimited' : `${c.remaining} ${c.access_type === 'class_count' ? 'classes left' : 'hours left'}`}
+                </span>
+                {c.expires_at && <span className="text-slate-400">· exp {new Date(c.expires_at).toLocaleDateString()}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       {classes.length === 0 ? (
         <div className="card text-center py-12">
           <p className="text-4xl mb-3">📺</p>

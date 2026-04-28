@@ -13,15 +13,19 @@ export default function LiveClassRoom() {
   const [attendance, setAttendance] = useState({ joined: false, duration: 0 });
   const [demoSecondsLeft, setDemoSecondsLeft] = useState(null);
   const [showPaywall, setShowPaywall] = useState(false);
+  const [showReminderBanner, setShowReminderBanner] = useState(false);
+  const [reminderCount, setReminderCount] = useState(0);
   const jitsiRef = useRef(null);
   const timerRef = useRef(null);
   const demoTimerRef = useRef(null);
+  const reminderTimerRef = useRef(null);
 
   useEffect(() => {
     loadClassInfo();
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (demoTimerRef.current) clearInterval(demoTimerRef.current);
+      if (reminderTimerRef.current) clearInterval(reminderTimerRef.current);
       handleLeave();
     };
   }, [id]);
@@ -39,6 +43,14 @@ export default function LiveClassRoom() {
           duration: Math.floor((Date.now() - prev.startTime) / 1000)
         }));
       }, 10000);
+
+      // Every-3-min payment reminder for demo users (not for paid students)
+      if (data.is_demo) {
+        reminderTimerRef.current = setInterval(() => {
+          setShowReminderBanner(true);
+          setReminderCount(n => n + 1);
+        }, 3 * 60 * 1000); // every 3 minutes
+      }
 
       // Start demo countdown if demo mode
       if (data.is_demo && data.demo_minutes) {
@@ -140,6 +152,7 @@ export default function LiveClassRoom() {
   const handleLeave = async () => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (demoTimerRef.current) { clearInterval(demoTimerRef.current); demoTimerRef.current = null; }
+    if (reminderTimerRef.current) { clearInterval(reminderTimerRef.current); reminderTimerRef.current = null; }
 
     try {
       if (attendance.joined) {
@@ -223,6 +236,36 @@ export default function LiveClassRoom() {
       {/* Jitsi Container */}
       <div className="flex-1 relative" style={{ height: 'calc(100vh - 48px)' }}>
         <div ref={jitsiRef} className="w-full h-full" />
+
+        {/* 3-min dismissible payment reminder (demo only, not for paid students) */}
+        {classInfo?.is_demo && showReminderBanner && !showPaywall && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 w-full max-w-md px-4">
+            <div className="bg-amber-500 text-white rounded-2xl shadow-2xl px-5 py-4 flex items-start gap-3 animate-bounce-once">
+              <span className="text-2xl flex-shrink-0">💳</span>
+              <div className="flex-1">
+                <p className="font-bold text-sm">You're watching a free preview</p>
+                <p className="text-xs text-amber-100 mt-0.5">
+                  Purchase <strong>{classInfo.course_title}</strong> for full access to all classes.
+                  {demoSecondsLeft !== null && (
+                    <span> Demo ends in {formatDemoTime(demoSecondsLeft)}.</span>
+                  )}
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    className="bg-white text-amber-600 font-bold text-xs px-3 py-1.5 rounded-lg hover:bg-amber-50 transition"
+                    onClick={() => { handleLeave(); navigate('/student', { state: { tab: 'catalog' } }); }}>
+                    Buy ₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}
+                  </button>
+                  <button
+                    className="text-amber-100 text-xs px-3 py-1.5 rounded-lg hover:bg-amber-600 transition"
+                    onClick={() => setShowReminderBanner(false)}>
+                    Remind me later ✕
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Paywall overlay when demo expires */}
         {showPaywall && (

@@ -754,6 +754,109 @@ app.put('/api/faculty/classes/:id/end', authMiddleware(['faculty']), async (req,
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// ─── CLASS ACCESS COUPONS ─────────────────────────────────────
+
+// Admin: create coupon
+app.post('/api/admin/class-coupons', authMiddleware(['super_admin']), async (req, res) => {
+  const { code, agency_id, description, access_type, allowed_count, max_redemptions, expires_at } = req.body;
+  if (!code) return res.status(400).json({ error: 'code is required' });
+  try {
+    const [r] = await getPool().query(
+      `INSERT INTO class_access_coupons (code, agency_id, description, access_type, allowed_count, max_redemptions, expires_at, created_by)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [code.toUpperCase(), agency_id || null, description || null,
+       access_type || 'class_count', allowed_count || 5, max_redemptions || 100,
+       expires_at || null, req.user.id]
+    );
+    res.json({ id: r.insertId, message: 'Coupon created' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: list all class coupons
+app.get('/api/admin/class-coupons', authMiddleware(['super_admin']), async (req, res) => {
+  const [rows] = await getPool().query(`
+    SELECT cac.*, a.name as agency_name, a.brand_color,
+      (SELECT COUNT(*) FROM coupon_redemptions cr WHERE cr.coupon_id = cac.id) as redemption_count
+    FROM class_access_coupons cac
+    LEFT JOIN agencies a ON cac.agency_id = a.id
+    ORDER BY cac.created_at DESC
+  `);
+  res.json(rows);
+});
+
+// Admin: toggle coupon status
+app.put('/api/admin/class-coupons/:id', authMiddleware(['super_admin']), async (req, res) => {
+  const { is_active, allowed_count, max_redemptions, expires_at } = req.body;
+  await getPool().query(
+    `UPDATE class_access_coupons SET is_active=?, allowed_count=?, max_redemptions=?, expires_at=? WHERE id=?`,
+    [is_active, allowed_count, max_redemptions, expires_at || null, req.params.id]
+  );
+  res.json({ message: 'Updated' });
+});
+
+// Partner: see coupons for their agency
+app.get('/api/partner/class-coupons', authMiddleware(['partner_admin']), async (req, res) => {
+  const [rows] = await getPool().query(`
+    SELECT cac.*,
+      (SELECT COUNT(*) FROM coupon_redemptions cr WHERE cr.coupon_id = cac.id) as redemption_count
+    FROM class_access_coupons cac
+    WHERE (cac.agency_id = ? OR cac.agency_id IS NULL) AND cac.is_active = 1
+    ORDER BY cac.created_at DESC
+  `, [req.user.agency_id]);
+  res.json(rows);
+});
+
+// Student: redeem a coupon
+app.post('/api/student/redeem-coupon', authMiddleware(['student']), async (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ error: 'Coupon code required' });
+  try {
+    const [[coupon]] = await getPool().query(`
+      SELECT * FROM class_access_coupons
+      WHERE code = ? AND is_active = 1
+        AND (expires_at IS NULL OR expires_at >= CURDATE())
+        AND (agency_id IS NULL OR agency_id = ?)
+        AND used_count < max_redemptions
+    `, [code.toUpperCase(), req.user.agency_id]);
+    if (!coupon) return res.status(404).json({ error: 'Invalid, expired, or already fully used coupon code' });
+
+    // Check if already redeemed
+    const [[existing]] = await getPool().query(
+      'SELECT id FROM coupon_redemptions WHERE coupon_id=? AND student_id=?',
+      [coupon.id, req.user.id]
+    );
+    if (existing) return res.status(400).json({ error: 'You have already redeemed this coupon' });
+
+    await getPool().query(
+      'INSERT INTO coupon_redemptions (coupon_id, student_id) VALUES (?,?)',
+      [coupon.id, req.user.id]
+    );
+    await getPool().query('UPDATE class_access_coupons SET used_count = used_count + 1 WHERE id=?', [coupon.id]);
+
+    const label = coupon.access_type === 'class_count'
+      ? `${coupon.allowed_count} live classes`
+      : coupon.access_type === 'hour_count'
+        ? `${coupon.allowed_count} hours of content`
+        : 'unlimited access';
+    res.json({ message: `Coupon redeemed! You now have access to ${label}.`, coupon });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Student: see their active coupons
+app.get('/api/student/my-coupons', authMiddleware(['student']), async (req, res) => {
+  const [rows] = await getPool().query(`
+    SELECT cac.code, cac.description, cac.access_type, cac.allowed_count,
+      cr.classes_used, cr.minutes_used, cr.redeemed_at, cac.expires_at,
+      (cac.allowed_count - cr.classes_used) as remaining
+    FROM coupon_redemptions cr
+    JOIN class_access_coupons cac ON cr.coupon_id = cac.id
+    WHERE cr.student_id = ? AND cac.is_active = 1
+      AND (cac.expires_at IS NULL OR cac.expires_at >= CURDATE())
+    ORDER BY cr.redeemed_at DESC
+  `, [req.user.id]);
+  res.json(rows);
+});
+
 // ─── BATCH ENROLLMENTS ────────────────────────────────────────
 app.get('/api/batches/:id/students', authMiddleware(), async (req, res) => {
   const [rows] = await getPool().query(`
@@ -832,9 +935,8 @@ app.get('/api/live-classes/upcoming', authMiddleware(), async (req, res) => {
        JOIN batches b ON lc.batch_id = b.id
        JOIN courses c ON b.course_id = c.id
        JOIN enrollments e ON e.course_id = c.id AND e.student_id = ? AND e.status = 'active'
-       WHERE lc.scheduled_at >= NOW()
-        AND lc.status IN ('scheduled','live')
-       ORDER BY lc.scheduled_at ASC
+       WHERE (lc.status = 'live' OR (lc.status = 'scheduled' AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)))
+       ORDER BY lc.status = 'live' DESC, lc.scheduled_at ASC
        LIMIT 10`;
     params = [studentId];
   } else if (isAdmin) {
@@ -970,19 +1072,47 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
         isModerator = true;
       }
     } else if (userRole === 'student') {
-      // Check if student has purchased the course linked to this batch
+      // 1. Paid enrollment → full access
       const [[enrollment]] = await getPool().query(`
         SELECT e.id FROM enrollments e
-        WHERE e.course_id = ? AND e.student_id = ? AND e.status = 'active'
+        WHERE e.course_id = ? AND e.student_id = ? AND e.status = 'active' AND e.payment_status = 'paid'
         LIMIT 1
       `, [liveClass.course_id, userId]);
 
       if (enrollment) {
         canJoin = true;
-      } else if (req.user.agency_id === liveClass.agency_id) {
-        // Demo mode — any student from the same agency gets 15 min free preview
-        canJoin = true;
-        isDemo = true;
+      } else {
+        // 2. Valid class-access coupon → full access (tracks usage)
+        const [[couponAccess]] = await getPool().query(`
+          SELECT cr.id, cr.classes_used, cac.access_type, cac.allowed_count, cac.code
+          FROM coupon_redemptions cr
+          JOIN class_access_coupons cac ON cr.coupon_id = cac.id
+          WHERE cr.student_id = ? AND cac.is_active = 1
+            AND (cac.expires_at IS NULL OR cac.expires_at >= CURDATE())
+            AND (cac.agency_id IS NULL OR cac.agency_id = ?)
+            AND (cac.access_type = 'unlimited' OR cr.classes_used < cac.allowed_count)
+          LIMIT 1
+        `, [userId, liveClass.agency_id]);
+
+        if (couponAccess) {
+          canJoin = true;
+          // Increment class usage counter
+          await getPool().query(
+            'UPDATE coupon_redemptions SET classes_used = classes_used + 1 WHERE id = ?',
+            [couponAccess.id]
+          );
+          res._couponInfo = {
+            code: couponAccess.code,
+            access_type: couponAccess.access_type,
+            remaining: couponAccess.access_type === 'unlimited'
+              ? null
+              : couponAccess.allowed_count - couponAccess.classes_used - 1
+          };
+        } else if (req.user.agency_id === liveClass.agency_id) {
+          // 3. Demo mode — same-agency student gets 15 min free preview
+          canJoin = true;
+          isDemo = true;
+        }
       }
     }
 
@@ -1008,11 +1138,13 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
       is_moderator: isModerator,
       is_demo: isDemo,
       demo_minutes: isDemo ? 15 : null,
+      coupon_info: res._couponInfo || null,
       course_id: liveClass.course_id,
       course_title: liveClass.course_title,
       course_price: Number(liveClass.course_price),
       agency_id: liveClass.agency_id,
       class_mode: liveClass.class_mode,
+      duration_minutes: liveClass.duration_minutes,
       allow_chat: isDemo ? false : liveClass.allow_chat,
       allow_video: isModerator ? true : (isDemo ? false : liveClass.allow_student_video),
       allow_audio: isModerator ? true : (isDemo ? false : liveClass.allow_student_audio)
@@ -1036,9 +1168,11 @@ app.get('/api/student/all-classes', authMiddleware(['student']), async (req, res
       JOIN batches b ON lc.batch_id = b.id
       JOIN courses c ON b.course_id = c.id
       WHERE b.agency_id = ?
-        AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
-        AND lc.status IN ('scheduled','live')
-      ORDER BY lc.scheduled_at ASC
+        AND (
+          lc.status = 'live'
+          OR (lc.status = 'scheduled' AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 30 MINUTE))
+        )
+      ORDER BY lc.status = 'live' DESC, lc.scheduled_at ASC
       LIMIT 30
     `, [studentId, agencyId]);
     res.json(rows);
@@ -1408,6 +1542,37 @@ async function runMigrations() {
       ALTER TABLE live_classes
         ADD COLUMN IF NOT EXISTS started_at TIMESTAMP NULL,
         ADD COLUMN IF NOT EXISTS ended_at TIMESTAMP NULL
+    `).catch(() => {});
+
+    // Class-access coupons (admin gives to partner, partner distributes to students)
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS class_access_coupons (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(50) NOT NULL UNIQUE,
+        agency_id INT,
+        description VARCHAR(255),
+        access_type ENUM('class_count','hour_count','unlimited') DEFAULT 'class_count',
+        allowed_count INT DEFAULT 5,
+        max_redemptions INT DEFAULT 100,
+        used_count INT DEFAULT 0,
+        expires_at DATE,
+        is_active TINYINT(1) DEFAULT 1,
+        created_by INT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `).catch(() => {});
+
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS coupon_redemptions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        coupon_id INT NOT NULL,
+        student_id INT NOT NULL,
+        classes_used INT DEFAULT 0,
+        minutes_used INT DEFAULT 0,
+        redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_coupon_student (coupon_id, student_id),
+        FOREIGN KEY (coupon_id) REFERENCES class_access_coupons(id)
+      )
     `).catch(() => {});
 
     console.log('✅ Migrations applied');

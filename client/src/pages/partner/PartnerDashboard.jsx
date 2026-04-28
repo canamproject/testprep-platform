@@ -417,11 +417,23 @@ function CRM({ accent }) {
 // ── COUPONS ──────────────────────────────────────────────────
 function Coupons({ accent }) {
   const [coupons, setCoupons] = useState([]);
+  const [classCoupons, setClassCoupons] = useState([]);
+  const [tab, setTab] = useState('class');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ code: '', discount_type: 'percentage', value: '', min_order: '', max_uses: 100, expires_at: '' });
   const [msg, setMsg] = useState('');
-  const load = () => api.get('/partner/coupons').then(setCoupons);
+  const [copied, setCopied] = useState(null);
+  const load = () => {
+    api.get('/partner/coupons').then(setCoupons).catch(() => {});
+    api.get('/partner/class-coupons').then(setClassCoupons).catch(() => {});
+  };
   useEffect(() => { load(); }, []);
+
+  const copyCode = (code) => {
+    navigator.clipboard.writeText(code);
+    setCopied(code);
+    setTimeout(() => setCopied(null), 2000);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -434,45 +446,104 @@ function Coupons({ accent }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-black text-slate-900">My Coupons</h2>
-        <button className="btn-primary" style={{ background: accent }} onClick={() => setShowForm(!showForm)}>+ Create Coupon</button>
+        <h2 className="text-xl font-black text-slate-900">Coupons</h2>
+        {tab === 'discount' && (
+          <button className="btn-primary" style={{ background: accent }} onClick={() => setShowForm(!showForm)}>+ Create Discount Coupon</button>
+        )}
       </div>
-      {msg && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-sm">{msg}</div>}
-      {showForm && (
-        <div className="card mb-6">
-          <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-4">
-            <div><label>Coupon Code</label><input required value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })} placeholder="SAVE20" /></div>
-            <div><label>Discount Type</label><select value={form.discount_type} onChange={e => setForm({ ...form, discount_type: e.target.value })}><option value="percentage">Percentage %</option><option value="fixed">Fixed ₹</option></select></div>
-            <div><label>Value</label><input type="number" required value={form.value} onChange={e => setForm({ ...form, value: e.target.value })} /></div>
-            <div><label>Min Order (₹)</label><input type="number" value={form.min_order} onChange={e => setForm({ ...form, min_order: e.target.value })} /></div>
-            <div><label>Max Uses</label><input type="number" value={form.max_uses} onChange={e => setForm({ ...form, max_uses: e.target.value })} /></div>
-            <div><label>Expires At</label><input type="date" value={form.expires_at} onChange={e => setForm({ ...form, expires_at: e.target.value })} /></div>
-            <div className="col-span-3 flex gap-2"><button type="submit" className="btn-success">Create Coupon</button><button type="button" className="btn-ghost" onClick={() => setShowForm(false)}>Cancel</button></div>
-          </form>
-        </div>
-      )}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-        {coupons.map(c => (
-          <div key={c.id} className="card">
-            <div className="text-center mb-4">
-              <div className="inline-block font-mono font-black text-xl bg-slate-100 px-4 py-2 rounded-xl text-slate-900 border-2 border-dashed border-slate-200">{c.code}</div>
-            </div>
-            <div className="grid grid-cols-2 gap-y-2 text-sm">
-              <div className="text-slate-400">Discount</div>
-              <div className="font-bold text-emerald-600">{c.discount_type === 'percentage' ? `${c.value}% off` : `₹${c.value} off`}</div>
-              <div className="text-slate-400">Min Order</div>
-              <div>{c.min_order > 0 ? fmt(c.min_order) : 'No minimum'}</div>
-              <div className="text-slate-400">Used</div>
-              <div>{c.used_count} / {c.max_uses}</div>
-              <div className="text-slate-400">Expires</div>
-              <div className="text-xs">{c.expires_at || 'No expiry'}</div>
-            </div>
-            <div className="mt-3 pt-3 border-t border-slate-50">
-              <span className={`badge ${c.is_active ? 'badge-green' : 'badge-gray'}`}>{c.is_active ? 'Active' : 'Inactive'}</span>
-            </div>
-          </div>
+
+      <div className="flex gap-2 mb-6">
+        {[['class','🎓 Class-Access (from Admin)'],['discount','🏷️ Discount Coupons']].map(([t,l]) => (
+          <button key={t} onClick={() => setTab(t)}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${tab===t ? 'text-white' : 'bg-white border border-slate-200 text-slate-600'}`}
+            style={tab===t ? {background:accent} : {}}>
+            {l}
+          </button>
         ))}
       </div>
+
+      {msg && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-sm">{msg}</div>}
+
+      {/* Class-access coupons from admin */}
+      {tab === 'class' && (
+        <div>
+          <p className="text-sm text-slate-400 mb-4">These codes are created by the admin and assigned to your academy. Share them with students so they can join live classes for free (limited access).</p>
+          {classCoupons.length === 0 ? (
+            <div className="card text-center py-12 text-slate-400">
+              <p className="text-3xl mb-2">🎟️</p>
+              <p>No class-access coupons assigned to your academy yet.</p>
+              <p className="text-sm mt-1">Contact the admin to create one for you.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {classCoupons.map(c => (
+                <div key={c.id} className="card relative overflow-hidden">
+                  <div className="absolute top-0 left-0 right-0 h-1" style={{background:accent}} />
+                  <div className="flex items-start justify-between mt-2">
+                    <div>
+                      <div className="flex items-center gap-3 mb-2">
+                        <span className="font-mono font-black text-2xl text-slate-900 bg-slate-100 px-4 py-1.5 rounded-xl border-2 border-dashed border-slate-300">{c.code}</span>
+                        <button onClick={() => copyCode(c.code)}
+                          className="text-xs px-3 py-1.5 rounded-lg border transition-all hover:bg-slate-50"
+                          style={{borderColor:accent, color:accent}}>
+                          {copied === c.code ? '✓ Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                      {c.description && <p className="text-sm text-slate-500 mb-2">{c.description}</p>}
+                      <div className="flex flex-wrap gap-3 text-sm text-slate-600">
+                        <span className="badge badge-blue">
+                          {c.access_type === 'unlimited' ? 'Unlimited' : `${c.allowed_count} ${c.access_type === 'class_count' ? 'classes' : 'hours'} per student`}
+                        </span>
+                        <span>{c.used_count}/{c.max_redemptions} redeemed</span>
+                        {c.expires_at && <span>Expires {new Date(c.expires_at).toLocaleDateString()}</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Discount coupons */}
+      {tab === 'discount' && (
+        <>
+          {showForm && (
+            <div className="card mb-6">
+              <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-4">
+                <div><label className="label">Coupon Code</label><input className="input" required value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })} placeholder="SAVE20" /></div>
+                <div><label className="label">Discount Type</label><select className="input" value={form.discount_type} onChange={e => setForm({ ...form, discount_type: e.target.value })}><option value="percentage">Percentage %</option><option value="fixed">Fixed ₹</option></select></div>
+                <div><label className="label">Value</label><input className="input" type="number" required value={form.value} onChange={e => setForm({ ...form, value: e.target.value })} /></div>
+                <div><label className="label">Min Order (₹)</label><input className="input" type="number" value={form.min_order} onChange={e => setForm({ ...form, min_order: e.target.value })} /></div>
+                <div><label className="label">Max Uses</label><input className="input" type="number" value={form.max_uses} onChange={e => setForm({ ...form, max_uses: e.target.value })} /></div>
+                <div><label className="label">Expires At</label><input className="input" type="date" value={form.expires_at} onChange={e => setForm({ ...form, expires_at: e.target.value })} /></div>
+                <div className="col-span-3 flex gap-2"><button type="submit" className="btn-primary" style={{background:accent}}>Create Coupon</button><button type="button" className="btn" onClick={() => setShowForm(false)}>Cancel</button></div>
+              </form>
+            </div>
+          )}
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+            {coupons.map(c => (
+              <div key={c.id} className="card">
+                <div className="text-center mb-4">
+                  <div className="inline-block font-mono font-black text-xl bg-slate-100 px-4 py-2 rounded-xl text-slate-900 border-2 border-dashed border-slate-200">{c.code}</div>
+                </div>
+                <div className="grid grid-cols-2 gap-y-2 text-sm">
+                  <div className="text-slate-400">Discount</div>
+                  <div className="font-bold text-emerald-600">{c.discount_type === 'percentage' ? `${c.value}% off` : `₹${c.value} off`}</div>
+                  <div className="text-slate-400">Used</div>
+                  <div>{c.used_count} / {c.max_uses}</div>
+                  <div className="text-slate-400">Expires</div>
+                  <div className="text-xs">{c.expires_at || 'No expiry'}</div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-slate-50">
+                  <span className={`badge ${c.is_active ? 'badge-green' : 'badge-gray'}`}>{c.is_active ? 'Active' : 'Inactive'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

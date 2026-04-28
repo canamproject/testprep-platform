@@ -344,31 +344,184 @@ function Commissions() {
 // ── COUPONS ──────────────────────────────────────────────────
 function AdminCoupons() {
   const [coupons, setCoupons] = useState([]);
-  useEffect(() => { api.get('/admin/coupons').then(setCoupons); }, []);
+  const [agencies, setAgencies] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [tab, setTab] = useState('class'); // 'class' | 'discount'
+  const [discountCoupons, setDiscountCoupons] = useState([]);
+  const [form, setForm] = useState({
+    code: '', agency_id: '', description: '',
+    access_type: 'class_count', allowed_count: 5,
+    max_redemptions: 100, expires_at: ''
+  });
+  const [msg, setMsg] = useState('');
+
+  const load = () => {
+    api.get('/admin/class-coupons').then(setCoupons).catch(() => {});
+    api.get('/admin/coupons').then(setDiscountCoupons).catch(() => {});
+  };
+  useEffect(() => { load(); api.get('/admin/agencies').then(setAgencies); }, []);
+
+  const genCode = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    return Array.from({length: 8}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+  };
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post('/admin/class-coupons', form);
+      setMsg('Coupon created successfully!');
+      setShowForm(false);
+      setForm({ code: '', agency_id: '', description: '', access_type: 'class_count', allowed_count: 5, max_redemptions: 100, expires_at: '' });
+      load();
+    } catch (e) { setMsg(e.message); }
+  };
+
+  const toggleActive = async (c) => {
+    await api.put(`/admin/class-coupons/${c.id}`, { ...c, is_active: c.is_active ? 0 : 1 });
+    load();
+  };
+
   return (
     <div>
-      <h2 className="text-xl font-black text-slate-900 mb-6">All Coupons</h2>
-      <div className="card">
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Code</th><th>Agency</th><th>Type</th><th>Value</th><th>Min Order</th><th>Used</th><th>Expires</th><th>Status</th></tr></thead>
-            <tbody>
-              {coupons.map(c => (
-                <tr key={c.id}>
-                  <td><span className="font-mono font-black text-slate-900 bg-slate-100 px-3 py-1 rounded-lg text-sm">{c.code}</span></td>
-                  <td><span className="text-xs font-bold" style={{ color: c.brand_color }}>{c.agency_name}</span></td>
-                  <td><span className="badge badge-blue">{c.discount_type}</span></td>
-                  <td className="font-bold">{c.discount_type === 'percentage' ? `${c.value}%` : fmt(c.value)}</td>
-                  <td>{c.min_order > 0 ? fmt(c.min_order) : 'None'}</td>
-                  <td>{c.used_count} / {c.max_uses}</td>
-                  <td className="text-slate-400 text-xs">{c.expires_at}</td>
-                  <td><Badge status={c.is_active ? 'active' : 'cancelled'} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-black text-slate-900">Coupons</h2>
+        {tab === 'class' && (
+          <button className="btn-primary" onClick={() => setShowForm(!showForm)}>+ Create Class-Access Coupon</button>
+        )}
       </div>
+
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6">
+        {[['class','🎓 Class-Access Coupons'],['discount','🏷️ Discount Coupons']].map(([t,l]) => (
+          <button key={t} onClick={() => setTab(t)}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${tab===t ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {msg && <div className="mb-4 p-3 bg-blue-50 text-blue-700 text-sm rounded-lg">{msg}</div>}
+
+      {/* Class-access coupon creation form */}
+      {tab === 'class' && showForm && (
+        <form onSubmit={handleCreate} className="card mb-6">
+          <h3 className="text-sm font-bold text-slate-700 mb-1">Create Class-Access Coupon</h3>
+          <p className="text-xs text-slate-400 mb-4">Give this code to a partner. Students use it to unlock free class access without purchasing the course.</p>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="label">Coupon Code *</label>
+              <div className="flex gap-2">
+                <input className="input flex-1" required placeholder="e.g. DEMO2024" value={form.code}
+                  onChange={e => setForm({...form, code: e.target.value.toUpperCase()})} />
+                <button type="button" className="btn text-xs px-2" onClick={() => setForm({...form, code: genCode()})}>Gen</button>
+              </div>
+            </div>
+            <div>
+              <label className="label">Agency (leave blank = all)</label>
+              <select className="input" value={form.agency_id} onChange={e => setForm({...form, agency_id: e.target.value})}>
+                <option value="">All Agencies</option>
+                {agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Access Type</label>
+              <select className="input" value={form.access_type} onChange={e => setForm({...form, access_type: e.target.value})}>
+                <option value="class_count">Number of Classes</option>
+                <option value="hour_count">Hours of Content</option>
+                <option value="unlimited">Unlimited</option>
+              </select>
+            </div>
+            {form.access_type !== 'unlimited' && (
+              <div>
+                <label className="label">{form.access_type === 'class_count' ? 'Classes Allowed' : 'Hours Allowed'}</label>
+                <input type="number" className="input" min="1" value={form.allowed_count}
+                  onChange={e => setForm({...form, allowed_count: +e.target.value})} />
+              </div>
+            )}
+            <div>
+              <label className="label">Max Student Redemptions</label>
+              <input type="number" className="input" min="1" value={form.max_redemptions}
+                onChange={e => setForm({...form, max_redemptions: +e.target.value})} />
+            </div>
+            <div>
+              <label className="label">Expires On (optional)</label>
+              <input type="date" className="input" value={form.expires_at}
+                onChange={e => setForm({...form, expires_at: e.target.value})} />
+            </div>
+            <div className="col-span-3">
+              <label className="label">Description / Note for partner</label>
+              <input className="input" placeholder="e.g. Free trial for May batch students" value={form.description}
+                onChange={e => setForm({...form, description: e.target.value})} />
+            </div>
+          </div>
+          <div className="flex gap-2 mt-4">
+            <button type="submit" className="btn-primary">Create Coupon</button>
+            <button type="button" className="btn" onClick={() => setShowForm(false)}>Cancel</button>
+          </div>
+        </form>
+      )}
+
+      {/* Class-access coupons list */}
+      {tab === 'class' && (
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Code</th><th>Agency</th><th>Access</th><th>Redeemed</th><th>Expires</th><th>Status</th><th>Action</th></tr></thead>
+              <tbody>
+                {coupons.map(c => (
+                  <tr key={c.id}>
+                    <td>
+                      <div className="font-mono font-black text-slate-900 bg-slate-100 px-3 py-1 rounded-lg text-sm inline-block">{c.code}</div>
+                      {c.description && <div className="text-xs text-slate-400 mt-1">{c.description}</div>}
+                    </td>
+                    <td className="text-sm">{c.agency_name || <span className="text-slate-400">All</span>}</td>
+                    <td>
+                      <span className="badge badge-blue">
+                        {c.access_type === 'unlimited' ? 'Unlimited' : `${c.allowed_count} ${c.access_type === 'class_count' ? 'classes' : 'hours'}`}
+                      </span>
+                    </td>
+                    <td className="text-sm">{c.used_count} / {c.max_redemptions}</td>
+                    <td className="text-xs text-slate-400">{c.expires_at ? new Date(c.expires_at).toLocaleDateString() : '—'}</td>
+                    <td><Badge status={c.is_active ? 'active' : 'cancelled'} /></td>
+                    <td>
+                      <button onClick={() => toggleActive(c)}
+                        className={`text-xs px-2 py-1 rounded border ${c.is_active ? 'border-red-200 text-red-500 hover:bg-red-50' : 'border-green-200 text-green-600 hover:bg-green-50'}`}>
+                        {c.is_active ? 'Deactivate' : 'Activate'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {coupons.length === 0 && <tr><td colSpan="7" className="text-center text-slate-400 py-8">No class-access coupons yet</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Discount coupons list (existing) */}
+      {tab === 'discount' && (
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Code</th><th>Agency</th><th>Type</th><th>Value</th><th>Used</th><th>Expires</th><th>Status</th></tr></thead>
+              <tbody>
+                {discountCoupons.map(c => (
+                  <tr key={c.id}>
+                    <td><span className="font-mono font-black text-slate-900 bg-slate-100 px-3 py-1 rounded-lg text-sm">{c.code}</span></td>
+                    <td><span className="text-xs font-bold" style={{ color: c.brand_color }}>{c.agency_name}</span></td>
+                    <td><span className="badge badge-blue">{c.discount_type}</span></td>
+                    <td className="font-bold">{c.discount_type === 'percentage' ? `${c.value}%` : fmt(c.value)}</td>
+                    <td>{c.used_count} / {c.max_uses}</td>
+                    <td className="text-slate-400 text-xs">{c.expires_at}</td>
+                    <td><Badge status={c.is_active ? 'active' : 'cancelled'} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
