@@ -805,6 +805,18 @@ function LiveClassesAdmin() {
     } catch (err) { alert(err.message); }
   };
 
+  const handleEndClass = async (c) => {
+    if (!confirm(`End "${c.title}"? This will close the class for all participants.`)) return;
+    try {
+      await api.put(`/live-classes/${c.id}`, {
+        title: c.title, description: c.description,
+        scheduled_at: c.scheduled_at, duration_minutes: c.duration_minutes,
+        class_mode: c.class_mode, status: 'ended'
+      });
+      loadClasses();
+    } catch (err) { alert(err.message); }
+  };
+
   const statusColor = (s) => ({
     pending_approval: 'bg-amber-100 text-amber-700',
     scheduled: 'bg-blue-100 text-blue-700',
@@ -922,6 +934,11 @@ function LiveClassesAdmin() {
                       {(c.status === 'scheduled' || c.status === 'live') && (
                         <button className="btn-primary text-xs" onClick={() => window.open(`/live-class/${c.id}`, '_blank')}>
                           {c.status === 'live' ? '🔴 Join Live' : 'Start Class'}
+                        </button>
+                      )}
+                      {c.status === 'live' && (
+                        <button className="text-xs px-3 py-1 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 transition" onClick={() => handleEndClass(c)}>
+                          ⏹ End Class
                         </button>
                       )}
                     </div>

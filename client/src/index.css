@@ -5,31 +5,65 @@
 * { box-sizing: border-box; }
 body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
 
+/* ── Sidebar nav ───────────────────────────────────────────── */
 .sidebar-item { @apply flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-lg transition-all cursor-pointer text-slate-300 hover:text-white hover:bg-white/10; }
 .sidebar-item.active { @apply bg-white/15 text-white; }
 
+/* ── Buttons ────────────────────────────────────────────────── */
 .btn-primary { @apply px-4 py-2 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors; }
 .btn-success { @apply px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors; }
-.btn-danger { @apply px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors; }
-.btn-ghost { @apply px-4 py-2 bg-white text-slate-700 text-sm font-semibold rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors; }
+.btn-danger  { @apply px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors; }
+.btn-ghost   { @apply px-4 py-2 bg-white text-slate-700 text-sm font-semibold rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors; }
 
-.stat-card { @apply bg-white rounded-2xl border border-slate-100 shadow-sm p-5; }
-.card { @apply bg-white rounded-2xl border border-slate-100 shadow-sm p-6; }
+/* ── Cards ──────────────────────────────────────────────────── */
+.stat-card { @apply bg-white rounded-2xl border border-slate-100 shadow-sm p-4 md:p-5; }
+.card      { @apply bg-white rounded-2xl border border-slate-100 shadow-sm p-4 md:p-6; }
 
-.badge { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold; }
-.badge-green { @apply bg-emerald-50 text-emerald-700; }
-.badge-amber { @apply bg-amber-50 text-amber-700; }
-.badge-red { @apply bg-red-50 text-red-700; }
-.badge-blue { @apply bg-blue-50 text-blue-700; }
+/* ── Badges ─────────────────────────────────────────────────── */
+.badge        { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold; }
+.badge-green  { @apply bg-emerald-50 text-emerald-700; }
+.badge-amber  { @apply bg-amber-50 text-amber-700; }
+.badge-red    { @apply bg-red-50 text-red-700; }
+.badge-blue   { @apply bg-blue-50 text-blue-700; }
 .badge-purple { @apply bg-purple-50 text-purple-700; }
-.badge-gray { @apply bg-slate-100 text-slate-600; }
+.badge-gray   { @apply bg-slate-100 text-slate-600; }
 
-.table-wrap { @apply overflow-x-auto; }
-table { @apply w-full; }
-th { @apply text-left text-xs font-bold text-slate-400 uppercase tracking-wider px-4 py-3 bg-slate-50 border-b border-slate-100; }
-td { @apply px-4 py-3 text-sm text-slate-700 border-b border-slate-50; }
+/* ── Tables — scroll on mobile, full on desktop ─────────────── */
+.table-wrap { @apply overflow-x-auto -mx-4 md:mx-0; }
+.table-wrap table { @apply min-w-[600px] md:min-w-full w-full; }
+th { @apply text-left text-xs font-bold text-slate-400 uppercase tracking-wider px-3 md:px-4 py-3 bg-slate-50 border-b border-slate-100; }
+td { @apply px-3 md:px-4 py-3 text-sm text-slate-700 border-b border-slate-50; }
 tr:last-child td { @apply border-b-0; }
 tr:hover td { @apply bg-slate-50/50; }
 
+/* ── Forms ──────────────────────────────────────────────────── */
 input, select, textarea { @apply w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 bg-white transition; }
 label { @apply block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5; }
+
+/* ── Mobile stat grid ───────────────────────────────────────── */
+.stats-grid { @apply grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4; }
+
+/* ── Responsive page title row ──────────────────────────────── */
+.page-header { @apply flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 md:mb-6; }
+.page-title  { @apply text-lg md:text-xl font-black text-slate-900; }
+
+/* ── Mobile-friendly form grid ──────────────────────────────── */
+.form-grid-2 { @apply grid grid-cols-1 sm:grid-cols-2 gap-4; }
+.form-grid-3 { @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4; }
+
+/* ── Touch-friendly tap targets ─────────────────────────────── */
+@media (max-width: 768px) {
+  .btn-primary, .btn-success, .btn-danger, .btn-ghost {
+    @apply py-2.5 text-base;
+  }
+  input, select, textarea {
+    @apply py-3 text-base; /* prevents iOS zoom */
+    font-size: 16px !important;
+  }
+}
+
+/* ── PWA safe areas (notch / home indicator) ────────────────── */
+@supports (padding: max(0px)) {
+  .safe-bottom { padding-bottom: max(0.75rem, env(safe-area-inset-bottom)); }
+  .safe-top    { padding-top:    max(0.75rem, env(safe-area-inset-top)); }
+}
