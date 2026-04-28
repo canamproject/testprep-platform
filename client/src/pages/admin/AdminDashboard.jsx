@@ -808,11 +808,7 @@ function LiveClassesAdmin() {
   const handleEndClass = async (c) => {
     if (!confirm(`End "${c.title}"? This will close the class for all participants.`)) return;
     try {
-      await api.put(`/live-classes/${c.id}`, {
-        title: c.title, description: c.description,
-        scheduled_at: c.scheduled_at, duration_minutes: c.duration_minutes,
-        class_mode: c.class_mode, status: 'ended'
-      });
+      await api.put(`/admin/live-classes/${c.id}/end`, {});
       loadClasses();
     } catch (err) { alert(err.message); }
   };

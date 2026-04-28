@@ -1210,6 +1210,24 @@ app.post('/api/faculty/live-classes', authMiddleware(['faculty']), async (req, r
   }
 });
 
+// Admin ends a live class
+app.put('/api/admin/live-classes/:id/end', authMiddleware(['super_admin', 'partner_admin']), async (req, res) => {
+  const classId = req.params.id;
+  try {
+    const [[lc]] = await getPool().query('SELECT agency_id FROM live_classes WHERE id=?', [classId]);
+    if (!lc) return res.status(404).json({ error: 'Class not found' });
+    if (req.user.role === 'partner_admin' && lc.agency_id !== req.user.agency_id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    await getPool().query(
+      `UPDATE live_classes SET status='ended', ended_at=NOW() WHERE id=?`, [classId]
+    );
+    res.json({ message: 'Class ended' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Admin approves a faculty-created class
 app.put('/api/admin/live-classes/:id/approve', authMiddleware(['super_admin', 'partner_admin']), async (req, res) => {
   const classId = req.params.id;
