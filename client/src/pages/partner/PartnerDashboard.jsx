@@ -522,18 +522,20 @@ function Branding({ user, accent }) {
 function PartnerBatches({ accent }) {
   const [batches, setBatches] = useState([]);
   const [courses, setCourses] = useState([]);
+  const [facultyList, setFacultyList] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     course_id: '', name: '', description: '',
     start_date: '', end_date: '', schedule_days: 'Mon,Tue,Wed,Thu,Fri',
     class_time: '09:00', duration_minutes: 60,
-    trainer_name: '', max_students: 20
+    trainer_id: '', trainer_name: '', max_students: 20
   });
   const [msg, setMsg] = useState('');
 
   useEffect(() => {
     loadBatches();
     api.get('/courses').then(setCourses);
+    api.get('/partner/faculty').then(setFacultyList).catch(() => {});
   }, []);
 
   const loadBatches = () => api.get('/partner/batches').then(setBatches);
@@ -575,8 +577,20 @@ function PartnerBatches({ accent }) {
               <input className="input" required placeholder="e.g., IELTS April Morning" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
             </div>
             <div>
-              <label className="label">Trainer Name</label>
-              <input className="input" placeholder="Trainer name" value={form.trainer_name} onChange={e => setForm({...form, trainer_name: e.target.value})} />
+              <label className="label">Assign Faculty</label>
+              {facultyList.length > 0 ? (
+                <select className="input" value={form.trainer_id}
+                  onChange={e => {
+                    const f = facultyList.find(f => String(f.id) === e.target.value);
+                    setForm({ ...form, trainer_id: e.target.value, trainer_name: f?.name || '' });
+                  }}>
+                  <option value="">No faculty assigned</option>
+                  {facultyList.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+              ) : (
+                <input className="input" placeholder="Trainer name (add faculty first)" value={form.trainer_name}
+                  onChange={e => setForm({ ...form, trainer_name: e.target.value })} />
+              )}
             </div>
             <div>
               <label className="label">Start Date</label>
@@ -854,6 +868,149 @@ function OnlinePurchases({ accent }) {
   );
 }
 
+// ── FACULTY ──────────────────────────────────────────────────
+function PartnerFaculty({ accent }) {
+  const [faculty, setFaculty] = useState([]);
+  const [batches, setBatches] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [assignModal, setAssignModal] = useState(null); // faculty obj
+  const [form, setForm] = useState({ name: '', email: '', phone: '' });
+  const [msg, setMsg] = useState('');
+
+  const loadFaculty = () => api.get('/partner/faculty').then(setFaculty);
+  useEffect(() => {
+    loadFaculty();
+    api.get('/partner/batches').then(setBatches);
+  }, []);
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await api.post('/partner/faculty', form);
+      setMsg(res.message || 'Faculty created! Default password: Faculty@123');
+      setShowForm(false);
+      setForm({ name: '', email: '', phone: '' });
+      loadFaculty();
+    } catch (e) { setMsg(e.message); }
+  };
+
+  const handleAssign = async (batchId, trainerId) => {
+    try {
+      await api.put(`/partner/batches/${batchId}/assign-faculty`, { trainer_id: trainerId });
+      setMsg('Faculty assigned to batch!');
+      setAssignModal(null);
+      loadFaculty();
+    } catch (e) { setMsg(e.message); }
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-black text-slate-900">Faculty <span className="text-base font-normal text-slate-400 ml-2">{faculty.length} instructors</span></h2>
+        <button className="btn-primary" style={{ background: accent }} onClick={() => setShowForm(!showForm)}>
+          + Add Faculty
+        </button>
+      </div>
+
+      {msg && <div className="mb-4 p-3 bg-blue-50 text-blue-700 text-sm rounded-lg">{msg}</div>}
+
+      {showForm && (
+        <form onSubmit={handleCreate} className="card mb-6">
+          <h3 className="text-sm font-bold text-slate-700 mb-4">Add Faculty Member</h3>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="label">Full Name *</label>
+              <input className="input" required placeholder="Instructor name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Email *</label>
+              <input className="input" type="email" required placeholder="instructor@email.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Phone</label>
+              <input className="input" placeholder="Mobile" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} />
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 mt-3">Default password: <strong>Faculty@123</strong></p>
+          <div className="flex gap-2 mt-4">
+            <button type="submit" className="btn-primary" style={{ background: accent }}>Create Faculty</button>
+            <button type="button" className="btn" onClick={() => setShowForm(false)}>Cancel</button>
+          </div>
+        </form>
+      )}
+
+      <div className="card">
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Faculty</th><th>Email</th><th>Batches</th><th>Actions</th></tr></thead>
+            <tbody>
+              {faculty.map(f => (
+                <tr key={f.id}>
+                  <td>
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm"
+                        style={{ background: accent }}>{f.name?.[0]}</div>
+                      <div>
+                        <div className="font-semibold text-slate-900">{f.name}</div>
+                        <div className="text-xs text-slate-400">{f.phone}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="text-sm text-slate-600">{f.email}</td>
+                  <td><span className="badge badge-blue">{f.batch_count} batches</span></td>
+                  <td>
+                    <button
+                      className="text-sm font-medium px-3 py-1 rounded-lg border transition-colors hover:bg-slate-50"
+                      style={{ borderColor: accent, color: accent }}
+                      onClick={() => setAssignModal(f)}>
+                      Assign to Batch
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {faculty.length === 0 && (
+                <tr><td colSpan="4" className="text-center text-slate-400 py-8">No faculty yet. Add your first instructor above.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Assign to Batch Modal */}
+      {assignModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(15,23,42,0.6)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-black text-slate-900">Assign {assignModal.name} to Batch</h3>
+              <button onClick={() => setAssignModal(null)} className="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <div className="space-y-2 max-h-72 overflow-y-auto">
+              {batches.map(b => (
+                <button key={b.id} onClick={() => handleAssign(b.id, assignModal.id)}
+                  className="w-full text-left p-3 rounded-xl border hover:border-current transition-colors flex items-center justify-between"
+                  style={{ '--hover-color': accent }}>
+                  <div>
+                    <div className="font-semibold text-sm text-slate-900">{b.name}</div>
+                    <div className="text-xs text-slate-400">{b.course_title} · {b.status}</div>
+                  </div>
+                  {b.trainer_name && (
+                    <span className="text-xs text-slate-400">Current: {b.trainer_name}</span>
+                  )}
+                </button>
+              ))}
+              {batches.length === 0 && <p className="text-slate-400 text-sm text-center py-4">No batches found</p>}
+            </div>
+            <button onClick={() => setAssignModal(null)}
+              className="mt-4 w-full py-2 rounded-xl border text-slate-600 text-sm hover:bg-slate-50">
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MAIN ─────────────────────────────────────────────────────
 const SECTIONS = [
   { id: 'overview', icon: '📊', label: 'Overview' },
@@ -861,6 +1018,7 @@ const SECTIONS = [
   { id: 'enrollments', icon: '📚', label: 'Enrollments' },
   { id: 'purchases', icon: '🛒', label: 'Online Bookings' },
   { id: 'batches', icon: '📅', label: 'Batches' },
+  { id: 'faculty', icon: '🎓', label: 'Faculty' },
   { id: 'liveclasses', icon: '📺', label: 'Live Classes' },
   { id: 'earnings', icon: '💵', label: 'Earnings' },
   { id: 'claim', icon: '✅', label: 'Claim Commission' },
@@ -881,6 +1039,7 @@ export default function PartnerDashboard() {
     enrollments: <Enrollments accent={accent} />,
     purchases: <OnlinePurchases accent={accent} />,
     batches: <PartnerBatches accent={accent} />,
+    faculty: <PartnerFaculty accent={accent} />,
     liveclasses: <PartnerLiveClasses accent={accent} />,
     earnings: <Earnings accent={accent} commRate={commRate} />,
     claim: <Claim accent={accent} />,

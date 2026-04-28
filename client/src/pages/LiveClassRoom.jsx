@@ -11,13 +11,17 @@ export default function LiveClassRoom() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [attendance, setAttendance] = useState({ joined: false, duration: 0 });
+  const [demoSecondsLeft, setDemoSecondsLeft] = useState(null);
+  const [showPaywall, setShowPaywall] = useState(false);
   const jitsiRef = useRef(null);
   const timerRef = useRef(null);
+  const demoTimerRef = useRef(null);
 
   useEffect(() => {
     loadClassInfo();
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      if (demoTimerRef.current) clearInterval(demoTimerRef.current);
       handleLeave();
     };
   }, [id]);
@@ -27,16 +31,36 @@ export default function LiveClassRoom() {
       const data = await api.get(`/live-classes/${id}/join`);
       setClassInfo(data);
       setAttendance({ joined: true, startTime: Date.now() });
-      
-      // Start duration timer
+
+      // Start attendance duration timer
       timerRef.current = setInterval(() => {
         setAttendance(prev => ({
           ...prev,
           duration: Math.floor((Date.now() - prev.startTime) / 1000)
         }));
-      }, 10000); // Update every 10 seconds
-      
-      // Load Jitsi
+      }, 10000);
+
+      // Start demo countdown if demo mode
+      if (data.is_demo && data.demo_minutes) {
+        const totalSeconds = data.demo_minutes * 60;
+        setDemoSecondsLeft(totalSeconds);
+        demoTimerRef.current = setInterval(() => {
+          setDemoSecondsLeft(prev => {
+            if (prev <= 1) {
+              clearInterval(demoTimerRef.current);
+              setShowPaywall(true);
+              // Dispose Jitsi when demo expires
+              if (window.jitsiApi) {
+                window.jitsiApi.dispose();
+                window.jitsiApi = null;
+              }
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
+
       loadJitsi(data);
     } catch (e) {
       setError(e.message || 'Failed to join class');
@@ -46,7 +70,6 @@ export default function LiveClassRoom() {
   };
 
   const loadJitsi = (data) => {
-    // Check if Jitsi is already loaded
     if (!window.JitsiMeetExternalAPI) {
       const script = document.createElement('script');
       script.src = 'https://meet.jit.si/external_api.js';
@@ -79,11 +102,13 @@ export default function LiveClassRoom() {
         disableProfile: true,
         prejoinPageEnabled: false,
         readOnlyName: true,
-        toolbarButtons: data.is_moderator 
+        toolbarButtons: data.is_moderator
           ? ['microphone', 'camera', 'desktop', 'fullscreen', 'fodeviceselection', 'hangup', 'chat', 'recording', 'raisehand', 'videoquality', 'filmstrip', 'tileview', 'mute-everyone', 'security']
-          : data.class_mode === 'broadcast'
-            ? ['chat', 'raisehand', 'fullscreen', 'tileview'] // Students in broadcast mode
-            : ['microphone', 'camera', 'desktop', 'fullscreen', 'chat', 'raisehand', 'videoquality', 'filmstrip', 'tileview']
+          : data.is_demo
+            ? ['fullscreen', 'tileview'] // Demo: view-only
+            : data.class_mode === 'broadcast'
+              ? ['chat', 'raisehand', 'fullscreen', 'tileview']
+              : ['microphone', 'camera', 'desktop', 'fullscreen', 'chat', 'raisehand', 'videoquality', 'filmstrip', 'tileview']
       },
       interfaceConfigOverwrite: {
         SHOW_JITSI_WATERMARK: false,
@@ -97,38 +122,28 @@ export default function LiveClassRoom() {
       }
     };
 
-    const api = new window.JitsiMeetExternalAPI(domain, options);
-    
-    // Handle events
-    api.addEventListeners({
+    const jitsiApiInstance = new window.JitsiMeetExternalAPI(domain, options);
+
+    jitsiApiInstance.addEventListeners({
       readyToClose: () => {
         handleLeave();
         navigate(-1);
       },
       videoConferenceLeft: () => {
         handleLeave();
-      },
-      participantRoleChanged: (event) => {
-        console.log('Role changed:', event);
       }
     });
 
-    // Store API reference
-    window.jitsiApi = api;
+    window.jitsiApi = jitsiApiInstance;
   };
 
   const handleLeave = async () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (demoTimerRef.current) { clearInterval(demoTimerRef.current); demoTimerRef.current = null; }
+
     try {
-      // Send final attendance
       if (attendance.joined) {
         await api.post(`/live-classes/${id}/leave`);
-        
-        // Update attendance duration
         if (attendance.duration > 0) {
           await api.post(`/live-classes/${id}/attendance`, {
             duration_seconds: attendance.duration,
@@ -136,15 +151,16 @@ export default function LiveClassRoom() {
           });
         }
       }
-      
-      // Dispose Jitsi
-      if (window.jitsiApi) {
-        window.jitsiApi.dispose();
-        window.jitsiApi = null;
-      }
+      if (window.jitsiApi) { window.jitsiApi.dispose(); window.jitsiApi = null; }
     } catch (e) {
       console.error('Error leaving class:', e);
     }
+  };
+
+  const formatDemoTime = (secs) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
   if (loading) {
@@ -170,23 +186,32 @@ export default function LiveClassRoom() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-slate-900">
+    <div className="h-screen flex flex-col bg-slate-900 relative">
       {/* Header */}
       <div className="bg-slate-800 px-4 py-2 flex items-center justify-between text-white">
         <div className="flex items-center gap-4">
           <h1 className="font-semibold">{classInfo?.title}</h1>
           <span className="text-xs bg-blue-600 px-2 py-1 rounded">
-            {classInfo?.is_moderator ? 'Moderator' : 'Student'}
+            {classInfo?.is_moderator ? 'Moderator' : classInfo?.is_demo ? 'Demo Preview' : 'Student'}
           </span>
           <span className="text-xs bg-slate-600 px-2 py-1 rounded">
             {classInfo?.class_mode === 'broadcast' ? 'Broadcast Mode' : 'Interactive Mode'}
           </span>
         </div>
         <div className="flex items-center gap-4 text-sm">
-          <span className="text-slate-400">
-            Time in class: {Math.floor(attendance.duration / 60)}m {attendance.duration % 60}s
-          </span>
-          <button 
+          {/* Demo countdown badge */}
+          {classInfo?.is_demo && demoSecondsLeft !== null && !showPaywall && (
+            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold ${demoSecondsLeft <= 60 ? 'bg-red-600 animate-pulse' : 'bg-amber-500'}`}>
+              <span>⏱</span>
+              <span>Demo: {formatDemoTime(demoSecondsLeft)}</span>
+            </div>
+          )}
+          {!classInfo?.is_demo && (
+            <span className="text-slate-400">
+              Time in class: {Math.floor(attendance.duration / 60)}m {attendance.duration % 60}s
+            </span>
+          )}
+          <button
             onClick={() => { handleLeave(); navigate(-1); }}
             className="bg-red-600 hover:bg-red-700 px-4 py-1.5 rounded text-sm font-medium transition-colors"
           >
@@ -196,7 +221,43 @@ export default function LiveClassRoom() {
       </div>
 
       {/* Jitsi Container */}
-      <div ref={jitsiRef} className="flex-1" style={{ height: 'calc(100vh - 48px)' }} />
+      <div className="flex-1 relative" style={{ height: 'calc(100vh - 48px)' }}>
+        <div ref={jitsiRef} className="w-full h-full" />
+
+        {/* Paywall overlay when demo expires */}
+        {showPaywall && (
+          <div className="absolute inset-0 flex items-center justify-center z-50"
+            style={{ background: 'rgba(15,23,42,0.92)', backdropFilter: 'blur(8px)' }}>
+            <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 text-center">
+              <div className="text-5xl mb-4">⏰</div>
+              <h2 className="text-2xl font-black text-slate-900 mb-2">Your Demo Has Ended</h2>
+              <p className="text-slate-500 mb-6">
+                You've used your 15-minute free preview. Purchase the course to continue watching this class and get full access.
+              </p>
+              <div className="bg-slate-50 rounded-xl p-4 mb-6">
+                <p className="text-sm text-slate-500 mb-1">Course</p>
+                <p className="font-bold text-slate-900 text-lg">{classInfo?.course_title}</p>
+                <p className="text-2xl font-black text-blue-600 mt-1">
+                  ₹{Number(classInfo?.course_price || 0).toLocaleString('en-IN')}
+                </p>
+              </div>
+              <button
+                className="w-full py-3 rounded-xl text-white font-bold text-lg mb-3"
+                style={{ background: 'linear-gradient(135deg, #1e40af, #3b82f6)' }}
+                onClick={() => navigate('/student', { state: { tab: 'catalog' } })}
+              >
+                Purchase Course
+              </button>
+              <button
+                className="w-full py-2 rounded-xl text-slate-500 text-sm hover:text-slate-700 transition-colors"
+                onClick={() => navigate(-1)}
+              >
+                Go Back
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

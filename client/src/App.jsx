@@ -7,6 +7,7 @@ import Login from './pages/Login';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import PartnerDashboard from './pages/partner/PartnerDashboard';
 import StudentDashboard from './pages/student/StudentDashboard';
+import FacultyDashboard from './pages/faculty/FacultyDashboard';
 import LiveClassRoom from './pages/LiveClassRoom';
 
 function RequireAuth({ children, role }) {
@@ -16,6 +17,7 @@ function RequireAuth({ children, role }) {
   if (role && user.role !== role) {
     if (user.role === 'super_admin') return <Navigate to="/admin" replace />;
     if (user.role === 'partner_admin') return <Navigate to="/partner" replace />;
+    if (user.role === 'faculty') return <Navigate to="/faculty" replace />;
     if (user.role === 'student') return <Navigate to="/student" replace />;
   }
   return children;
@@ -26,6 +28,7 @@ function HomeRedirect() {
   if (!user) return <Navigate to="/login" replace />;
   if (user.role === 'super_admin') return <Navigate to="/admin" replace />;
   if (user.role === 'partner_admin') return <Navigate to="/partner" replace />;
+  if (user.role === 'faculty') return <Navigate to="/faculty" replace />;
   return <Navigate to="/student" replace />;
 }
 
@@ -54,6 +57,9 @@ export default function App() {
           } />
           <Route path="/student/*" element={
             <RequireAuth role="student"><StudentDashboard /></RequireAuth>
+          } />
+          <Route path="/faculty/*" element={
+            <RequireAuth role="faculty"><FacultyDashboard /></RequireAuth>
           } />
           <Route path="/live-class/:id" element={
             <RequireAuth><LiveClassRoom /></RequireAuth>

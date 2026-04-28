@@ -635,12 +635,6 @@ function LiveClassesAdmin() {
     } catch (e) { setMsg(e.message); }
   };
 
-  const isLive = (scheduledAt) => {
-    const now = new Date();
-    const scheduled = new Date(scheduledAt);
-    const diff = Math.abs(now - scheduled) / (1000 * 60); // minutes
-    return diff < 60; // Consider live if within 60 min of scheduled time
-  };
 
   return (
     <div>
@@ -720,14 +714,111 @@ function LiveClassesAdmin() {
                   <td><Badge status={c.status} /></td>
                   <td><span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">{c.jitsi_room_name?.slice(0, 25)}...</span></td>
                   <td>
-                    {(isLive(c.scheduled_at) || c.status === 'live') && (
-                      <button className="btn-primary text-xs" onClick={() => window.open(`/live-class/${c.id}`, '_blank')}>
-                        Join Class
-                      </button>
-                    )}
+                    <button className="btn-primary text-xs" onClick={() => window.open(`/live-class/${c.id}`, '_blank')}>
+                      {c.status === 'live' ? '🔴 Live' : 'Start Class'}
+                    </button>
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── FACULTY ADMIN ────────────────────────────────────────────
+function FacultyAdmin() {
+  const [faculty, setFaculty] = useState([]);
+  const [agencies, setAgencies] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ name: '', email: '', phone: '', agency_id: '' });
+  const [msg, setMsg] = useState('');
+
+  const load = () => api.get('/admin/faculty').then(setFaculty);
+  useEffect(() => {
+    load();
+    api.get('/admin/agencies').then(setAgencies);
+  }, []);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await api.post('/admin/faculty', form);
+      setMsg(res.message || 'Faculty created! Default password: Faculty@123');
+      setShowForm(false);
+      setForm({ name: '', email: '', phone: '', agency_id: '' });
+      load();
+    } catch (e) { setMsg(e.message); }
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-black text-slate-900">Faculty <span className="text-base font-normal text-slate-400 ml-2">{faculty.length} total</span></h2>
+        <button className="btn-primary" onClick={() => setShowForm(!showForm)}>+ Add Faculty</button>
+      </div>
+
+      {msg && <div className="mb-4 p-3 bg-blue-50 text-blue-700 text-sm rounded-lg">{msg}</div>}
+
+      {showForm && (
+        <form onSubmit={handleSubmit} className="card mb-6">
+          <h3 className="text-sm font-bold text-slate-700 mb-4">Create Faculty Account</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label">Full Name *</label>
+              <input className="input" required placeholder="Instructor name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Email *</label>
+              <input className="input" type="email" required placeholder="faculty@email.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Phone</label>
+              <input className="input" placeholder="Mobile number" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Agency *</label>
+              <select className="input" required value={form.agency_id} onChange={e => setForm({ ...form, agency_id: e.target.value })}>
+                <option value="">Select agency</option>
+                {agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 mt-3">Default password: <strong>Faculty@123</strong> — faculty should change after first login</p>
+          <div className="flex gap-2 mt-4">
+            <button type="submit" className="btn-primary">Create Faculty</button>
+            <button type="button" className="btn" onClick={() => setShowForm(false)}>Cancel</button>
+          </div>
+        </form>
+      )}
+
+      <div className="card">
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Email</th><th>Agency</th><th>Batches</th><th>Joined</th></tr></thead>
+            <tbody>
+              {faculty.map(f => (
+                <tr key={f.id}>
+                  <td>
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 font-bold text-sm">{f.name?.[0]}</div>
+                      <div>
+                        <div className="font-semibold text-slate-900">{f.name}</div>
+                        <div className="text-xs text-slate-400">{f.phone}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="text-sm text-slate-600">{f.email}</td>
+                  <td className="text-sm text-slate-600">{f.agency_name || '—'}</td>
+                  <td><span className="badge badge-blue">{f.batch_count} batches</span></td>
+                  <td className="text-xs text-slate-400">{new Date(f.created_at).toLocaleDateString()}</td>
+                </tr>
+              ))}
+              {faculty.length === 0 && (
+                <tr><td colSpan="5" className="text-center text-slate-400 py-8">No faculty members yet</td></tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -743,6 +834,7 @@ const SECTIONS = [
   { id: 'students', icon: '👥', label: 'All Students' },
   { id: 'enrollments', icon: '📚', label: 'Enrollments' },
   { id: 'batches', icon: '📅', label: 'Batches' },
+  { id: 'faculty', icon: '🎓', label: 'Faculty' },
   { id: 'liveclasses', icon: '📺', label: 'Live Classes' },
   { id: 'revenue', icon: '💰', label: 'Revenue' },
   { id: 'commissions', icon: '📤', label: 'Commissions' },
@@ -760,6 +852,7 @@ export default function AdminDashboard() {
     students: <AllStudents />,
     enrollments: <AllEnrollments />,
     batches: <BatchesAdmin />,
+    faculty: <FacultyAdmin />,
     liveclasses: <LiveClassesAdmin />,
     revenue: <Revenue />,
     commissions: <Commissions />,

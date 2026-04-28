@@ -570,6 +570,190 @@ app.post('/api/partner/batches', authMiddleware(['partner_admin']), async (req, 
   }
 });
 
+// ─── FACULTY MANAGEMENT ──────────────────────────────────────
+
+// List faculty — admin sees all, partner sees own agency
+app.get('/api/admin/faculty', authMiddleware(['super_admin']), async (req, res) => {
+  const [rows] = await getPool().query(`
+    SELECT u.id, u.name, u.email, u.phone, u.agency_id, u.created_at,
+      a.name as agency_name,
+      COUNT(DISTINCT b.id) as batch_count
+    FROM users u
+    LEFT JOIN agencies a ON u.agency_id = a.id
+    LEFT JOIN batches b ON b.trainer_id = u.id
+    WHERE u.role = 'faculty'
+    GROUP BY u.id ORDER BY u.created_at DESC
+  `);
+  res.json(rows);
+});
+
+app.get('/api/partner/faculty', authMiddleware(['partner_admin', 'super_admin']), async (req, res) => {
+  const agencyId = req.user.role === 'super_admin' ? req.query.agency_id : req.user.agency_id;
+  const [rows] = await getPool().query(`
+    SELECT u.id, u.name, u.email, u.phone, u.created_at,
+      COUNT(DISTINCT b.id) as batch_count
+    FROM users u
+    LEFT JOIN batches b ON b.trainer_id = u.id AND b.agency_id = ?
+    WHERE u.role = 'faculty' AND u.agency_id = ?
+    GROUP BY u.id ORDER BY u.name ASC
+  `, [agencyId, agencyId]);
+  res.json(rows);
+});
+
+// Create faculty — admin can create for any agency, partner only for own agency
+app.post('/api/admin/faculty', authMiddleware(['super_admin']), async (req, res) => {
+  const { name, email, phone, agency_id } = req.body;
+  if (!name || !email || !agency_id) return res.status(400).json({ error: 'name, email, agency_id required' });
+  try {
+    const hash = await bcrypt.hash('Faculty@123', 10);
+    const [r] = await getPool().query(
+      `INSERT INTO users (name, email, phone, password_hash, role, agency_id) VALUES (?,?,?,?,'faculty',?)`,
+      [name, email, phone || null, hash, agency_id]
+    );
+    res.json({ id: r.insertId, message: 'Faculty created. Default password: Faculty@123' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.post('/api/partner/faculty', authMiddleware(['partner_admin']), async (req, res) => {
+  const { name, email, phone } = req.body;
+  if (!name || !email) return res.status(400).json({ error: 'name and email required' });
+  try {
+    const hash = await bcrypt.hash('Faculty@123', 10);
+    const [r] = await getPool().query(
+      `INSERT INTO users (name, email, phone, password_hash, role, agency_id) VALUES (?,?,?,?,'faculty',?)`,
+      [name, email, phone || null, hash, req.user.agency_id]
+    );
+    res.json({ id: r.insertId, message: 'Faculty created. Default password: Faculty@123' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Assign faculty to batch
+app.put('/api/partner/batches/:id/assign-faculty', authMiddleware(['partner_admin', 'super_admin']), async (req, res) => {
+  const { trainer_id } = req.body;
+  const batchId = req.params.id;
+  try {
+    // Verify faculty belongs to the same agency as the batch
+    const [[batch]] = await getPool().query('SELECT agency_id FROM batches WHERE id=?', [batchId]);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    if (req.user.role === 'partner_admin' && batch.agency_id !== req.user.agency_id)
+      return res.status(403).json({ error: 'Forbidden' });
+    if (trainer_id) {
+      const [[faculty]] = await getPool().query('SELECT id FROM users WHERE id=? AND role="faculty"', [trainer_id]);
+      if (!faculty) return res.status(400).json({ error: 'User is not a faculty member' });
+    }
+    await getPool().query('UPDATE batches SET trainer_id=? WHERE id=?', [trainer_id || null, batchId]);
+    res.json({ message: 'Faculty assigned' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ─── FACULTY DASHBOARD ENDPOINTS ────────────────────────────
+
+// Faculty profile
+app.get('/api/faculty/profile', authMiddleware(['faculty']), async (req, res) => {
+  const [[user]] = await getPool().query(`
+    SELECT u.*, a.name as agency_name, a.brand_color, a.logo_initials
+    FROM users u LEFT JOIN agencies a ON u.agency_id = a.id
+    WHERE u.id = ?
+  `, [req.user.id]);
+  res.json(user);
+});
+
+// Faculty's assigned batches
+app.get('/api/faculty/batches', authMiddleware(['faculty']), async (req, res) => {
+  const [rows] = await getPool().query(`
+    SELECT b.*, c.title as course_title, c.category, a.name as agency_name, a.brand_color,
+      (SELECT COUNT(*) FROM enrollments e WHERE e.course_id = b.course_id AND e.status='active') as enrolled_students,
+      (SELECT COUNT(*) FROM live_classes lc WHERE lc.batch_id=b.id AND lc.status IN ('scheduled','live')) as upcoming_classes,
+      (SELECT COUNT(*) FROM live_classes lc WHERE lc.batch_id=b.id AND lc.status='ended') as completed_classes
+    FROM batches b
+    JOIN courses c ON b.course_id = c.id
+    JOIN agencies a ON b.agency_id = a.id
+    WHERE b.trainer_id = ? AND b.status NOT IN ('cancelled')
+    ORDER BY b.start_date DESC
+  `, [req.user.id]);
+  res.json(rows);
+});
+
+// Faculty's live classes (all batches)
+app.get('/api/faculty/classes', authMiddleware(['faculty']), async (req, res) => {
+  const { scope = 'upcoming' } = req.query;
+  let whereStatus = scope === 'past'
+    ? `AND lc.status IN ('ended','cancelled','recorded')`
+    : `AND lc.status IN ('scheduled','live') AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)`;
+  const [rows] = await getPool().query(`
+    SELECT lc.*, b.name as batch_name, b.course_id, b.trainer_id,
+      c.title as course_title, c.category,
+      a.brand_color
+    FROM live_classes lc
+    JOIN batches b ON lc.batch_id = b.id
+    JOIN courses c ON b.course_id = c.id
+    JOIN agencies a ON b.agency_id = a.id
+    WHERE b.trainer_id = ? ${whereStatus}
+    ORDER BY lc.scheduled_at ASC
+    LIMIT 50
+  `, [req.user.id]);
+  res.json(rows);
+});
+
+// Faculty schedules a new live class for their batch
+app.post('/api/faculty/classes', authMiddleware(['faculty']), async (req, res) => {
+  const { batch_id, title, description, scheduled_at, duration_minutes, class_mode } = req.body;
+  if (!batch_id || !title || !scheduled_at) return res.status(400).json({ error: 'batch_id, title, scheduled_at required' });
+  try {
+    // Verify faculty owns this batch
+    const [[batch]] = await getPool().query(
+      'SELECT id, agency_id FROM batches WHERE id=? AND trainer_id=?', [batch_id, req.user.id]
+    );
+    if (!batch) return res.status(403).json({ error: 'You are not assigned to this batch' });
+    const roomName = `class-${batch_id}-${Date.now()}`;
+    const [r] = await getPool().query(
+      `INSERT INTO live_classes (batch_id, agency_id, title, description, scheduled_at, duration_minutes,
+        class_mode, jitsi_room_name, jitsi_meeting_url, jitsi_moderator_url,
+        allow_student_video, allow_student_audio, allow_chat, status, created_by)
+       VALUES (?,?,?,?,?,?,?,?,?,?,1,1,1,'scheduled',?)`,
+      [batch_id, batch.agency_id, title, description || null, scheduled_at,
+       duration_minutes || 60, class_mode || 'interactive',
+       roomName,
+       `https://meet.jit.si/${roomName}`,
+       `https://meet.jit.si/${roomName}#config.startWithAudioMuted=false`,
+       req.user.id]
+    );
+    res.json({ id: r.insertId, message: 'Class scheduled', jitsi_room_name: roomName });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Faculty starts a class (marks it live)
+app.put('/api/faculty/classes/:id/start', authMiddleware(['faculty']), async (req, res) => {
+  try {
+    const [[lc]] = await getPool().query(
+      `SELECT lc.*, b.trainer_id FROM live_classes lc JOIN batches b ON lc.batch_id=b.id WHERE lc.id=?`,
+      [req.params.id]
+    );
+    if (!lc) return res.status(404).json({ error: 'Class not found' });
+    if (lc.trainer_id !== req.user.id) return res.status(403).json({ error: 'Not assigned to this class' });
+    await getPool().query(
+      `UPDATE live_classes SET status='live', started_at=NOW() WHERE id=?`, [req.params.id]
+    );
+    res.json({ message: 'Class is now live', jitsi_room_name: lc.jitsi_room_name });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Faculty ends a class
+app.put('/api/faculty/classes/:id/end', authMiddleware(['faculty']), async (req, res) => {
+  try {
+    const [[lc]] = await getPool().query(
+      `SELECT lc.*, b.trainer_id FROM live_classes lc JOIN batches b ON lc.batch_id=b.id WHERE lc.id=?`,
+      [req.params.id]
+    );
+    if (!lc) return res.status(404).json({ error: 'Class not found' });
+    if (lc.trainer_id !== req.user.id) return res.status(403).json({ error: 'Not assigned to this class' });
+    await getPool().query(
+      `UPDATE live_classes SET status='ended', ended_at=NOW() WHERE id=?`, [req.params.id]
+    );
+    res.json({ message: 'Class ended' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // ─── BATCH ENROLLMENTS ────────────────────────────────────────
 app.get('/api/batches/:id/students', authMiddleware(), async (req, res) => {
   const [rows] = await getPool().query(`
@@ -642,16 +826,14 @@ app.get('/api/live-classes/upcoming', authMiddleware(), async (req, res) => {
   let query, params;
   
   if (studentId) {
-    // Student view - only their enrolled batches
-    query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
-        be.access_type, be.demo_expires_at
+    // Student view - only classes for courses they've purchased
+    query = `SELECT lc.*, b.name as batch_name, c.title as course_title
        FROM live_classes lc
        JOIN batches b ON lc.batch_id = b.id
        JOIN courses c ON b.course_id = c.id
-       JOIN batch_enrollments be ON b.id = be.batch_id
-       WHERE be.student_id = ? AND lc.scheduled_at >= NOW()
+       JOIN enrollments e ON e.course_id = c.id AND e.student_id = ? AND e.status = 'active'
+       WHERE lc.scheduled_at >= NOW()
         AND lc.status IN ('scheduled','live')
-        AND (be.access_type != 'demo' OR be.demo_expires_at > NOW())
        ORDER BY lc.scheduled_at ASC
        LIMIT 10`;
     params = [studentId];
@@ -754,68 +936,113 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
   const classId = req.params.id;
   const userId = req.user.id;
   const userRole = req.user.role;
-  
+
   try {
-    // Get class details
     const [[liveClass]] = await getPool().query(`
-      SELECT lc.*, b.agency_id, b.name as batch_name
+      SELECT lc.*, b.agency_id, b.name as batch_name, b.course_id,
+        c.title as course_title, c.price as course_price
       FROM live_classes lc
       JOIN batches b ON lc.batch_id = b.id
+      JOIN courses c ON b.course_id = c.id
       WHERE lc.id = ?
     `, [classId]);
-    
+
     if (!liveClass) return res.status(404).json({ error: 'Live class not found' });
-    
-    // Check permissions
+
     let isModerator = false;
     let canJoin = false;
-    
+    let isDemo = false;
+
     if (userRole === 'super_admin') {
       canJoin = true;
       isModerator = true;
     } else if (userRole === 'partner_admin') {
       canJoin = liveClass.agency_id === req.user.agency_id;
       isModerator = true;
+    } else if (userRole === 'faculty') {
+      // Faculty is moderator for classes in their assigned batches
+      const [[assigned]] = await getPool().query(
+        'SELECT id FROM batches WHERE id = ? AND trainer_id = ?',
+        [liveClass.batch_id, userId]
+      );
+      if (assigned) {
+        canJoin = true;
+        isModerator = true;
+      }
     } else if (userRole === 'student') {
-      // Check if enrolled in batch
+      // Check if student has purchased the course linked to this batch
       const [[enrollment]] = await getPool().query(`
-        SELECT be.* FROM batch_enrollments be
-        WHERE be.batch_id = ? AND be.student_id = ? AND be.status = 'active'
-        AND (be.access_type != 'demo' OR be.demo_expires_at > NOW())
-      `, [liveClass.batch_id, userId]);
-      canJoin = !!enrollment;
+        SELECT e.id FROM enrollments e
+        WHERE e.course_id = ? AND e.student_id = ? AND e.status = 'active'
+        LIMIT 1
+      `, [liveClass.course_id, userId]);
+
+      if (enrollment) {
+        canJoin = true;
+      } else if (req.user.agency_id === liveClass.agency_id) {
+        // Demo mode — any student from the same agency gets 15 min free preview
+        canJoin = true;
+        isDemo = true;
+      }
     }
-    
-    if (!canJoin) {
-      return res.status(403).json({ error: 'Not enrolled in this batch' });
-    }
-    
-    // Record attendance entry
-    await getPool().query(`
-      INSERT INTO class_attendance (live_class_id, student_id, batch_id, joined_at, attendance_status)
-      VALUES (?, ?, ?, NOW(), 'present')
-      ON DUPLICATE KEY UPDATE joined_at = NOW(), attendance_status = 'present'
-    `, [classId, userId, liveClass.batch_id]);
-    
-    // Generate Jitsi token/config
+
+    if (!canJoin) return res.status(403).json({ error: 'Not enrolled in this batch' });
+
+    try {
+      await getPool().query(`
+        INSERT INTO class_attendance (live_class_id, student_id, batch_id, joined_at, attendance_status)
+        VALUES (?, ?, ?, NOW(), 'present')
+        ON DUPLICATE KEY UPDATE joined_at = NOW(), attendance_status = 'present'
+      `, [classId, userId, liveClass.batch_id]);
+    } catch (_) { /* attendance table may not exist yet */ }
+
     const meetingUrl = isModerator && liveClass.jitsi_moderator_url
       ? liveClass.jitsi_moderator_url
       : liveClass.jitsi_meeting_url;
-    
+
     res.json({
       class_id: classId,
       title: liveClass.title,
       jitsi_room_name: liveClass.jitsi_room_name,
       jitsi_meeting_url: meetingUrl,
       is_moderator: isModerator,
+      is_demo: isDemo,
+      demo_minutes: isDemo ? 15 : null,
+      course_id: liveClass.course_id,
+      course_title: liveClass.course_title,
+      course_price: Number(liveClass.course_price),
+      agency_id: liveClass.agency_id,
       class_mode: liveClass.class_mode,
-      allow_chat: liveClass.allow_chat,
-      allow_video: isModerator ? true : liveClass.allow_student_video,
-      allow_audio: isModerator ? true : liveClass.allow_student_audio
+      allow_chat: isDemo ? false : liveClass.allow_chat,
+      allow_video: isModerator ? true : (isDemo ? false : liveClass.allow_student_video),
+      allow_audio: isModerator ? true : (isDemo ? false : liveClass.allow_student_audio)
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ─── STUDENT: ALL UPCOMING CLASSES (enrolled + previewable) ───
+app.get('/api/student/all-classes', authMiddleware(['student']), async (req, res) => {
+  const studentId = req.user.id;
+  const agencyId = req.user.agency_id;
+  try {
+    const [rows] = await getPool().query(`
+      SELECT lc.*, b.name as batch_name, b.course_id,
+        c.title as course_title, c.price as course_price, c.category,
+        (SELECT e.id FROM enrollments e
+         WHERE e.course_id = b.course_id AND e.student_id = ? AND e.status = 'active' LIMIT 1) as is_enrolled
+      FROM live_classes lc
+      JOIN batches b ON lc.batch_id = b.id
+      JOIN courses c ON b.course_id = c.id
+      WHERE b.agency_id = ?
+        AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+        AND lc.status IN ('scheduled','live')
+      ORDER BY lc.scheduled_at ASC
+      LIMIT 30
+    `, [studentId, agencyId]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── ATTENDANCE & PROGRESS ────────────────────────────────────
@@ -1154,10 +1381,38 @@ async function checkDBConnection() {
     await getPool().query('SELECT 1');
     dbConnected = true;
     console.log('✅ Database connected');
+    await runMigrations();
   } catch (err) {
     dbConnected = false;
     console.log('⏳ Waiting for database...');
     setTimeout(checkDBConnection, 3000);
+  }
+}
+
+async function runMigrations() {
+  try {
+    // Add faculty to users role enum if not present
+    await getPool().query(`
+      ALTER TABLE users MODIFY COLUMN role
+        ENUM('super_admin','partner_admin','student','faculty') NOT NULL
+    `).catch(() => {});
+
+    // Add trainer_id to batches if missing (for older schemas)
+    await getPool().query(`
+      ALTER TABLE batches ADD COLUMN IF NOT EXISTS trainer_id INT,
+        ADD COLUMN IF NOT EXISTS trainer_name VARCHAR(255)
+    `).catch(() => {});
+
+    // Add started_at / ended_at to live_classes if missing
+    await getPool().query(`
+      ALTER TABLE live_classes
+        ADD COLUMN IF NOT EXISTS started_at TIMESTAMP NULL,
+        ADD COLUMN IF NOT EXISTS ended_at TIMESTAMP NULL
+    `).catch(() => {});
+
+    console.log('✅ Migrations applied');
+  } catch (e) {
+    console.log('⚠️  Migration warning:', e.message);
   }
 }
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
 import DashLayout, { NavItem } from '../../components/DashLayout';
@@ -362,9 +363,10 @@ function BatchBrowser({ accent, user }) {
 function StudentLiveClasses({ accent }) {
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    api.get('/live-classes/upcoming').then(setClasses).catch(() => {}).finally(() => setLoading(false));
+    api.get('/student/all-classes').then(setClasses).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
   const isLive = (scheduledAt) => Math.abs(new Date() - new Date(scheduledAt)) / 60000 < 60;
@@ -374,7 +376,8 @@ function StudentLiveClasses({ accent }) {
 
   return (
     <div>
-      <h2 className="text-xl font-black text-slate-900 mb-6">My Live Classes</h2>
+      <h2 className="text-xl font-black text-slate-900 mb-2">Live Classes</h2>
+      <p className="text-sm text-slate-400 mb-6">Your enrolled classes + previews available for other courses</p>
       {classes.length === 0 ? (
         <div className="card text-center py-12">
           <p className="text-4xl mb-3">📺</p>
@@ -383,43 +386,64 @@ function StudentLiveClasses({ accent }) {
         </div>
       ) : (
         <div className="space-y-4">
-          {classes.map(c => (
-            <div key={c.id} className="card relative overflow-hidden">
-              <div className={`absolute top-0 left-0 right-0 h-1 ${isLive(c.scheduled_at)||c.status==='live' ? 'bg-red-500 animate-pulse' : 'bg-slate-200'}`} />
-              <div className="flex items-start justify-between mt-2">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <h3 className="font-bold text-slate-900">{c.title}</h3>
-                    {(isLive(c.scheduled_at)||c.status==='live') && <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full animate-pulse">LIVE NOW</span>}
-                    {c.access_type==='demo' && <span className="bg-amber-500 text-white text-xs px-2 py-0.5 rounded-full">DEMO</span>}
-                  </div>
-                  <p className="text-sm text-slate-500 mb-3">{c.description}</p>
-                  <div className="flex flex-wrap gap-4 text-sm text-slate-600">
-                    <span>📅 {new Date(c.scheduled_at).toLocaleDateString()}</span>
-                    <span>🕐 {new Date(c.scheduled_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
-                    <span>⏱️ {c.duration_minutes} min</span>
-                    <span>🎓 {c.batch_name}</span>
-                    <span className="badge badge-blue">{c.class_mode}</span>
-                  </div>
-                  {c.access_type==='demo'&&c.demo_expires_at && (
-                    <p className="text-xs text-amber-600 mt-2">Demo expires: {new Date(c.demo_expires_at).toLocaleDateString()}</p>
-                  )}
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  {canJoin(c.scheduled_at)||c.status==='live' ? (
-                    <button className="btn-primary px-6 py-2" style={{background:accent}} onClick={() => window.open(`/live-class/${c.id}`,'_blank')}>
-                      {isLive(c.scheduled_at)||c.status==='live' ? 'Join Now' : 'Enter Class'}
-                    </button>
-                  ) : (
-                    <div className="text-center">
-                      <span className="text-xs text-slate-400 block">Starts in</span>
-                      <span className="text-sm font-semibold text-slate-600">{Math.ceil((new Date(c.scheduled_at)-new Date())/3600000)}h</span>
+          {classes.map(c => {
+            const live = isLive(c.scheduled_at) || c.status === 'live';
+            const joinable = canJoin(c.scheduled_at) || c.status === 'live';
+            const isDemo = !c.is_enrolled;
+            return (
+              <div key={c.id} className="card relative overflow-hidden">
+                <div className={`absolute top-0 left-0 right-0 h-1 ${live ? 'bg-red-500 animate-pulse' : isDemo ? 'bg-amber-400' : 'bg-slate-200'}`} />
+                <div className="flex items-start justify-between mt-2">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      <h3 className="font-bold text-slate-900">{c.title}</h3>
+                      {live && <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full animate-pulse">LIVE NOW</span>}
+                      {isDemo && <span className="bg-amber-500 text-white text-xs px-2 py-0.5 rounded-full">15-MIN PREVIEW</span>}
+                      {!isDemo && <span className="bg-green-500 text-white text-xs px-2 py-0.5 rounded-full">Enrolled</span>}
                     </div>
-                  )}
+                    <p className="text-sm text-slate-500 mb-3">{c.description}</p>
+                    <div className="flex flex-wrap gap-4 text-sm text-slate-600">
+                      <span>📅 {new Date(c.scheduled_at).toLocaleDateString()}</span>
+                      <span>🕐 {new Date(c.scheduled_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
+                      <span>⏱️ {c.duration_minutes} min</span>
+                      {c.batch_name && <span>🎓 {c.batch_name}</span>}
+                      <span className="badge badge-blue">{c.class_mode}</span>
+                    </div>
+                    {isDemo && (
+                      <p className="text-xs text-amber-600 mt-2">
+                        Watch 15 min free, then purchase to continue
+                      </p>
+                    )}
+                  </div>
+                  <div className="ml-4 flex-shrink-0 flex flex-col gap-2">
+                    {joinable ? (
+                      <button
+                        className="px-5 py-2 rounded-lg text-white font-semibold text-sm transition-all hover:opacity-90"
+                        style={{ background: isDemo ? '#f59e0b' : accent }}
+                        onClick={() => window.open(`/live-class/${c.id}`, '_blank')}
+                      >
+                        {isDemo ? '▶ Preview (15 min)' : live ? 'Join Now' : 'Enter Class'}
+                      </button>
+                    ) : (
+                      <div className="text-center">
+                        <span className="text-xs text-slate-400 block">Starts in</span>
+                        <span className="text-sm font-semibold text-slate-600">{Math.ceil((new Date(c.scheduled_at)-new Date())/3600000)}h</span>
+                      </div>
+                    )}
+                    {isDemo && (
+                      <button
+                        className="px-5 py-2 rounded-lg font-semibold text-sm border-2 transition-all hover:opacity-90"
+                        style={{ borderColor: accent, color: accent }}
+                        onClick={() => navigate('/student', { state: { tab: 'catalog' } })}
+                      >
+                        Buy Course
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -588,9 +612,16 @@ function Profile({ user }) {
 // ── MAIN ─────────────────────────────────────────────────────
 export default function StudentDashboard() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [section, setSection] = useState('dashboard');
   const [enrollments, setEnrollments] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Support navigation from LiveClassRoom paywall: navigate('/student', { state: { tab: 'catalog' } })
+  useEffect(() => {
+    const state = window.history.state?.usr;
+    if (state?.tab) setSection(state.tab);
+  }, []);
 
   const loadEnrollments = useCallback(() => {
     api.get('/student/dashboard').then(data => {
