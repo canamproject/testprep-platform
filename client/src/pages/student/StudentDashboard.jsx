@@ -603,8 +603,177 @@ function StartLearningBtn({ enrollmentId, accent }) {
   );
 }
 
+// ── PAY NOW MODAL ─────────────────────────────────────────────
+function PayNowModal({ enrollment, onClose, onSuccess, accent }) {
+  const [cfg, setCfg] = useState(null);
+  const [method, setMethod] = useState('');
+  const [proofImg, setProofImg] = useState('');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    api.get('/student/payment-config').then(c => {
+      setCfg(c);
+      // auto-select first available method
+      if (c.upi_id) setMethod('upi');
+      else if (c.qr_code_image) setMethod('qr');
+      else if (c.payment_link) setMethod('link');
+      else if (c.mobile_number) setMethod('mobile');
+    }).catch(() => setCfg({}));
+  }, []);
+
+  const handleProof = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setProofImg(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSubmit = async () => {
+    if (!method) return setErr('Please select a payment method');
+    setSubmitting(true); setErr('');
+    try {
+      await api.post('/student/payment-proof', {
+        enrollment_id: enrollment.id,
+        amount: enrollment.fee_paid,
+        payment_method: method,
+        proof_image: proofImg || null,
+        notes: notes || null,
+      });
+      setDone(true);
+      setTimeout(() => { onSuccess(); onClose(); }, 2000);
+    } catch (e) { setErr(e.message); }
+    finally { setSubmitting(false); }
+  };
+
+  const methods = cfg ? [
+    cfg.upi_id && { key:'upi', label:'UPI', icon:'💳', desc: `Pay to ${cfg.upi_id}${cfg.upi_name ? ` (${cfg.upi_name})` : ''}` },
+    cfg.qr_code_image && { key:'qr', label:'QR Code', icon:'📷', desc:'Scan QR code to pay' },
+    cfg.payment_link && { key:'link', label:'Payment Link', icon:'🔗', desc:'Pay via payment gateway' },
+    cfg.mobile_number && { key:'mobile', label:'Mobile Pay', icon:'📱', desc:`Pay to ${cfg.mobile_number}` },
+  ].filter(Boolean) : [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <h3 className="font-black text-slate-900">Pay Now</h3>
+            <p className="text-xs text-slate-500 mt-0.5">{enrollment.course_title} · {fmt(enrollment.fee_paid)}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-2xl leading-none">&times;</button>
+        </div>
+
+        {done ? (
+          <div className="p-8 text-center">
+            <div className="text-5xl mb-3">✅</div>
+            <p className="font-black text-emerald-600 text-lg">Submitted!</p>
+            <p className="text-sm text-slate-500 mt-1">Your payment proof is under review.</p>
+          </div>
+        ) : cfg === null ? (
+          <div className="p-8 text-center text-slate-400 text-sm">Loading payment options...</div>
+        ) : methods.length === 0 ? (
+          <div className="p-8 text-center">
+            <div className="text-4xl mb-3">⚙️</div>
+            <p className="text-slate-600 font-semibold">Payment methods not configured yet.</p>
+            <p className="text-sm text-slate-400 mt-1">Please contact your academy for payment details.</p>
+          </div>
+        ) : (
+          <div className="p-5 space-y-4">
+            {/* Method selection */}
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Select Payment Method</p>
+              <div className="grid grid-cols-2 gap-2">
+                {methods.map(m => (
+                  <button key={m.key} onClick={() => setMethod(m.key)}
+                    className={`p-3 rounded-xl border-2 text-left transition ${method===m.key ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}>
+                    <div className="text-xl mb-1">{m.icon}</div>
+                    <div className="text-xs font-bold text-slate-800">{m.label}</div>
+                    <div className="text-xs text-slate-500 mt-0.5 truncate">{m.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Method details */}
+            {method === 'upi' && cfg.upi_id && (
+              <div className="p-4 bg-blue-50 rounded-xl">
+                <p className="text-xs font-bold text-blue-700 mb-1">UPI Payment</p>
+                <p className="font-mono font-black text-blue-900 text-lg select-all">{cfg.upi_id}</p>
+                {cfg.upi_name && <p className="text-sm text-blue-700 mt-1">Name: {cfg.upi_name}</p>}
+                <p className="text-xs text-blue-600 mt-2">Send {fmt(enrollment.fee_paid)} and upload screenshot below.</p>
+              </div>
+            )}
+            {method === 'qr' && cfg.qr_code_image && (
+              <div className="p-4 bg-slate-50 rounded-xl text-center">
+                <p className="text-xs font-bold text-slate-600 mb-2">Scan QR Code</p>
+                <img src={cfg.qr_code_image} alt="QR" className="w-48 h-48 object-contain mx-auto rounded-xl border border-slate-200" />
+                <p className="text-xs text-slate-500 mt-2">Pay {fmt(enrollment.fee_paid)} and upload screenshot below.</p>
+              </div>
+            )}
+            {method === 'link' && cfg.payment_link && (
+              <div className="p-4 bg-emerald-50 rounded-xl">
+                <p className="text-xs font-bold text-emerald-700 mb-2">Payment Link</p>
+                <a href={cfg.payment_link} target="_blank" rel="noopener noreferrer"
+                  className="block w-full py-2.5 bg-emerald-600 text-white text-center font-bold rounded-xl text-sm hover:bg-emerald-700 transition">
+                  Open Payment Page →
+                </a>
+                <p className="text-xs text-emerald-600 mt-2 text-center">After payment, upload your receipt below.</p>
+              </div>
+            )}
+            {method === 'mobile' && cfg.mobile_number && (
+              <div className="p-4 bg-purple-50 rounded-xl">
+                <p className="text-xs font-bold text-purple-700 mb-1">Mobile Payment</p>
+                <p className="font-mono font-black text-purple-900 text-lg">{cfg.mobile_number}</p>
+                {cfg.mobile_instructions && <p className="text-sm text-purple-700 mt-2">{cfg.mobile_instructions}</p>}
+                <p className="text-xs text-purple-600 mt-2">Send {fmt(enrollment.fee_paid)} and upload screenshot below.</p>
+              </div>
+            )}
+
+            {/* Proof upload */}
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Upload Payment Screenshot <span className="text-slate-300 font-normal">(optional but recommended)</span></p>
+              <label className={`flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-xl cursor-pointer transition
+                ${proofImg ? 'border-emerald-400 bg-emerald-50' : 'border-slate-300 bg-slate-50 hover:bg-slate-100'}`}>
+                {proofImg
+                  ? <img src={proofImg} alt="proof" className="h-full w-full object-contain rounded-xl p-1" />
+                  : <>
+                      <span className="text-2xl mb-1">📎</span>
+                      <span className="text-xs text-slate-500">Click to upload screenshot</span>
+                    </>
+                }
+                <input type="file" accept="image/*" className="hidden" onChange={handleProof} />
+              </label>
+              {proofImg && <button onClick={() => setProofImg('')} className="text-xs text-red-500 mt-1 hover:underline">Remove</button>}
+            </div>
+
+            {/* Notes */}
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Notes <span className="font-normal text-slate-300">(optional)</span></p>
+              <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Transaction ID, reference number..."
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+
+            {err && <p className="text-xs text-red-500 font-semibold">{err}</p>}
+
+            <button onClick={handleSubmit} disabled={submitting || !method}
+              className="w-full py-3 rounded-xl font-black text-white text-sm transition disabled:opacity-50"
+              style={{ background: accent || '#2563eb' }}>
+              {submitting ? 'Submitting...' : '✅ Submit Payment Proof'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── PAYMENTS ─────────────────────────────────────────────────
-function Payments({ enrollments }) {
+function Payments({ enrollments, accent, onRefresh }) {
+  const [payModal, setPayModal] = useState(null);
   const totalPaid = enrollments.filter(e => e.payment_status==='paid').reduce((a,e) => a+Number(e.fee_paid),0);
   const totalPending = enrollments.filter(e => e.payment_status==='pending').reduce((a,e) => a+Number(e.fee_paid),0);
   return (
@@ -617,7 +786,7 @@ function Payments({ enrollments }) {
       <div className="card">
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Course</th><th>Category</th><th>Fee</th><th>Status</th><th>Date</th></tr></thead>
+            <thead><tr><th>Course</th><th>Category</th><th>Fee</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
             <tbody>
               {enrollments.map(e => (
                 <tr key={e.id}>
@@ -626,12 +795,31 @@ function Payments({ enrollments }) {
                   <td className="font-black">{fmt(e.fee_paid)}</td>
                   <td><span className={`badge ${e.payment_status==='paid'?'badge-green':'badge-amber'}`}>{e.payment_status}</span></td>
                   <td className="text-slate-400 text-xs">{e.enrolled_at?.split('T')[0]}</td>
+                  <td>
+                    {e.payment_status === 'pending' && (
+                      <button onClick={() => setPayModal(e)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-black text-white transition hover:opacity-90"
+                        style={{ background: accent || '#2563eb' }}>
+                        Pay Now
+                      </button>
+                    )}
+                    {e.payment_status === 'paid' && <span className="text-xs text-emerald-600 font-semibold">✓ Paid</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
+
+      {payModal && (
+        <PayNowModal
+          enrollment={payModal}
+          accent={accent}
+          onClose={() => setPayModal(null)}
+          onSuccess={() => { setPayModal(null); onRefresh && onRefresh(); }}
+        />
+      )}
     </div>
   );
 }
@@ -704,7 +892,7 @@ export default function StudentDashboard() {
     catalog:     <CourseCatalog accent={accent} user={enrichedUser} onEnrolled={loadEnrollments} />,
     batches:     <BatchBrowser accent={accent} user={enrichedUser} />,
     liveclasses: <StudentLiveClasses accent={accent} />,
-    payments:    <Payments enrollments={enrollments} />,
+    payments:    <Payments enrollments={enrollments} accent={accent} onRefresh={loadEnrollments} />,
     profile:     <Profile user={enrichedUser} />,
   };
 

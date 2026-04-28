@@ -1380,6 +1380,334 @@ function AllUsers() {
   );
 }
 
+// ── PAYMENT CONFIG ────────────────────────────────────────────
+function PaymentConfig() {
+  const [agencies, setAgencies] = useState([]);
+  const [configs, setConfigs] = useState({});
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    api.get('/admin/agencies').then(setAgencies);
+    api.get('/admin/payment-config').then(rows => {
+      const m = {};
+      rows.forEach(r => { m[r.agency_id] = r; });
+      setConfigs(m);
+    }).catch(() => {});
+  }, []);
+
+  const openEdit = (ag) => {
+    const cfg = configs[ag.id] || {};
+    setForm({
+      upi_id: cfg.upi_id || '',
+      upi_name: cfg.upi_name || '',
+      qr_code_image: cfg.qr_code_image || '',
+      payment_link: cfg.payment_link || '',
+      mobile_number: cfg.mobile_number || '',
+      mobile_instructions: cfg.mobile_instructions || '',
+    });
+    setEditing(ag);
+    setMsg('');
+  };
+
+  const handleQR = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setForm(f => ({ ...f, qr_code_image: ev.target.result }));
+    reader.readAsDataURL(file);
+  };
+
+  const handleSave = async () => {
+    setSaving(true); setMsg('');
+    try {
+      await api.put(`/admin/payment-config/${editing.id}`, form);
+      setConfigs(prev => ({ ...prev, [editing.id]: { ...form, agency_id: editing.id } }));
+      setMsg('Saved!');
+      setTimeout(() => { setEditing(null); setMsg(''); }, 1200);
+    } catch (e) { setMsg(e.message); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div>
+      <h2 className="text-xl font-black text-slate-900 mb-2">Payment Configuration</h2>
+      <p className="text-sm text-slate-500 mb-6">Configure how students can pay for each agency — UPI, QR code, payment link, or mobile number.</p>
+
+      <div className="grid gap-4">
+        {agencies.map(ag => {
+          const cfg = configs[ag.id];
+          const methods = [
+            cfg?.upi_id && '💳 UPI',
+            cfg?.qr_code_image && '📷 QR Code',
+            cfg?.payment_link && '🔗 Link',
+            cfg?.mobile_number && '📱 Mobile',
+          ].filter(Boolean);
+          return (
+            <div key={ag.id} className="card flex items-center gap-4">
+              <div className="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center font-black text-white text-sm overflow-hidden"
+                style={{ background: ag.brand_color }}>
+                {ag.logo_url ? <img src={ag.logo_url} className="w-full h-full object-contain" alt="logo" /> : ag.name?.[0]}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-slate-900">{ag.name}</p>
+                {methods.length > 0
+                  ? <p className="text-xs text-emerald-600 mt-0.5">{methods.join(' · ')}</p>
+                  : <p className="text-xs text-amber-500 mt-0.5">No payment methods configured</p>
+                }
+              </div>
+              <button onClick={() => openEdit(ag)}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold text-white transition hover:opacity-90"
+                style={{ background: ag.brand_color }}>
+                {cfg ? 'Edit' : 'Configure'}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-black text-slate-900">Payment Config — {editing.name}</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Students will see these options when they click Pay Now</p>
+              </div>
+              <button onClick={() => setEditing(null)} className="text-slate-400 hover:text-slate-700 text-2xl">&times;</button>
+            </div>
+            <div className="p-5 space-y-5">
+              {/* UPI */}
+              <div className="p-4 bg-blue-50 rounded-xl space-y-3">
+                <p className="text-xs font-black text-blue-700 uppercase tracking-wide">💳 UPI Payment</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 block mb-1">UPI ID</label>
+                    <input value={form.upi_id} onChange={e => setForm(f=>({...f,upi_id:e.target.value}))}
+                      placeholder="name@upi" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 block mb-1">Account Name</label>
+                    <input value={form.upi_name} onChange={e => setForm(f=>({...f,upi_name:e.target.value}))}
+                      placeholder="Recipient name" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  </div>
+                </div>
+              </div>
+
+              {/* QR Code */}
+              <div className="p-4 bg-slate-50 rounded-xl space-y-3">
+                <p className="text-xs font-black text-slate-700 uppercase tracking-wide">📷 QR Code</p>
+                <label className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl cursor-pointer transition
+                  ${form.qr_code_image ? 'border-emerald-400 bg-emerald-50' : 'border-slate-300 hover:bg-slate-100'}`}>
+                  {form.qr_code_image
+                    ? <img src={form.qr_code_image} alt="QR" className="h-full object-contain rounded-lg p-1" />
+                    : <><span className="text-3xl mb-1">📷</span><span className="text-xs text-slate-500">Click to upload QR code image</span></>
+                  }
+                  <input type="file" accept="image/*" className="hidden" onChange={handleQR} />
+                </label>
+                {form.qr_code_image && (
+                  <button onClick={() => setForm(f=>({...f,qr_code_image:''}))} className="text-xs text-red-500 hover:underline">Remove QR</button>
+                )}
+              </div>
+
+              {/* Payment Link */}
+              <div className="p-4 bg-emerald-50 rounded-xl">
+                <p className="text-xs font-black text-emerald-700 uppercase tracking-wide mb-2">🔗 Payment Link</p>
+                <input value={form.payment_link} onChange={e => setForm(f=>({...f,payment_link:e.target.value}))}
+                  placeholder="https://rzp.io/l/... or any payment URL"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+              </div>
+
+              {/* Mobile */}
+              <div className="p-4 bg-purple-50 rounded-xl space-y-3">
+                <p className="text-xs font-black text-purple-700 uppercase tracking-wide">📱 Mobile Pay (Paytm / PhonePe / GPay)</p>
+                <input value={form.mobile_number} onChange={e => setForm(f=>({...f,mobile_number:e.target.value}))}
+                  placeholder="+91 98765 43210"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" />
+                <textarea value={form.mobile_instructions} onChange={e => setForm(f=>({...f,mobile_instructions:e.target.value}))}
+                  placeholder="e.g. Send to this number via Paytm. Add your name in remarks."
+                  rows={2}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none" />
+              </div>
+
+              {msg && <p className={`text-xs font-bold ${msg==='Saved!' ? 'text-emerald-600' : 'text-red-500'}`}>{msg}</p>}
+
+              <button onClick={handleSave} disabled={saving}
+                className="w-full py-3 rounded-xl font-black text-white text-sm transition disabled:opacity-50"
+                style={{ background: editing.brand_color || '#1e40af' }}>
+                {saving ? 'Saving...' : 'Save Payment Config'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ADMIN PAYMENTS ────────────────────────────────────────────
+function AdminPayments() {
+  const [proofs, setProofs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState('all');
+  const [viewing, setViewing] = useState(null);
+  const [actionMsg, setActionMsg] = useState('');
+
+  const load = () => {
+    setLoading(true);
+    api.get('/admin/payments').then(rows => { setProofs(rows); setLoading(false); }).catch(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const handleAction = async (id, status, note='') => {
+    try {
+      await api.put(`/admin/payments/${id}`, { status, admin_note: note });
+      setActionMsg(status === 'verified' ? '✅ Payment verified! Enrollment marked as paid.' : '❌ Payment rejected.');
+      setViewing(null);
+      load();
+      setTimeout(() => setActionMsg(''), 3000);
+    } catch (e) { setActionMsg(e.message); }
+  };
+
+  const methodIcon = { upi:'💳', qr:'📷', link:'🔗', mobile:'📱', other:'💸' };
+  const statusColor = { pending:'badge-amber', verified:'badge-green', rejected:'badge-red' };
+
+  const filtered = filter === 'all' ? proofs : proofs.filter(p => p.status === filter);
+  const stats = {
+    total: proofs.length,
+    pending: proofs.filter(p => p.status==='pending').length,
+    verified: proofs.filter(p => p.status==='verified').length,
+    rejected: proofs.filter(p => p.status==='rejected').length,
+    amount: proofs.filter(p => p.status==='verified').reduce((a,p) => a+Number(p.amount||0), 0),
+  };
+
+  return (
+    <div>
+      <h2 className="text-xl font-black text-slate-900 mb-6">Payment Records</h2>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="stat-card"><p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Proofs</p><p className="text-2xl font-black">{stats.total}</p></div>
+        <div className="stat-card"><p className="text-xs font-bold text-slate-400 uppercase mb-1">Pending Review</p><p className="text-2xl font-black text-amber-500">{stats.pending}</p></div>
+        <div className="stat-card"><p className="text-xs font-bold text-slate-400 uppercase mb-1">Verified</p><p className="text-2xl font-black text-emerald-600">{stats.verified}</p></div>
+        <div className="stat-card"><p className="text-xs font-bold text-slate-400 uppercase mb-1">Collected</p><p className="text-2xl font-black text-blue-600">{fmt(stats.amount)}</p></div>
+      </div>
+
+      {actionMsg && <div className="mb-4 p-3 bg-emerald-50 text-emerald-700 rounded-xl text-sm font-semibold">{actionMsg}</div>}
+
+      {/* Filter tabs */}
+      <div className="flex gap-2 mb-4">
+        {['all','pending','verified','rejected'].map(f => (
+          <button key={f} onClick={() => setFilter(f)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition
+              ${filter===f ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+            {f} {f!=='all' && `(${stats[f]})`}
+          </button>
+        ))}
+      </div>
+
+      <div className="card">
+        {loading ? <div className="text-center py-8 text-slate-400 text-sm">Loading...</div> : (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Student</th><th>Agency</th><th>Course</th><th>Amount</th><th>Method</th><th>Date</th><th>Status</th><th>Action</th></tr></thead>
+              <tbody>
+                {filtered.length === 0 && (
+                  <tr><td colSpan={8} className="text-center text-slate-400 py-6">No payment records found</td></tr>
+                )}
+                {filtered.map(p => (
+                  <tr key={p.id}>
+                    <td>
+                      <div className="font-semibold text-sm">{p.student_name}</div>
+                      <div className="text-xs text-slate-400">{p.student_email}</div>
+                    </td>
+                    <td className="text-sm">{p.agency_name}</td>
+                    <td className="text-sm">{p.course_title || '—'}</td>
+                    <td className="font-black">{fmt(p.amount)}</td>
+                    <td><span className="text-base">{methodIcon[p.payment_method] || '💸'}</span> <span className="text-xs text-slate-500">{p.payment_method}</span></td>
+                    <td className="text-xs text-slate-400">{p.created_at?.split('T')[0]}</td>
+                    <td><span className={`badge ${statusColor[p.status]}`}>{p.status}</span></td>
+                    <td>
+                      <button onClick={() => setViewing(p)}
+                        className="px-2 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Proof detail modal */}
+      {viewing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setViewing(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-black text-slate-900">Payment Proof</h3>
+                <p className="text-xs text-slate-400 mt-0.5">{viewing.student_name} · {viewing.agency_name}</p>
+              </div>
+              <button onClick={() => setViewing(null)} className="text-slate-400 hover:text-slate-700 text-2xl">&times;</button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="p-3 bg-slate-50 rounded-xl"><p className="text-xs text-slate-400 font-bold uppercase mb-1">Amount</p><p className="font-black text-slate-900">{fmt(viewing.amount)}</p></div>
+                <div className="p-3 bg-slate-50 rounded-xl"><p className="text-xs text-slate-400 font-bold uppercase mb-1">Method</p><p className="font-semibold">{methodIcon[viewing.payment_method]} {viewing.payment_method}</p></div>
+                <div className="p-3 bg-slate-50 rounded-xl"><p className="text-xs text-slate-400 font-bold uppercase mb-1">Course</p><p className="font-semibold">{viewing.course_title || '—'}</p></div>
+                <div className="p-3 bg-slate-50 rounded-xl"><p className="text-xs text-slate-400 font-bold uppercase mb-1">Date</p><p className="font-semibold">{viewing.created_at?.split('T')[0]}</p></div>
+              </div>
+
+              {viewing.student_phone && (
+                <div className="p-3 bg-slate-50 rounded-xl text-sm"><p className="text-xs text-slate-400 font-bold uppercase mb-1">Phone</p><p>{viewing.student_phone}</p></div>
+              )}
+
+              {viewing.notes && (
+                <div className="p-3 bg-blue-50 rounded-xl text-sm"><p className="text-xs font-bold text-blue-700 uppercase mb-1">Notes from Student</p><p className="text-blue-800">{viewing.notes}</p></div>
+              )}
+
+              {viewing.proof_image ? (
+                <div>
+                  <p className="text-xs font-bold text-slate-500 uppercase mb-2">Payment Screenshot</p>
+                  <img src={viewing.proof_image} alt="proof" className="w-full rounded-xl border border-slate-200 object-contain max-h-64" />
+                </div>
+              ) : (
+                <div className="p-4 bg-amber-50 rounded-xl text-center">
+                  <p className="text-sm text-amber-700 font-semibold">No screenshot uploaded</p>
+                </div>
+              )}
+
+              {viewing.admin_note && (
+                <div className="p-3 bg-red-50 rounded-xl text-sm"><p className="text-xs font-bold text-red-700 uppercase mb-1">Admin Note</p><p className="text-red-800">{viewing.admin_note}</p></div>
+              )}
+
+              <span className={`badge ${statusColor[viewing.status]}`}>{viewing.status}</span>
+
+              {viewing.status === 'pending' && (
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <button onClick={() => handleAction(viewing.id, 'verified')}
+                    className="py-2.5 rounded-xl font-black text-white text-sm bg-emerald-500 hover:bg-emerald-600 transition">
+                    ✅ Verify
+                  </button>
+                  <button onClick={() => {
+                    const note = window.prompt('Rejection reason (optional):') || '';
+                    handleAction(viewing.id, 'rejected', note);
+                  }} className="py-2.5 rounded-xl font-black text-white text-sm bg-red-500 hover:bg-red-600 transition">
+                    ❌ Reject
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MAIN DASHBOARD ────────────────────────────────────────────
 const SECTIONS = [
   { id: 'overview',    icon: '📊', label: 'Overview' },
@@ -1392,9 +1720,11 @@ const SECTIONS = [
   { id: 'liveclasses',icon: '📺', label: 'Live Classes' },
   { id: 'revenue',    icon: '💰', label: 'Revenue' },
   { id: 'commissions',icon: '📤', label: 'Commissions' },
-  { id: 'coupons',    icon: '🏷️', label: 'Coupons' },
-  { id: 'courses',    icon: '📖', label: 'Courses' },
-  { id: 'lms',        icon: '🔗', label: 'LMS Bridge' },
+  { id: 'coupons',        icon: '🏷️', label: 'Coupons' },
+  { id: 'courses',        icon: '📖', label: 'Courses' },
+  { id: 'lms',            icon: '🔗', label: 'LMS Bridge' },
+  { id: 'paymentconfig',  icon: '⚙️', label: 'Payment Config' },
+  { id: 'payments',       icon: '💸', label: 'All Payments' },
 ];
 
 export default function AdminDashboard() {
@@ -1414,6 +1744,8 @@ export default function AdminDashboard() {
     coupons: <AdminCoupons />,
     courses: <CoursesAdmin />,
     lms: <LmsBridge />,
+    paymentconfig: <PaymentConfig />,
+    payments: <AdminPayments />,
   };
 
   return (
