@@ -966,6 +966,188 @@ app.post('/api/progress/update', authMiddleware(['student']), async (req, res) =
   }
 });
 
+// ─── COURSE CATALOG (Public) ──────────────────────────────────
+app.get('/api/catalog', async (req, res) => {
+  try {
+    const [rows] = await getPool().query(
+      'SELECT id, title, category, description, price, duration_weeks FROM courses WHERE is_active=1 ORDER BY category, title'
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── BATCH CATALOG (by agency) ────────────────────────────────
+app.get('/api/catalog/batches', async (req, res) => {
+  const { agency_id } = req.query;
+  const params = [];
+  let where = 'WHERE b.status = "active"';
+  if (agency_id) { where += ' AND b.agency_id = ?'; params.push(agency_id); }
+  try {
+    const [rows] = await getPool().query(`
+      SELECT b.*, c.title as course_title, c.price as course_price, c.category,
+        a.name as agency_name, a.brand_color, a.slug as agency_slug,
+        COUNT(DISTINCT be.id) as enrolled_count,
+        (SELECT COUNT(*) FROM live_classes lc WHERE lc.batch_id = b.id AND lc.scheduled_at >= NOW()) as upcoming_classes
+      FROM batches b
+      JOIN courses c ON b.course_id = c.id
+      JOIN agencies a ON b.agency_id = a.id
+      LEFT JOIN batch_enrollments be ON b.id = be.batch_id AND be.status = 'active'
+      ${where}
+      GROUP BY b.id ORDER BY b.start_date ASC
+    `, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── STUDENT: PURCHASE COURSE ─────────────────────────────────
+app.post('/api/student/purchase', authMiddleware(['student']), async (req, res) => {
+  const { course_id, coupon_code } = req.body;
+  const studentId = req.user.id;
+  const agencyId = req.user.agency_id;
+  try {
+    const [[course]] = await getPool().query('SELECT * FROM courses WHERE id=? AND is_active=1', [course_id]);
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+    const [[existing]] = await getPool().query(
+      'SELECT id FROM enrollments WHERE student_id=? AND course_id=? AND agency_id=?',
+      [studentId, course_id, agencyId]
+    );
+    if (existing) return res.status(400).json({ error: 'Already enrolled in this course' });
+
+    let discount = 0;
+    if (coupon_code) {
+      const [coup] = await getPool().query(
+        'SELECT * FROM coupons WHERE code=? AND agency_id=? AND is_active=1', [coupon_code.toUpperCase(), agencyId]
+      );
+      if (coup.length) {
+        const c = coup[0];
+        discount = c.discount_type === 'percentage' ? Math.round(course.price * c.value / 100) : c.value;
+        await getPool().query('UPDATE coupons SET used_count=used_count+1 WHERE id=?', [c.id]);
+      }
+    }
+    const finalAmount = Math.max(0, course.price - discount);
+
+    if (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET) {
+      const Razorpay = require('razorpay');
+      const rz = new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET });
+      const order = await rz.orders.create({
+        amount: finalAmount * 100, currency: 'INR',
+        receipt: `enr_${studentId}_${course_id}_${Date.now()}`,
+        notes: { student_id: String(studentId), course_id: String(course_id) }
+      });
+      return res.json({ gateway: 'razorpay', order_id: order.id, amount: finalAmount, discount, key_id: process.env.RAZORPAY_KEY_ID, course_title: course.title });
+    }
+
+    // No gateway — pending enrollment
+    const [result] = await getPool().query(
+      'INSERT INTO enrollments (student_id, agency_id, course_id, fee_paid, coupon_code, discount_amount, payment_status, lms_enrolled) VALUES (?,?,?,?,?,?,"pending",1)',
+      [studentId, agencyId, course_id, finalAmount, coupon_code || null, discount]
+    );
+    res.json({ gateway: 'manual', enrollment_id: result.insertId, amount: finalAmount, discount, course_title: course.title, message: 'Enrolled! Your agency will confirm payment shortly.' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── STUDENT: VERIFY RAZORPAY PAYMENT ─────────────────────────
+app.post('/api/student/verify-payment', authMiddleware(['student']), async (req, res) => {
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, course_id, amount, discount } = req.body;
+  const studentId = req.user.id;
+  const agencyId = req.user.agency_id;
+  try {
+    const crypto = require('crypto');
+    const expected = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`).digest('hex');
+    if (expected !== razorpay_signature) return res.status(400).json({ error: 'Payment verification failed' });
+    const [result] = await getPool().query(
+      'INSERT INTO enrollments (student_id, agency_id, course_id, fee_paid, discount_amount, payment_status, payment_date, lms_enrolled) VALUES (?,?,?,?,?,"paid",NOW(),1)',
+      [studentId, agencyId, course_id, amount, discount || 0]
+    );
+    res.json({ success: true, enrollment_id: result.insertId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── STUDENT: AVAILABLE BATCHES ───────────────────────────────
+app.get('/api/student/available-batches', authMiddleware(['student']), async (req, res) => {
+  const studentId = req.user.id;
+  const agencyId = req.user.agency_id;
+  try {
+    const [rows] = await getPool().query(`
+      SELECT b.*, c.title as course_title, c.category, a.brand_color,
+        COUNT(DISTINCT be.id) as enrolled_count,
+        (SELECT be2.id FROM batch_enrollments be2 WHERE be2.batch_id=b.id AND be2.student_id=? AND be2.status='active' LIMIT 1) as already_joined,
+        (SELECT COUNT(*) FROM live_classes lc WHERE lc.batch_id=b.id AND lc.scheduled_at>=NOW() AND lc.status='scheduled') as upcoming_classes
+      FROM batches b
+      JOIN courses c ON b.course_id=c.id
+      JOIN agencies a ON b.agency_id=a.id
+      LEFT JOIN batch_enrollments be ON b.id=be.batch_id AND be.status='active'
+      WHERE b.agency_id=? AND b.status='active'
+      GROUP BY b.id ORDER BY b.start_date ASC
+    `, [studentId, agencyId]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── STUDENT: JOIN BATCH ──────────────────────────────────────
+app.post('/api/student/join-batch', authMiddleware(['student']), async (req, res) => {
+  const { batch_id } = req.body;
+  const studentId = req.user.id;
+  try {
+    const [[batch]] = await getPool().query('SELECT * FROM batches WHERE id=?', [batch_id]);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const [[enrollment]] = await getPool().query(
+      'SELECT id FROM enrollments WHERE student_id=? AND course_id=? AND agency_id=? AND payment_status="paid"',
+      [studentId, batch.course_id, batch.agency_id]
+    );
+    if (!enrollment) return res.status(403).json({ error: 'Please purchase the course first to join this batch' });
+    const [[{ n }]] = await getPool().query(
+      'SELECT COUNT(*) as n FROM batch_enrollments WHERE batch_id=? AND status="active"', [batch_id]
+    );
+    if (n >= batch.max_students) return res.status(400).json({ error: 'This batch is full' });
+    const [result] = await getPool().query(
+      'INSERT INTO batch_enrollments (batch_id, student_id, enrollment_id, access_type, status) VALUES (?,?,?,"full","active")',
+      [batch_id, studentId, enrollment.id]
+    );
+    res.json({ id: result.insertId, message: 'Successfully joined the batch!' });
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Already enrolled in this batch' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── STUDENT: MY BATCHES ──────────────────────────────────────
+app.get('/api/student/my-batches', authMiddleware(['student']), async (req, res) => {
+  const studentId = req.user.id;
+  try {
+    const [rows] = await getPool().query(`
+      SELECT be.*, b.name as batch_name, b.schedule_days, b.class_time, b.start_date, b.end_date,
+        b.trainer_name, b.duration_minutes, b.timezone,
+        c.title as course_title, c.category, a.brand_color,
+        (SELECT COUNT(*) FROM live_classes lc WHERE lc.batch_id=b.id AND lc.scheduled_at>=NOW() AND lc.status='scheduled') as upcoming_classes
+      FROM batch_enrollments be
+      JOIN batches b ON be.batch_id=b.id
+      JOIN courses c ON b.course_id=c.id
+      JOIN agencies a ON b.agency_id=a.id
+      WHERE be.student_id=? AND be.status='active'
+      ORDER BY b.start_date ASC
+    `, [studentId]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── PARTNER: STUDENT SELF-PURCHASES ──────────────────────────
+app.get('/api/partner/purchases', authMiddleware(['partner_admin']), async (req, res) => {
+  try {
+    const [rows] = await getPool().query(`
+      SELECT e.*, u.name as student_name, u.email as student_email,
+        c.title as course_title, c.category
+      FROM enrollments e
+      JOIN users u ON e.student_id=u.id
+      JOIN courses c ON e.course_id=c.id
+      WHERE e.agency_id=?
+      ORDER BY e.enrolled_at DESC
+    `, [req.user.agency_id]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── DB Connection Retry ─────────────────────────────────────
 async function checkDBConnection() {
   try {

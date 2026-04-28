@@ -742,11 +742,124 @@ function PartnerLiveClasses({ accent }) {
   );
 }
 
+// ── ONLINE PURCHASES ─────────────────────────────────────────
+function OnlinePurchases({ accent }) {
+  const [purchases, setPurchases] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState('');
+
+  const load = () => api.get('/partner/purchases').then(setPurchases).catch(() => {}).finally(() => setLoading(false));
+  useEffect(() => { load(); }, []);
+
+  const markPaid = async (id) => {
+    try {
+      await api.put(`/partner/enrollments/${id}/payment`, {});
+      setMsg('Payment marked as paid!');
+      load();
+      setTimeout(() => setMsg(''), 3000);
+    } catch (e) { setMsg(e.message); }
+  };
+
+  const paid = purchases.filter(p => p.payment_status === 'paid');
+  const pending = purchases.filter(p => p.payment_status === 'pending');
+
+  if (loading) return <div className="text-slate-400 text-sm">Loading...</div>;
+
+  return (
+    <div>
+      <h2 className="text-xl font-black text-slate-900 mb-2">Online Purchases & Bookings</h2>
+      <p className="text-sm text-slate-500 mb-6">Students who self-enrolled via the course catalog.</p>
+
+      {msg && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-sm">{msg}</div>}
+
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="stat-card">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Total Enrollments</p>
+          <p className="text-2xl font-black text-slate-900">{purchases.length}</p>
+        </div>
+        <div className="stat-card">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Paid</p>
+          <p className="text-2xl font-black text-emerald-600">{paid.length}</p>
+        </div>
+        <div className="stat-card">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Pending Payment</p>
+          <p className="text-2xl font-black text-amber-500">{pending.length}</p>
+        </div>
+      </div>
+
+      {pending.length > 0 && (
+        <div className="mb-6">
+          <h3 className="text-sm font-bold text-amber-600 mb-3 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+            Pending Payment Confirmation ({pending.length})
+          </h3>
+          <div className="card">
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Student</th><th>Course</th><th>Amount</th><th>Enrolled</th><th>Action</th></tr></thead>
+                <tbody>
+                  {pending.map(p => (
+                    <tr key={p.id}>
+                      <td>
+                        <div className="font-semibold">{p.student_name}</div>
+                        <div className="text-xs text-slate-400">{p.student_email}</div>
+                      </td>
+                      <td>
+                        <div className="font-medium text-sm">{p.course_title}</div>
+                        <span className="badge badge-blue text-xs">{p.category}</span>
+                      </td>
+                      <td className="font-black">{fmt(p.fee_paid)}</td>
+                      <td className="text-xs text-slate-400">{p.enrolled_at?.split('T')[0]}</td>
+                      <td>
+                        <button onClick={() => markPaid(p.id)}
+                          className="text-xs px-3 py-1.5 rounded-lg font-bold text-white transition hover:opacity-90"
+                          style={{ background: accent }}>
+                          Mark Paid
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <h3 className="text-sm font-bold text-slate-700 mb-3">All Purchases</h3>
+      <div className="card">
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Student</th><th>Course</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead>
+            <tbody>
+              {purchases.length === 0 ? (
+                <tr><td colSpan={5} className="text-center text-slate-400 py-8">No purchases yet. Share your catalog link with students!</td></tr>
+              ) : purchases.map(p => (
+                <tr key={p.id}>
+                  <td>
+                    <div className="font-semibold">{p.student_name}</div>
+                    <div className="text-xs text-slate-400">{p.student_email}</div>
+                  </td>
+                  <td className="text-sm">{p.course_title}</td>
+                  <td className="font-bold">{fmt(p.fee_paid)}</td>
+                  <td><Badge status={p.payment_status} /></td>
+                  <td className="text-xs text-slate-400">{p.enrolled_at?.split('T')[0]}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── MAIN ─────────────────────────────────────────────────────
 const SECTIONS = [
   { id: 'overview', icon: '📊', label: 'Overview' },
   { id: 'students', icon: '👥', label: 'Students' },
   { id: 'enrollments', icon: '📚', label: 'Enrollments' },
+  { id: 'purchases', icon: '🛒', label: 'Online Bookings' },
   { id: 'batches', icon: '📅', label: 'Batches' },
   { id: 'liveclasses', icon: '📺', label: 'Live Classes' },
   { id: 'earnings', icon: '💵', label: 'Earnings' },
@@ -766,6 +879,7 @@ export default function PartnerDashboard() {
     overview: <Overview accent={accent} />,
     students: <Students accent={accent} />,
     enrollments: <Enrollments accent={accent} />,
+    purchases: <OnlinePurchases accent={accent} />,
     batches: <PartnerBatches accent={accent} />,
     liveclasses: <PartnerLiveClasses accent={accent} />,
     earnings: <Earnings accent={accent} commRate={commRate} />,
