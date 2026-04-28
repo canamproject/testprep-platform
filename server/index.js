@@ -1849,6 +1849,112 @@ app.get('/api/partner/purchases', authMiddleware(['partner_admin']), async (req,
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── PAYMENT CONFIG ──────────────────────────────────────────
+
+// Admin: get payment config for their platform (all agencies)
+app.get('/api/admin/payment-config', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [rows] = await getPool().query(`
+      SELECT apc.*, a.name as agency_name, a.brand_color
+      FROM agency_payment_config apc
+      JOIN agencies a ON apc.agency_id = a.id
+      ORDER BY a.name
+    `);
+    res.json(rows);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: save payment config for a specific agency
+app.put('/api/admin/payment-config/:agency_id', authMiddleware(['super_admin']), async (req, res) => {
+  const { upi_id, upi_name, qr_code_image, payment_link, mobile_number, mobile_instructions } = req.body;
+  try {
+    await getPool().query(`
+      INSERT INTO agency_payment_config (agency_id, upi_id, upi_name, qr_code_image, payment_link, mobile_number, mobile_instructions)
+      VALUES (?,?,?,?,?,?,?)
+      ON DUPLICATE KEY UPDATE
+        upi_id=VALUES(upi_id), upi_name=VALUES(upi_name),
+        qr_code_image=VALUES(qr_code_image), payment_link=VALUES(payment_link),
+        mobile_number=VALUES(mobile_number), mobile_instructions=VALUES(mobile_instructions)
+    `, [req.params.agency_id, upi_id||null, upi_name||null, qr_code_image||null,
+        payment_link||null, mobile_number||null, mobile_instructions||null]);
+    res.json({ message: 'Payment config saved' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Student: get payment config for their agency
+app.get('/api/student/payment-config', authMiddleware(['student']), async (req, res) => {
+  try {
+    const [[cfg]] = await getPool().query(
+      `SELECT upi_id, upi_name, qr_code_image, payment_link, mobile_number, mobile_instructions
+       FROM agency_payment_config WHERE agency_id=?`,
+      [req.user.agency_id]
+    );
+    res.json(cfg || {});
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Student: submit payment proof
+app.post('/api/student/payment-proof', authMiddleware(['student']), async (req, res) => {
+  const { enrollment_id, amount, payment_method, proof_image, notes } = req.body;
+  if (!enrollment_id) return res.status(400).json({ error: 'enrollment_id required' });
+  try {
+    // Verify enrollment belongs to this student
+    const [[enr]] = await getPool().query(
+      `SELECT id, agency_id FROM enrollments WHERE id=? AND student_id=?`,
+      [enrollment_id, req.user.id]
+    );
+    if (!enr) return res.status(404).json({ error: 'Enrollment not found' });
+    const [r] = await getPool().query(`
+      INSERT INTO payment_proofs (enrollment_id, student_id, agency_id, amount, payment_method, proof_image, notes)
+      VALUES (?,?,?,?,?,?,?)
+    `, [enrollment_id, req.user.id, enr.agency_id, amount||null,
+        payment_method||'other', proof_image||null, notes||null]);
+    res.json({ id: r.insertId, message: 'Payment proof submitted successfully' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: get all payment proofs
+app.get('/api/admin/payments', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [rows] = await getPool().query(`
+      SELECT pp.*,
+        u.name as student_name, u.email as student_email, u.phone as student_phone,
+        a.name as agency_name, a.brand_color,
+        c.title as course_title
+      FROM payment_proofs pp
+      JOIN users u ON pp.student_id = u.id
+      JOIN agencies a ON pp.agency_id = a.id
+      LEFT JOIN enrollments e ON pp.enrollment_id = e.id
+      LEFT JOIN courses c ON e.course_id = c.id
+      ORDER BY pp.created_at DESC
+      LIMIT 500
+    `);
+    res.json(rows);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: verify or reject a payment proof
+app.put('/api/admin/payments/:id', authMiddleware(['super_admin']), async (req, res) => {
+  const { status, admin_note } = req.body;
+  if (!['verified','rejected'].includes(status)) return res.status(400).json({ error: 'status must be verified or rejected' });
+  try {
+    await getPool().query(
+      `UPDATE payment_proofs SET status=?, admin_note=? WHERE id=?`,
+      [status, admin_note||null, req.params.id]
+    );
+    // If verified, mark enrollment as paid
+    if (status === 'verified') {
+      const [[pp]] = await getPool().query(`SELECT enrollment_id FROM payment_proofs WHERE id=?`, [req.params.id]);
+      if (pp) {
+        await getPool().query(
+          `UPDATE enrollments SET payment_status='paid' WHERE id=?`, [pp.enrollment_id]
+        );
+      }
+    }
+    res.json({ message: `Payment ${status}` });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // ─── DB Connection Retry ─────────────────────────────────────
 async function checkDBConnection() {
   try {
@@ -1930,6 +2036,40 @@ async function runMigrations() {
 
     // Logo URL for agencies
     await getPool().query(`ALTER TABLE agencies ADD COLUMN logo_url TEXT`).catch(() => {});
+
+    // Payment config per agency (UPI, QR, link, mobile)
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS agency_payment_config (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        agency_id INT NOT NULL UNIQUE,
+        upi_id VARCHAR(100),
+        upi_name VARCHAR(100),
+        qr_code_image TEXT,
+        payment_link TEXT,
+        mobile_number VARCHAR(20),
+        mobile_instructions TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (agency_id) REFERENCES agencies(id)
+      )
+    `).catch(() => {});
+
+    // Payment proofs submitted by students
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS payment_proofs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        enrollment_id INT NOT NULL,
+        student_id INT NOT NULL,
+        agency_id INT NOT NULL,
+        amount DECIMAL(10,2),
+        payment_method ENUM('upi','qr','link','mobile','other') DEFAULT 'other',
+        proof_image TEXT,
+        notes TEXT,
+        status ENUM('pending','verified','rejected') DEFAULT 'pending',
+        admin_note TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `).catch(() => {});
 
     console.log('✅ Migrations applied');
   } catch (e) {
