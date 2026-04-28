@@ -8,7 +8,7 @@
       "destination": "https://testprep-platform-production.up.railway.app/api/:path*"
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!manifest\\.json|sw\\.js|favicon\\.svg|assets/).*)",
       "destination": "/index.html"
     }
   ]
