@@ -82,9 +82,13 @@ export default function LiveClassRoom() {
   };
 
   const loadJitsi = (data) => {
+    const scriptSrc = (data.jaas_token && data.jaas_app_id)
+      ? 'https://8x8.vc/libs/external_api.min.js'
+      : 'https://meet.jit.si/external_api.js';
+
     if (!window.JitsiMeetExternalAPI) {
       const script = document.createElement('script');
-      script.src = 'https://meet.jit.si/external_api.js';
+      script.src = scriptSrc;
       script.async = true;
       script.onload = () => initializeJitsi(data);
       document.body.appendChild(script);
@@ -94,12 +98,18 @@ export default function LiveClassRoom() {
   };
 
   const initializeJitsi = (data) => {
-    const domain = 'meet.jit.si';
+    const useJaaS = !!(data.jaas_token && data.jaas_app_id);
+    const domain = useJaaS ? '8x8.vc' : 'meet.jit.si';
+    const roomName = useJaaS
+      ? `${data.jaas_app_id}/${data.jitsi_room_name}`
+      : data.jitsi_room_name;
+
     const options = {
-      roomName: data.jitsi_room_name,
+      roomName,
       width: '100%',
       height: '100%',
       parentNode: jitsiRef.current,
+      ...(useJaaS ? { jwt: data.jaas_token } : {}),
       userInfo: {
         displayName: user?.name || 'Student',
         email: user?.email

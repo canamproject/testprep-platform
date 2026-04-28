@@ -50,6 +50,49 @@ function getPool() {
 
 const JWT_SECRET = process.env.JWT_SECRET || 'testprep_secret';
 
+// ─── JaaS (8x8 Jitsi as a Service) config ────────────────────
+const JAAS_APP_ID = process.env.JAAS_APP_ID || '';
+const JAAS_API_KEY_ID = process.env.JAAS_API_KEY_ID || '';
+const JAAS_PRIVATE_KEY = (process.env.JAAS_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+
+function generateJaaSToken({ userId, userName, userEmail, roomName, isModerator }) {
+  if (!JAAS_APP_ID || !JAAS_PRIVATE_KEY) return null;
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: 'chat',
+    iat: now,
+    exp: now + 7200,
+    nbf: now - 10,
+    aud: 'jitsi',
+    sub: JAAS_APP_ID,
+    context: {
+      user: {
+        id: String(userId),
+        name: userName || userEmail || 'User',
+        email: userEmail || '',
+        moderator: isModerator,
+        'hidden-from-recorder': false
+      },
+      features: {
+        recording: isModerator,
+        livestreaming: isModerator,
+        transcription: false,
+        'outbound-call': false
+      }
+    },
+    room: roomName
+  };
+  try {
+    return jwt.sign(payload, JAAS_PRIVATE_KEY, {
+      algorithm: 'RS256',
+      header: { alg: 'RS256', kid: JAAS_API_KEY_ID, typ: 'JWT' }
+    });
+  } catch (e) {
+    console.error('JaaS JWT error:', e.message);
+    return null;
+  }
+}
+
 // ─── Auth Middleware ─────────────────────────────────────────
 function authMiddleware(roles = []) {
   return (req, res, next) => {
@@ -1130,6 +1173,14 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
       ? liveClass.jitsi_moderator_url
       : liveClass.jitsi_meeting_url;
 
+    const jaasToken = generateJaaSToken({
+      userId,
+      userName: req.user.name,
+      userEmail: req.user.email,
+      roomName: liveClass.jitsi_room_name,
+      isModerator
+    });
+
     res.json({
       class_id: classId,
       title: liveClass.title,
@@ -1147,7 +1198,9 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
       duration_minutes: liveClass.duration_minutes,
       allow_chat: isDemo ? false : liveClass.allow_chat,
       allow_video: isModerator ? true : (isDemo ? false : liveClass.allow_student_video),
-      allow_audio: isModerator ? true : (isDemo ? false : liveClass.allow_student_audio)
+      allow_audio: isModerator ? true : (isDemo ? false : liveClass.allow_student_audio),
+      jaas_app_id: JAAS_APP_ID || null,
+      jaas_token: jaasToken
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
