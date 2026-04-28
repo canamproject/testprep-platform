@@ -95,7 +95,7 @@ function generateJaaSToken({ userId, userName, userEmail, roomName, isModerator 
 
 // ─── Auth Middleware ─────────────────────────────────────────
 function authMiddleware(roles = []) {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'No token' });
     try {
@@ -103,6 +103,13 @@ function authMiddleware(roles = []) {
       req.user = decoded;
       if (roles.length && !roles.includes(decoded.role)) {
         return res.status(403).json({ error: 'Forbidden' });
+      }
+      // Check if user has been disabled (skip for super_admin)
+      if (decoded.role !== 'super_admin') {
+        const [[u]] = await getPool().query('SELECT is_active FROM users WHERE id=?', [decoded.id]).catch(() => [[{ is_active: 1 }]]);
+        if (u && u.is_active === 0) {
+          return res.status(403).json({ error: 'Account disabled. Contact your administrator.' });
+        }
       }
       next();
     } catch {
@@ -614,6 +621,69 @@ app.post('/api/partner/batches', authMiddleware(['partner_admin']), async (req, 
 });
 
 // ─── FACULTY MANAGEMENT ──────────────────────────────────────
+
+// ─── ADMIN: USER MANAGEMENT ──────────────────────────────────
+
+// List all users (with optional role/agency filter)
+app.get('/api/admin/users', authMiddleware(['super_admin']), async (req, res) => {
+  const { role, agency_id, search } = req.query;
+  let where = '1=1';
+  const params = [];
+  if (role) { where += ' AND u.role = ?'; params.push(role); }
+  if (agency_id) { where += ' AND u.agency_id = ?'; params.push(agency_id); }
+  if (search) { where += ' AND (u.name LIKE ? OR u.email LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
+
+  const [rows] = await getPool().query(`
+    SELECT u.id, u.name, u.email, u.role, u.phone, u.agency_id,
+           u.is_active, u.created_at,
+           a.name as agency_name
+    FROM users u
+    LEFT JOIN agencies a ON u.agency_id = a.id
+    WHERE ${where}
+    ORDER BY u.role ASC, u.created_at DESC
+  `, params);
+  res.json(rows);
+});
+
+// Edit a user (name, email, phone, role, agency_id)
+app.put('/api/admin/users/:id', authMiddleware(['super_admin']), async (req, res) => {
+  const { name, email, phone, role, agency_id, password } = req.body;
+  const userId = req.params.id;
+  try {
+    // Prevent disabling or downgrading yourself
+    if (String(userId) === String(req.user.id) && role && role !== 'super_admin') {
+      return res.status(400).json({ error: 'Cannot change your own role' });
+    }
+    let query = `UPDATE users SET name=?, email=?, phone=?, role=?, agency_id=? WHERE id=?`;
+    const params = [name, email, phone || null, role, agency_id || null, userId];
+    if (password && password.length >= 6) {
+      const hash = await bcrypt.hash(password, 10);
+      query = `UPDATE users SET name=?, email=?, phone=?, role=?, agency_id=?, password_hash=? WHERE id=?`;
+      params.splice(5, 0, hash);
+    }
+    await getPool().query(query, params);
+    res.json({ message: 'User updated' });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Toggle enable/disable a user
+app.put('/api/admin/users/:id/toggle-active', authMiddleware(['super_admin']), async (req, res) => {
+  const userId = req.params.id;
+  if (String(userId) === String(req.user.id)) {
+    return res.status(400).json({ error: 'Cannot disable your own account' });
+  }
+  try {
+    await getPool().query(
+      `UPDATE users SET is_active = 1 - is_active WHERE id=?`, [userId]
+    );
+    const [[u]] = await getPool().query('SELECT is_active FROM users WHERE id=?', [userId]);
+    res.json({ is_active: u.is_active, message: u.is_active ? 'User enabled' : 'User disabled' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // List faculty — admin sees all, partner sees own agency
 app.get('/api/admin/faculty', authMiddleware(['super_admin']), async (req, res) => {
@@ -1691,6 +1761,9 @@ async function runMigrations() {
       ALTER TABLE users MODIFY COLUMN role
         ENUM('super_admin','partner_admin','student','faculty') NOT NULL
     `).catch(() => {});
+
+    // Add is_active flag to users (for enable/disable)
+    await getPool().query(`ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1`).catch(() => {});
 
     // Add trainer_id to batches if missing (for older schemas)
     await getPool().query(`

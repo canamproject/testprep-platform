@@ -1052,20 +1052,240 @@ function FacultyAdmin() {
   );
 }
 
+// ── ALL USERS ─────────────────────────────────────────────────
+const ROLE_COLORS = {
+  super_admin:   'bg-red-100 text-red-700',
+  partner_admin: 'bg-blue-100 text-blue-700',
+  faculty:       'bg-purple-100 text-purple-700',
+  student:       'bg-emerald-100 text-emerald-700',
+};
+const ROLE_LABELS = {
+  super_admin: 'Super Admin', partner_admin: 'Partner Admin',
+  faculty: 'Faculty', student: 'Student',
+};
+
+function AllUsers() {
+  const [users, setUsers]       = useState([]);
+  const [agencies, setAgencies] = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [search, setSearch]     = useState('');
+  const [roleFilter, setRole]   = useState('');
+  const [editing, setEditing]   = useState(null); // user being edited
+  const [editForm, setEditForm] = useState({});
+  const [editMsg, setEditMsg]   = useState('');
+  const [saving, setSaving]     = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    const qs = new URLSearchParams();
+    if (roleFilter) qs.set('role', roleFilter);
+    if (search)     qs.set('search', search);
+    api.get(`/admin/users?${qs}`).then(u => { setUsers(u); setLoading(false); }).catch(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); api.get('/admin/agencies').then(setAgencies); }, [roleFilter]);
+
+  const openEdit = (u) => {
+    setEditing(u);
+    setEditForm({ name: u.name, email: u.email, phone: u.phone || '', role: u.role, agency_id: u.agency_id || '', password: '' });
+    setEditMsg('');
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await api.put(`/admin/users/${editing.id}`, editForm);
+      setEditing(null);
+      load();
+    } catch (err) { setEditMsg(err.message); }
+    finally { setSaving(false); }
+  };
+
+  const handleToggle = async (u) => {
+    const action = u.is_active ? 'disable' : 'enable';
+    if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} "${u.name}"?`)) return;
+    try {
+      await api.put(`/admin/users/${u.id}/toggle-active`, {});
+      load();
+    } catch (err) { alert(err.message); }
+  };
+
+  const counts = users.reduce((acc, u) => { acc[u.role] = (acc[u.role] || 0) + 1; return acc; }, {});
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="page-header">
+        <div>
+          <h2 className="page-title">All Users <span className="text-base font-normal text-slate-400 ml-2">{users.length} total</span></h2>
+          <div className="flex gap-2 mt-1 flex-wrap">
+            {Object.entries(ROLE_LABELS).map(([r, l]) => (
+              <span key={r} className={`text-xs px-2 py-0.5 rounded-full font-semibold ${ROLE_COLORS[r]}`}>
+                {l}: {counts[r] || 0}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="card mb-4 p-4">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <input
+            className="input flex-1"
+            placeholder="Search by name or email…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && load()}
+          />
+          <select className="input sm:w-48" value={roleFilter} onChange={e => setRole(e.target.value)}>
+            <option value="">All Roles</option>
+            {Object.entries(ROLE_LABELS).map(([r, l]) => <option key={r} value={r}>{l}</option>)}
+          </select>
+          <button className="btn-primary whitespace-nowrap" onClick={load}>Search</button>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="card p-0 overflow-hidden">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Role</th>
+                <th>Agency</th>
+                <th>Phone</th>
+                <th>Joined</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={7} className="text-center py-8 text-slate-400">Loading…</td></tr>
+              ) : users.length === 0 ? (
+                <tr><td colSpan={7} className="text-center py-8 text-slate-400">No users found</td></tr>
+              ) : users.map(u => (
+                <tr key={u.id}>
+                  <td>
+                    <div className="font-semibold text-slate-900">{u.name}</div>
+                    <div className="text-xs text-slate-400">{u.email}</div>
+                  </td>
+                  <td>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${ROLE_COLORS[u.role] || 'bg-slate-100 text-slate-600'}`}>
+                      {ROLE_LABELS[u.role] || u.role}
+                    </span>
+                  </td>
+                  <td className="text-sm">{u.agency_name || <span className="text-slate-400">—</span>}</td>
+                  <td className="text-sm">{u.phone || <span className="text-slate-400">—</span>}</td>
+                  <td className="text-xs text-slate-400">{new Date(u.created_at).toLocaleDateString('en-IN')}</td>
+                  <td>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${u.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                      {u.is_active ? '● Active' : '● Disabled'}
+                    </span>
+                  </td>
+                  <td>
+                    <div className="flex gap-1.5">
+                      <button
+                        className="text-xs px-3 py-1 rounded-lg bg-slate-800 text-white hover:bg-slate-700 transition"
+                        onClick={() => openEdit(u)}>
+                        ✏️ Edit
+                      </button>
+                      <button
+                        className={`text-xs px-3 py-1 rounded-lg font-semibold transition ${u.is_active ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}
+                        onClick={() => handleToggle(u)}>
+                        {u.is_active ? 'Disable' : 'Enable'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Edit Modal */}
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.6)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-y-auto max-h-[90vh]">
+            <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100">
+              <h3 className="font-black text-slate-900">Edit User</h3>
+              <button onClick={() => setEditing(null)} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+            </div>
+            <form onSubmit={handleSave} className="p-6 space-y-4">
+              {editMsg && <p className="text-red-500 text-sm bg-red-50 px-3 py-2 rounded-lg">{editMsg}</p>}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Full Name *</label>
+                  <input className="input" required value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Email *</label>
+                  <input type="email" className="input" required value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Phone</label>
+                  <input className="input" placeholder="+91 98765 43210" value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Role *</label>
+                  <select className="input" value={editForm.role} onChange={e => setEditForm({ ...editForm, role: e.target.value })}>
+                    {Object.entries(ROLE_LABELS).map(([r, l]) => <option key={r} value={r}>{l}</option>)}
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="label">Agency</label>
+                  <select className="input" value={editForm.agency_id} onChange={e => setEditForm({ ...editForm, agency_id: e.target.value })}>
+                    <option value="">— No Agency —</option>
+                    {agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-100 pt-4">
+                <label className="label">New Password <span className="text-slate-300 font-normal">(leave blank to keep current)</span></label>
+                <input
+                  type="password"
+                  className="input"
+                  placeholder="Min 6 characters"
+                  value={editForm.password}
+                  onChange={e => setEditForm({ ...editForm, password: e.target.value })}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button type="submit" disabled={saving} className="btn-primary flex-1">
+                  {saving ? 'Saving…' : 'Save Changes'}
+                </button>
+                <button type="button" className="btn-ghost" onClick={() => setEditing(null)}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MAIN DASHBOARD ────────────────────────────────────────────
 const SECTIONS = [
-  { id: 'overview', icon: '📊', label: 'Overview' },
-  { id: 'agencies', icon: '🏢', label: 'Agencies' },
-  { id: 'students', icon: '👥', label: 'All Students' },
-  { id: 'enrollments', icon: '📚', label: 'Enrollments' },
-  { id: 'batches', icon: '📅', label: 'Batches' },
-  { id: 'faculty', icon: '🎓', label: 'Faculty' },
-  { id: 'liveclasses', icon: '📺', label: 'Live Classes' },
-  { id: 'revenue', icon: '💰', label: 'Revenue' },
-  { id: 'commissions', icon: '📤', label: 'Commissions' },
-  { id: 'coupons', icon: '🏷️', label: 'Coupons' },
-  { id: 'courses', icon: '🎓', label: 'Courses' },
-  { id: 'lms', icon: '🔗', label: 'LMS Bridge' },
+  { id: 'overview',    icon: '📊', label: 'Overview' },
+  { id: 'agencies',   icon: '🏢', label: 'Agencies' },
+  { id: 'users',      icon: '👤', label: 'All Users' },
+  { id: 'students',   icon: '👥', label: 'Students' },
+  { id: 'enrollments',icon: '📚', label: 'Enrollments' },
+  { id: 'batches',    icon: '📅', label: 'Batches' },
+  { id: 'faculty',    icon: '🎓', label: 'Faculty' },
+  { id: 'liveclasses',icon: '📺', label: 'Live Classes' },
+  { id: 'revenue',    icon: '💰', label: 'Revenue' },
+  { id: 'commissions',icon: '📤', label: 'Commissions' },
+  { id: 'coupons',    icon: '🏷️', label: 'Coupons' },
+  { id: 'courses',    icon: '📖', label: 'Courses' },
+  { id: 'lms',        icon: '🔗', label: 'LMS Bridge' },
 ];
 
 export default function AdminDashboard() {
@@ -1074,6 +1294,7 @@ export default function AdminDashboard() {
   const panels = {
     overview: <Overview />,
     agencies: <Agencies />,
+    users: <AllUsers />,
     students: <AllStudents />,
     enrollments: <AllEnrollments />,
     batches: <BatchesAdmin />,
