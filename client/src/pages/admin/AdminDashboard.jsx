@@ -51,7 +51,9 @@ function Overview() {
                 <tr key={ag.id}>
                   <td>
                     <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black text-white" style={{ background: ag.brand_color }}>{ag.logo_initials}</div>
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black text-white overflow-hidden" style={{ background: ag.brand_color }}>
+                        {ag.logo_url ? <img src={ag.logo_url} alt="logo" className="w-full h-full object-contain p-0.5 bg-white" /> : ag.logo_initials}
+                      </div>
                       <div>
                         <div className="font-semibold text-slate-900">{ag.name}</div>
                         <div className="text-xs text-slate-400">{ag.email}</div>
@@ -75,6 +77,31 @@ function Overview() {
 }
 
 // ── AGENCIES ────────────────────────────────────────────────
+function AgencyLogoUpload({ agency, onDone }) {
+  const [uploading, setUploading] = useState(false);
+  const handleFile = (e) => {
+    const file = e.target.files[0];
+    if (!file || file.size > 2 * 1024 * 1024) return;
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        await api.post(`/admin/agencies/${agency.id}/logo`, { logo_url: ev.target.result });
+        onDone();
+      } catch (err) {
+        alert(err.message);
+      } finally { setUploading(false); }
+    };
+    reader.readAsDataURL(file);
+  };
+  return (
+    <label className="cursor-pointer text-xs font-semibold px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 transition">
+      {uploading ? '…' : agency.logo_url ? '🖼 Change Logo' : '📷 Upload Logo'}
+      <input type="file" accept="image/*" className="hidden" onChange={handleFile} disabled={uploading} />
+    </label>
+  );
+}
+
 function Agencies() {
   const [agencies, setAgencies] = useState([]);
   const [showForm, setShowForm] = useState(false);
@@ -124,16 +151,23 @@ function Agencies() {
         {agencies.map(ag => (
           <div key={ag.id} className="card relative overflow-hidden">
             <div className="absolute top-0 left-0 right-0 h-1" style={{ background: ag.brand_color }} />
-            <div className="flex items-center gap-3 mt-2 mb-4">
-              <div className="w-12 h-12 rounded-xl flex items-center justify-center text-lg font-black text-white" style={{ background: ag.brand_color }}>{ag.logo_initials}</div>
-              <div>
-                <div className="font-bold text-slate-900">{ag.name}</div>
-                <div className="text-xs text-slate-400">{ag.city} · {ag.email}</div>
+            <div className="flex items-center gap-3 mt-2 mb-3">
+              <div className="w-12 h-12 rounded-xl overflow-hidden flex items-center justify-center flex-shrink-0"
+                style={{ background: ag.brand_color }}>
+                {ag.logo_url
+                  ? <img src={ag.logo_url} alt="logo" className="w-full h-full object-contain p-1 bg-white" />
+                  : <span className="text-lg font-black text-white">{ag.logo_initials}</span>
+                }
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-slate-900 truncate">{ag.name}</div>
+                <div className="text-xs text-slate-400 truncate">{ag.city} · {ag.email}</div>
               </div>
             </div>
-            <div className="flex gap-2 mb-3 flex-wrap">
+            <div className="flex gap-2 mb-3 flex-wrap items-center">
               <Badge status={ag.status} />
               <span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">/agent/{ag.slug}</span>
+              <AgencyLogoUpload agency={ag} onDone={load} />
             </div>
             <div className="grid grid-cols-3 gap-3 border-t border-slate-50 pt-4">
               <div className="text-center"><div className="text-lg font-black text-slate-900">{ag.student_count}</div><div className="text-xs text-slate-400">Students</div></div>

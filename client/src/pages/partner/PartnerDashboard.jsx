@@ -549,39 +549,99 @@ function Coupons({ accent }) {
 }
 
 // ── BRANDING ─────────────────────────────────────────────────
-function Branding({ user, accent }) {
+function Branding({ user, accent, logoUrl, onLogoChange }) {
+  const slug = user?.slug || user?.agency_slug || '';
+  const commRate = user?.commission_rate || 0;
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState('');
+
+  const handleLogoFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { setUploadMsg('Image must be under 2MB'); return; }
+    setUploading(true); setUploadMsg('');
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const dataUrl = ev.target.result;
+      try {
+        const res = await api.post('/partner/logo', { logo_url: dataUrl });
+        onLogoChange(res.logo_url);
+        setUploadMsg('Logo updated!');
+      } catch (err) {
+        setUploadMsg(err.message);
+      } finally { setUploading(false); }
+    };
+    reader.readAsDataURL(file);
+  };
+
   return (
     <div>
       <h2 className="text-xl font-black text-slate-900 mb-6">Branding Configuration</h2>
+
+      {/* Logo Upload */}
+      <div className="card mb-6">
+        <h3 className="text-sm font-bold text-slate-700 mb-3">Institute Logo</h3>
+        <div className="flex items-center gap-5">
+          <div className="w-20 h-20 rounded-2xl flex items-center justify-center overflow-hidden border-2 border-dashed border-slate-200 flex-shrink-0"
+            style={{ background: accent + '10' }}>
+            {logoUrl
+              ? <img src={logoUrl} alt="logo" className="w-full h-full object-contain p-1" />
+              : <span className="text-2xl font-black text-white w-full h-full flex items-center justify-center rounded-2xl" style={{ background: accent }}>{user?.logo_initials || 'P'}</span>
+            }
+          </div>
+          <div className="flex-1">
+            <p className="text-sm text-slate-500 mb-3">Upload a PNG, JPG or SVG logo (max 2 MB). It appears in the sidebar and top bar across the entire app.</p>
+            <label className="inline-block cursor-pointer px-4 py-2 rounded-xl text-sm font-bold text-white transition hover:opacity-90"
+              style={{ background: accent }}>
+              {uploading ? 'Uploading…' : logoUrl ? 'Change Logo' : 'Upload Logo'}
+              <input type="file" accept="image/*" className="hidden" onChange={handleLogoFile} disabled={uploading} />
+            </label>
+            {logoUrl && (
+              <button className="ml-2 px-4 py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-500 hover:bg-red-50 transition"
+                onClick={async () => {
+                  await api.post('/partner/logo', { logo_url: '' });
+                  onLogoChange(null); setUploadMsg('Logo removed.');
+                }}>
+                Remove
+              </button>
+            )}
+            {uploadMsg && <p className={`mt-2 text-xs ${uploadMsg.includes('!') ? 'text-emerald-600' : 'text-red-500'}`}>{uploadMsg}</p>}
+          </div>
+        </div>
+      </div>
+
       <div className="card mb-6">
         <div className="flex items-center gap-4 p-4 rounded-xl mb-6" style={{ background: accent + '10', border: `1px solid ${accent}30` }}>
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-black text-white" style={{ background: accent }}>{user.logo_initials}</div>
+          {logoUrl
+            ? <img src={logoUrl} alt="logo" className="w-16 h-16 rounded-2xl object-contain p-1" style={{ background: accent + '20' }} />
+            : <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-black text-white" style={{ background: accent }}>{user?.logo_initials}</div>
+          }
           <div>
-            <div className="text-xl font-black text-slate-900">{user.agency_name}</div>
-            <div className="text-sm font-mono" style={{ color: accent }}>testprep.com/agent/{user.slug}</div>
-            <div className="text-sm text-slate-400 mt-1">{user.agency_email}</div>
+            <div className="text-xl font-black text-slate-900">{user?.agency_name}</div>
+            <div className="text-sm font-mono" style={{ color: accent }}>testprep.com/agent/{slug}</div>
+            <div className="text-sm text-slate-400 mt-1">{user?.agency_email}</div>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div className="p-3 bg-slate-50 rounded-xl"><div className="text-xs font-bold text-slate-400 uppercase mb-1">Brand Color</div><div className="flex items-center gap-2"><div className="w-6 h-6 rounded" style={{ background: accent }} />{accent}</div></div>
-          <div className="p-3 bg-slate-50 rounded-xl"><div className="text-xs font-bold text-slate-400 uppercase mb-1">Commission Rate</div>{user.commission_rate}% partner / {100 - user.commission_rate}% platform</div>
-          <div className="p-3 bg-slate-50 rounded-xl"><div className="text-xs font-bold text-slate-400 uppercase mb-1">City</div>{user.city || '—'}</div>
-          <div className="p-3 bg-slate-50 rounded-xl"><div className="text-xs font-bold text-slate-400 uppercase mb-1">Phone</div>{user.agency_phone || '—'}</div>
+          <div className="p-3 bg-slate-50 rounded-xl"><div className="text-xs font-bold text-slate-400 uppercase mb-1">Commission Rate</div>{commRate}% partner / {100 - commRate}% platform</div>
+          <div className="p-3 bg-slate-50 rounded-xl"><div className="text-xs font-bold text-slate-400 uppercase mb-1">City</div>{user?.city || '—'}</div>
+          <div className="p-3 bg-slate-50 rounded-xl"><div className="text-xs font-bold text-slate-400 uppercase mb-1">Phone</div>{user?.agency_phone || '—'}</div>
         </div>
       </div>
       <div className="card mb-6">
         <h3 className="text-sm font-bold text-slate-700 mb-2">Student Signup Link</h3>
         <p className="text-sm text-slate-500 mb-3">Share this link with prospective students. They'll sign up under your institute automatically.</p>
-        <SignupLinkBox slug={user.slug} accent={accent} />
+        <SignupLinkBox slug={slug} accent={accent} />
       </div>
       <div className="card">
         <h3 className="text-sm font-bold text-slate-700 mb-2">White-Label Info</h3>
-        <p className="text-sm text-slate-500 mb-3">Your portal is completely white-labeled. Students see only your branding. The underlying LMS (TestPrepGPT.ai) is never visible.</p>
+        <p className="text-sm text-slate-500 mb-3">Your portal is completely white-labeled. Students see only your branding.</p>
         <div className="space-y-2 text-sm">
           {[
-            ['Student-facing URL', `/agent/${user.slug}`],
-            ['Student signup URL', `/agent/${user.slug}/signup`],
-            ['Admin login URL', `/agent/${user.slug}/login`],
+            ['Student-facing URL', `/agent/${slug}`],
+            ['Student signup URL', `/agent/${slug}/signup`],
+            ['Admin login URL', `/agent/${slug}/login`],
             ['LMS exposure', 'None — fully hidden'],
           ].map(([k, v]) => (
             <div key={k} className="flex gap-4 p-2 bg-slate-50 rounded-lg">
@@ -1127,10 +1187,12 @@ const SECTIONS = [
 ];
 
 export default function PartnerDashboard() {
-  const { user } = useAuth();
+  const { user, loginWithToken } = useAuth();
   const [section, setSection] = useState('overview');
+  const [logoUrl, setLogoUrl] = useState(user?.logo_url || null);
   const accent = user?.brand_color || '#1e40af';
   const commRate = user?.commission_rate || 60;
+  const slug = user?.slug || user?.agency_slug || '';
 
   const panels = {
     overview: <Overview accent={accent} />,
@@ -1144,20 +1206,24 @@ export default function PartnerDashboard() {
     claim: <Claim accent={accent} />,
     crm: <CRM accent={accent} />,
     coupons: <Coupons accent={accent} />,
-    branding: <Branding user={user} accent={accent} />,
+    branding: <Branding user={user} accent={accent} logoUrl={logoUrl} onLogoChange={setLogoUrl} />,
   };
 
   return (
     <DashLayout
       bgColor={accent}
+      logoUrl={logoUrl}
       sidebar={{
         logo: (
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center font-black text-white text-sm">{user?.logo_initials || 'P'}</div>
+              {logoUrl
+                ? <img src={logoUrl} alt="logo" className="w-8 h-8 rounded-lg object-contain bg-white/20 p-0.5" />
+                : <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center font-black text-white text-sm">{user?.logo_initials || 'P'}</div>
+              }
               <div className="text-white font-bold text-sm truncate">{user?.agency_name}</div>
             </div>
-            <div className="text-xs text-white/50 font-mono">testprep.com/agent/{user?.slug}</div>
+            <div className="text-xs text-white/50 font-mono">testprep.com/agent/{slug}</div>
           </div>
         ),
         items: SECTIONS.map(s => (

@@ -20,7 +20,7 @@ app.use(cors({
   ], 
   credentials: true 
 }));
-app.use(express.json());
+app.use(express.json({ limit: '4mb' })); // allow base64 logo uploads
 
 // ─── DB Pool ────────────────────────────────────────────────
 // Support Railway DATABASE_URL or individual env vars
@@ -137,7 +137,7 @@ app.post('/api/auth/login', async (req, res) => {
   if (!email || !password) return res.status(400).json({ error: 'Missing fields' });
   try {
     const [rows] = await getPool().query(
-      'SELECT u.*, a.name as agency_name, a.slug as agency_slug, a.brand_color, a.logo_initials, a.commission_rate FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.email = ?',
+      'SELECT u.*, a.name as agency_name, a.slug, a.brand_color, a.logo_initials, a.logo_url, a.commission_rate FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.email = ?',
       [email]
     );
     if (!rows.length) return res.status(401).json({ error: 'Invalid credentials' });
@@ -153,8 +153,9 @@ app.post('/api/auth/login', async (req, res) => {
       user: {
         id: user.id, name: user.name, email: user.email, role: user.role,
         agency_id: user.agency_id, agency_name: user.agency_name,
-        agency_slug: user.agency_slug, brand_color: user.brand_color,
-        logo_initials: user.logo_initials
+        slug: user.slug, agency_slug: user.slug,
+        brand_color: user.brand_color, logo_initials: user.logo_initials,
+        logo_url: user.logo_url, commission_rate: user.commission_rate
       }
     });
   } catch (e) {
@@ -188,7 +189,7 @@ app.post('/api/auth/signup', async (req, res) => {
 
     // Auto-login: return token
     const [[newUser]] = await getPool().query(
-      'SELECT u.*, a.name as agency_name, a.slug as agency_slug, a.brand_color, a.logo_initials FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.id=?',
+      'SELECT u.*, a.name as agency_name, a.slug, a.brand_color, a.logo_initials, a.logo_url, a.commission_rate FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.id=?',
       [result.insertId]
     );
     const token = jwt.sign(
@@ -200,8 +201,9 @@ app.post('/api/auth/signup', async (req, res) => {
       user: {
         id: newUser.id, name: newUser.name, email: newUser.email, role: 'student',
         agency_id: agencyId, agency_name: newUser.agency_name,
-        agency_slug: newUser.agency_slug, brand_color: newUser.brand_color,
-        logo_initials: newUser.logo_initials
+        slug: newUser.slug, agency_slug: newUser.slug,
+        brand_color: newUser.brand_color, logo_initials: newUser.logo_initials,
+        logo_url: newUser.logo_url, commission_rate: newUser.commission_rate
       }
     });
   } catch (e) {
@@ -212,10 +214,11 @@ app.post('/api/auth/signup', async (req, res) => {
 app.get('/api/auth/me', authMiddleware(), async (req, res) => {
   try {
     const [rows] = await getPool().query(
-      'SELECT u.id, u.name, u.email, u.role, u.agency_id, u.phone, u.lms_user_id, a.name as agency_name, a.slug, a.brand_color, a.logo_initials, a.commission_rate, a.email as agency_email, a.phone as agency_phone, a.city FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.id = ?',
+      'SELECT u.id, u.name, u.email, u.role, u.agency_id, u.phone, u.lms_user_id, a.name as agency_name, a.slug, a.brand_color, a.logo_initials, a.logo_url, a.commission_rate, a.email as agency_email, a.phone as agency_phone, a.city FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.id = ?',
       [req.user.id]
     );
-    res.json(rows[0]);
+    const row = rows[0];
+    res.json({ ...row, agency_slug: row?.slug }); // normalize agency_slug alias
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -255,6 +258,24 @@ app.put('/api/admin/agencies/:id', authMiddleware(['super_admin']), async (req, 
     [name, email, phone, city, brand_color, commission_rate, status, req.params.id]
   );
   res.json({ message: 'Updated' });
+});
+
+// Admin: upload logo for any agency (base64 data URI)
+app.post('/api/admin/agencies/:id/logo', authMiddleware(['super_admin']), async (req, res) => {
+  const { logo_url } = req.body;
+  if (!logo_url) return res.status(400).json({ error: 'logo_url required' });
+  await getPool().query('UPDATE agencies SET logo_url=? WHERE id=?', [logo_url, req.params.id]);
+  res.json({ message: 'Logo updated', logo_url });
+});
+
+// Partner: upload their own logo
+app.post('/api/partner/logo', authMiddleware(['partner_admin']), async (req, res) => {
+  const { logo_url } = req.body;
+  if (!logo_url) return res.status(400).json({ error: 'logo_url required' });
+  const agencyId = req.user.agency_id;
+  if (!agencyId) return res.status(400).json({ error: 'No agency linked' });
+  await getPool().query('UPDATE agencies SET logo_url=? WHERE id=?', [logo_url, agencyId]);
+  res.json({ message: 'Logo updated', logo_url });
 });
 
 // ─── ADMIN: OVERVIEW STATS ────────────────────────────────────
@@ -1883,6 +1904,9 @@ async function runMigrations() {
         FOREIGN KEY (coupon_id) REFERENCES class_access_coupons(id)
       )
     `).catch(() => {});
+
+    // Logo URL for agencies
+    await getPool().query(`ALTER TABLE agencies ADD COLUMN logo_url TEXT`).catch(() => {});
 
     console.log('✅ Migrations applied');
   } catch (e) {

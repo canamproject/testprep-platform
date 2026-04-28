@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { LogOut, Menu, X } from 'lucide-react';
 
-export default function DashLayout({ sidebar, children, headerRight, bgColor = '#1a1a2e' }) {
+export default function DashLayout({ sidebar, children, headerRight, bgColor = '#1a1a2e', logoUrl }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -22,7 +22,16 @@ export default function DashLayout({ sidebar, children, headerRight, bgColor = '
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
       <div className="p-5 border-b border-white/10 flex items-center justify-between">
-        <div className="flex-1">{sidebar?.logo}</div>
+        <div className="flex-1">
+          {logoUrl && (
+            <img
+              src={logoUrl}
+              alt="brand logo"
+              className="mb-2 h-10 w-auto max-w-[140px] object-contain rounded-lg bg-white/10 p-1"
+            />
+          )}
+          {sidebar?.logo}
+        </div>
         <button onClick={() => setOpen(false)} className="md:hidden text-white/60 hover:text-white p-1 rounded">
           <X size={20} />
         </button>
@@ -83,11 +92,18 @@ export default function DashLayout({ sidebar, children, headerRight, bgColor = '
             )}
           </div>
 
-          {/* Right side content */}
-          {headerRight && (
-            <div className="flex items-center gap-2 ml-auto flex-shrink-0">{headerRight}</div>
-          )}
-          {!headerRight && <div className="ml-auto" />}
+          {/* Right side: brand logo + optional extra content */}
+          <div className="flex items-center gap-3 ml-auto flex-shrink-0">
+            {headerRight && <div className="flex items-center gap-2">{headerRight}</div>}
+            {logoUrl && (
+              <img
+                src={logoUrl}
+                alt="brand logo"
+                className="h-8 w-auto max-w-[120px] object-contain rounded"
+                style={{ maxHeight: 32 }}
+              />
+            )}
+          </div>
         </header>
 
         <main className="flex-1 overflow-y-auto p-4 md:p-6">
