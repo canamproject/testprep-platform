@@ -17,7 +17,7 @@ function StatCard({ label, value, sub, color = 'blue' }) {
 }
 
 function Badge({ status }) {
-  const map = { active: 'badge-green', paid: 'badge-green', approved: 'badge-blue', pending: 'badge-amber', on_hold: 'badge-amber', suspended: 'badge-red', rejected: 'badge-red', completed: 'badge-blue', cancelled: 'badge-gray' };
+  const map = { active: 'badge-green', paid: 'badge-green', approved: 'badge-blue', pending: 'badge-amber', pending_approval: 'badge-amber', on_hold: 'badge-amber', suspended: 'badge-red', rejected: 'badge-red', completed: 'badge-blue', cancelled: 'badge-gray' };
   return <span className={`badge ${map[status] || 'badge-gray'}`}>{status?.replace('_', ' ')}</span>;
 }
 
@@ -762,32 +762,56 @@ function BatchesAdmin() {
 function LiveClassesAdmin() {
   const [classes, setClasses] = useState([]);
   const [batches, setBatches] = useState([]);
+  const [facultyList, setFacultyList] = useState([]);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({
-    batch_id: '', title: '', description: '',
-    scheduled_at: '', duration_minutes: 60,
-    class_mode: 'interactive', auto_record: false
-  });
-  const [msg, setMsg] = useState('');
+  const EMPTY_FORM = { batch_id: '', title: '', description: '', scheduled_at: '', duration_minutes: 60, class_mode: 'interactive', auto_record: false, faculty_id: '' };
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [msg, setMsg] = useState({ text: '', ok: false });
 
   useEffect(() => {
     loadClasses();
     api.get('/admin/batches').then(setBatches);
+    api.get('/admin/faculty').then(setFacultyList).catch(() => {});
   }, []);
 
   const loadClasses = () => api.get('/live-classes').then(setClasses);
 
+  // Auto-generate title when batch or datetime changes
+  const autoTitle = () => {
+    const batch = batches.find(b => String(b.id) === String(form.batch_id));
+    if (!batch || !form.scheduled_at) return '';
+    const dt = new Date(form.scheduled_at);
+    const datePart = dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const timePart = dt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    return `${batch.agency_name || ''} – ${batch.name} – ${datePart} ${timePart}`;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await api.post('/live-classes', form);
-      setMsg('Live class scheduled!'); setShowForm(false); loadClasses();
-      setForm({ batch_id: '', title: '', description: '',
-        scheduled_at: '', duration_minutes: 60,
-        class_mode: 'interactive', auto_record: false });
-    } catch (e) { setMsg(e.message); }
+      const payload = { ...form, title: form.title || autoTitle() };
+      await api.post('/live-classes', payload);
+      setMsg({ text: 'Live class scheduled!', ok: true });
+      setShowForm(false);
+      setForm(EMPTY_FORM);
+      loadClasses();
+    } catch (err) { setMsg({ text: err.message, ok: false }); }
   };
 
+  const handleApprove = async (id) => {
+    try {
+      await api.put(`/admin/live-classes/${id}/approve`, {});
+      loadClasses();
+    } catch (err) { alert(err.message); }
+  };
+
+  const statusColor = (s) => ({
+    pending_approval: 'bg-amber-100 text-amber-700',
+    scheduled: 'bg-blue-100 text-blue-700',
+    live: 'bg-green-100 text-green-700',
+    ended: 'bg-slate-100 text-slate-500',
+    cancelled: 'bg-red-100 text-red-600',
+  }[s] || 'bg-slate-100 text-slate-500');
 
   return (
     <div>
@@ -796,48 +820,60 @@ function LiveClassesAdmin() {
         <button className="btn-primary" onClick={() => setShowForm(!showForm)}>+ Schedule Class</button>
       </div>
 
-      {msg && <div className="mb-4 text-sm text-red-600">{msg}</div>}
+      {msg.text && (
+        <div className={`mb-4 text-sm px-4 py-2 rounded-lg ${msg.ok ? 'bg-emerald-50 text-emerald-700' : 'text-red-600'}`}>{msg.text}</div>
+      )}
 
       {showForm && (
         <form onSubmit={handleSubmit} className="card mb-6">
           <h3 className="text-sm font-bold text-slate-700 mb-4">Schedule Live Class</h3>
           <div className="grid grid-cols-3 gap-4">
             <div>
-              <label className="label">Batch</label>
-              <select className="input" required value={form.batch_id} onChange={e => setForm({...form, batch_id: e.target.value})}>
+              <label className="label">Batch *</label>
+              <select className="input" required value={form.batch_id} onChange={e => setForm({ ...form, batch_id: e.target.value })}>
                 <option value="">Select Batch</option>
                 {batches.map(b => <option key={b.id} value={b.id}>{b.name} ({b.course_title})</option>)}
               </select>
             </div>
             <div>
-              <label className="label">Title</label>
-              <input className="input" required placeholder="e.g., Reading Module - Session 1" value={form.title} onChange={e => setForm({...form, title: e.target.value})} />
+              <label className="label">Date & Time *</label>
+              <input type="datetime-local" className="input" required value={form.scheduled_at} onChange={e => setForm({ ...form, scheduled_at: e.target.value })} />
             </div>
             <div>
-              <label className="label">Scheduled At</label>
-              <input type="datetime-local" className="input" required value={form.scheduled_at} onChange={e => setForm({...form, scheduled_at: e.target.value})} />
+              <label className="label">Assign Faculty</label>
+              <select className="input" value={form.faculty_id} onChange={e => setForm({ ...form, faculty_id: e.target.value })}>
+                <option value="">— None (admin-led) —</option>
+                {facultyList.map(f => <option key={f.id} value={f.id}>{f.name} ({f.email})</option>)}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="label">Class Title</label>
+              <input className="input" placeholder={autoTitle() || 'Auto-generated from agency + batch + time'} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} />
+              {!form.title && form.batch_id && form.scheduled_at && (
+                <p className="text-xs text-slate-400 mt-1">Will be: <em>{autoTitle()}</em></p>
+              )}
             </div>
             <div>
-              <label className="label">Duration (minutes)</label>
-              <input type="number" className="input" value={form.duration_minutes} onChange={e => setForm({...form, duration_minutes: parseInt(e.target.value)})} />
+              <label className="label">Duration (min)</label>
+              <input type="number" className="input" value={form.duration_minutes} onChange={e => setForm({ ...form, duration_minutes: parseInt(e.target.value) })} />
             </div>
             <div>
               <label className="label">Class Mode</label>
-              <select className="input" value={form.class_mode} onChange={e => setForm({...form, class_mode: e.target.value})}>
+              <select className="input" value={form.class_mode} onChange={e => setForm({ ...form, class_mode: e.target.value })}>
                 <option value="interactive">Interactive (2-way video)</option>
                 <option value="broadcast">Broadcast (1-way only)</option>
               </select>
             </div>
             <div>
               <label className="label">Auto Record</label>
-              <select className="input" value={form.auto_record} onChange={e => setForm({...form, auto_record: e.target.value === 'true'})}>
+              <select className="input" value={form.auto_record} onChange={e => setForm({ ...form, auto_record: e.target.value === 'true' })}>
                 <option value="false">No</option>
                 <option value="true">Yes</option>
               </select>
             </div>
             <div className="col-span-3">
               <label className="label">Description</label>
-              <textarea className="input" rows="2" placeholder="Class description..." value={form.description} onChange={e => setForm({...form, description: e.target.value})} />
+              <textarea className="input" rows="2" placeholder="Class description..." value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
             </div>
           </div>
           <div className="flex gap-2 mt-4">
@@ -850,26 +886,45 @@ function LiveClassesAdmin() {
       <div className="card">
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Class</th><th>Batch</th><th>Scheduled</th><th>Mode</th><th>Status</th><th>Room</th><th>Action</th></tr></thead>
+            <thead>
+              <tr><th>Class</th><th>Batch</th><th>Faculty</th><th>Scheduled</th><th>Mode</th><th>Status</th><th>Actions</th></tr>
+            </thead>
             <tbody>
               {classes.map(c => (
                 <tr key={c.id}>
                   <td>
                     <div className="font-semibold text-slate-900">{c.title}</div>
-                    <div className="text-xs text-slate-400">{c.description?.slice(0, 50)}...</div>
+                    {c.description && <div className="text-xs text-slate-400">{c.description.slice(0, 50)}{c.description.length > 50 ? '…' : ''}</div>}
                   </td>
                   <td>{c.batch_name}</td>
                   <td>
+                    {c.faculty_name
+                      ? <span className="text-xs font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">{c.faculty_name}</span>
+                      : <span className="text-xs text-slate-400">Admin-led</span>}
+                  </td>
+                  <td>
                     <div className="text-sm">{new Date(c.scheduled_at).toLocaleDateString()}</div>
-                    <div className="text-xs text-slate-400">{new Date(c.scheduled_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                    <div className="text-xs text-slate-400">{new Date(c.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                   </td>
                   <td><span className="badge badge-blue">{c.class_mode}</span></td>
-                  <td><Badge status={c.status} /></td>
-                  <td><span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">{c.jitsi_room_name?.slice(0, 25)}...</span></td>
                   <td>
-                    <button className="btn-primary text-xs" onClick={() => window.open(`/live-class/${c.id}`, '_blank')}>
-                      {c.status === 'live' ? '🔴 Live' : 'Start Class'}
-                    </button>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusColor(c.status)}`}>
+                      {c.status === 'pending_approval' ? '⏳ Pending Approval' : c.status === 'live' ? '🔴 Live' : c.status}
+                    </span>
+                  </td>
+                  <td>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {c.status === 'pending_approval' && (
+                        <button className="text-xs px-3 py-1 rounded-lg bg-amber-500 text-white font-semibold hover:bg-amber-600 transition" onClick={() => handleApprove(c.id)}>
+                          ✓ Approve
+                        </button>
+                      )}
+                      {(c.status === 'scheduled' || c.status === 'live') && (
+                        <button className="btn-primary text-xs" onClick={() => window.open(`/live-class/${c.id}`, '_blank')}>
+                          {c.status === 'live' ? '🔴 Join Live' : 'Start Class'}
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

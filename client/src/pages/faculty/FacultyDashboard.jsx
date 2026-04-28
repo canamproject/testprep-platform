@@ -9,9 +9,9 @@ function Badge({ status }) {
   const map = {
     active: 'badge-green', live: 'badge-red', scheduled: 'badge-blue',
     ended: 'badge-gray', cancelled: 'badge-gray', draft: 'badge-amber',
-    paused: 'badge-amber', completed: 'badge-purple'
+    paused: 'badge-amber', completed: 'badge-purple', pending_approval: 'badge-amber'
   };
-  return <span className={`badge ${map[status] || 'badge-gray'}`}>{status?.replace('_', ' ')}</span>;
+  return <span className={`badge ${map[status] || 'badge-gray'}`}>{status?.replace(/_/g, ' ')}</span>;
 }
 
 function fmtTime(dt) {
@@ -103,11 +103,19 @@ function ScheduleModal({ batch, accent, onClose, onCreated }) {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
 
+  const autoTitle = () => {
+    if (!form.scheduled_at) return '';
+    const dt = new Date(form.scheduled_at);
+    const datePart = dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const timePart = dt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    return `${batch.agency_name || ''} – ${batch.name} – ${datePart} ${timePart}`;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.post('/faculty/classes', { ...form, batch_id: batch.id });
+      await api.post('/faculty/classes', { ...form, title: form.title || autoTitle(), batch_id: batch.id });
       onCreated();
       onClose();
     } catch (err) {
@@ -124,14 +132,12 @@ function ScheduleModal({ batch, accent, onClose, onCreated }) {
           <h3 className="font-black text-slate-900 text-lg">Schedule Live Class</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
         </div>
-        <p className="text-sm text-slate-500 mb-4">Batch: <span className="font-semibold text-slate-700">{batch.name}</span></p>
+        <p className="text-sm text-slate-500 mb-2">Batch: <span className="font-semibold text-slate-700">{batch.name}</span></p>
+        <div className="mb-4 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-3 py-2">
+          ⚠️ Classes you create require <strong>admin approval</strong> before students can join.
+        </div>
         {msg && <p className="text-red-500 text-sm mb-3">{msg}</p>}
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="label">Class Title *</label>
-            <input className="input" required placeholder="e.g., IELTS Reading — Session 3"
-              value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} />
-          </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label">Date & Time *</label>
@@ -143,6 +149,14 @@ function ScheduleModal({ batch, accent, onClose, onCreated }) {
               <input type="number" className="input" min="15" max="300"
                 value={form.duration_minutes} onChange={e => setForm({ ...form, duration_minutes: +e.target.value })} />
             </div>
+          </div>
+          <div>
+            <label className="label">Class Title</label>
+            <input className="input" placeholder={autoTitle() || 'Auto-generated from institute + batch + time'}
+              value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} />
+            {!form.title && form.scheduled_at && (
+              <p className="text-xs text-slate-400 mt-1">Will be: <em>{autoTitle()}</em></p>
+            )}
           </div>
           <div>
             <label className="label">Class Mode</label>
@@ -160,7 +174,7 @@ function ScheduleModal({ batch, accent, onClose, onCreated }) {
             <button type="submit" disabled={loading}
               className="flex-1 py-2.5 rounded-xl text-white font-bold transition-opacity hover:opacity-90"
               style={{ background: accent }}>
-              {loading ? 'Scheduling...' : 'Schedule Class'}
+              {loading ? 'Submitting...' : 'Submit for Approval'}
             </button>
             <button type="button" onClick={onClose}
               className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-medium hover:bg-slate-50">
@@ -251,10 +265,11 @@ function MyClasses({ accent }) {
         <div className="space-y-3">
           {classes.map(c => {
             const live = c.status === 'live';
+            const isPending = c.status === 'pending_approval';
             const startable = canStart(c) && c.status === 'scheduled';
             return (
               <div key={c.id} className="card relative overflow-hidden">
-                <div className={`absolute top-0 left-0 right-0 h-1 ${live ? 'bg-red-500 animate-pulse' : startable ? 'bg-amber-400' : 'bg-slate-200'}`} />
+                <div className={`absolute top-0 left-0 right-0 h-1 ${live ? 'bg-red-500 animate-pulse' : isPending ? 'bg-amber-400' : startable ? 'bg-emerald-400' : 'bg-slate-200'}`} />
                 <div className="flex items-start justify-between mt-1">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -270,7 +285,13 @@ function MyClasses({ accent }) {
                       <span className="badge badge-blue">{c.class_mode}</span>
                     </div>
                   </div>
-                  <div className="ml-4 flex-shrink-0 flex flex-col gap-2">
+                  <div className="ml-4 flex-shrink-0 flex flex-col gap-2 items-end">
+                    {isPending && (
+                      <div className="text-center bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                        <span className="text-xs text-amber-700 font-semibold block">⏳ Awaiting Admin</span>
+                        <span className="text-xs text-amber-600">Approval Required</span>
+                      </div>
+                    )}
                     {live && (
                       <>
                         <button
@@ -295,7 +316,7 @@ function MyClasses({ accent }) {
                         {actionLoading === c.id ? 'Starting...' : 'Start Class'}
                       </button>
                     )}
-                    {!startable && !live && c.status === 'scheduled' && (
+                    {!startable && !live && !isPending && c.status === 'scheduled' && (
                       <div className="text-center text-sm text-slate-400">
                         <span className="block text-xs">Starts in</span>
                         <span className="font-bold">{Math.ceil((new Date(c.scheduled_at) - new Date()) / 3600000)}h</span>

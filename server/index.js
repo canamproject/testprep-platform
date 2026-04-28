@@ -738,34 +738,41 @@ app.get('/api/faculty/classes', authMiddleware(['faculty']), async (req, res) =>
   res.json(rows);
 });
 
-// Faculty schedules a new live class for their batch
+// Faculty schedules a new live class → routes to shared endpoint
 app.post('/api/faculty/classes', authMiddleware(['faculty']), async (req, res) => {
   const { batch_id, title, description, scheduled_at, duration_minutes, class_mode } = req.body;
-  if (!batch_id || !title || !scheduled_at) return res.status(400).json({ error: 'batch_id, title, scheduled_at required' });
+  if (!batch_id || !scheduled_at) return res.status(400).json({ error: 'batch_id and scheduled_at required' });
   try {
-    // Verify faculty owns this batch
     const [[batch]] = await getPool().query(
-      'SELECT id, agency_id FROM batches WHERE id=? AND trainer_id=?', [batch_id, req.user.id]
+      `SELECT b.*, a.slug as agency_slug, a.name as agency_name
+       FROM batches b JOIN agencies a ON b.agency_id = a.id WHERE b.id=? AND b.trainer_id=?`,
+      [batch_id, req.user.id]
     );
     if (!batch) return res.status(403).json({ error: 'You are not assigned to this batch' });
-    const roomName = `class-${batch_id}-${Date.now()}`;
+
+    const autoTitle = title || (() => {
+      const dt = scheduled_at ? new Date(scheduled_at) : new Date();
+      const datePart = dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      const timePart = dt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+      return `${batch.agency_name} – ${batch.name} – ${datePart} ${timePart}`;
+    })();
+
+    const roomName = `${batch.agency_slug}-class-${Date.now()}`;
     const [r] = await getPool().query(
       `INSERT INTO live_classes (batch_id, agency_id, title, description, scheduled_at, duration_minutes,
-        class_mode, jitsi_room_name, jitsi_meeting_url, jitsi_moderator_url,
-        allow_student_video, allow_student_audio, allow_chat, status, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,1,1,1,'scheduled',?)`,
-      [batch_id, batch.agency_id, title, description || null, scheduled_at,
+        class_mode, jitsi_room_name, jitsi_meeting_url,
+        allow_student_video, allow_student_audio, allow_chat, status, created_by, faculty_id)
+       VALUES (?,?,?,?,?,?,?,?,?,1,1,1,'pending_approval',?,?)`,
+      [batch_id, batch.agency_id, autoTitle, description || null, scheduled_at,
        duration_minutes || 60, class_mode || 'interactive',
-       roomName,
-       `https://meet.jit.si/${roomName}`,
-       `https://meet.jit.si/${roomName}#config.startWithAudioMuted=false`,
-       req.user.id]
+       roomName, `https://8x8.vc/${roomName}`,
+       req.user.id, req.user.id]
     );
-    res.json({ id: r.insertId, message: 'Class scheduled', jitsi_room_name: roomName });
+    res.json({ id: r.insertId, message: 'Class submitted for admin approval', title: autoTitle });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// Faculty starts a class (marks it live)
+// Faculty starts a class (batch trainer OR directly assigned)
 app.put('/api/faculty/classes/:id/start', authMiddleware(['faculty']), async (req, res) => {
   try {
     const [[lc]] = await getPool().query(
@@ -773,7 +780,12 @@ app.put('/api/faculty/classes/:id/start', authMiddleware(['faculty']), async (re
       [req.params.id]
     );
     if (!lc) return res.status(404).json({ error: 'Class not found' });
-    if (lc.trainer_id !== req.user.id) return res.status(403).json({ error: 'Not assigned to this class' });
+    if (lc.faculty_id !== req.user.id && lc.trainer_id !== req.user.id) {
+      return res.status(403).json({ error: 'Not assigned to this class' });
+    }
+    if (lc.status === 'pending_approval') {
+      return res.status(403).json({ error: 'Class not yet approved by admin' });
+    }
     await getPool().query(
       `UPDATE live_classes SET status='live', started_at=NOW() WHERE id=?`, [req.params.id]
     );
@@ -789,7 +801,9 @@ app.put('/api/faculty/classes/:id/end', authMiddleware(['faculty']), async (req,
       [req.params.id]
     );
     if (!lc) return res.status(404).json({ error: 'Class not found' });
-    if (lc.trainer_id !== req.user.id) return res.status(403).json({ error: 'Not assigned to this class' });
+    if (lc.faculty_id !== req.user.id && lc.trainer_id !== req.user.id) {
+      return res.status(403).json({ error: 'Not assigned to this class' });
+    }
     await getPool().query(
       `UPDATE live_classes SET status='ended', ended_at=NOW() WHERE id=?`, [req.params.id]
     );
@@ -944,23 +958,46 @@ app.post('/api/batches/:id/enroll', authMiddleware(['partner_admin', 'super_admi
 app.get('/api/live-classes', authMiddleware(), async (req, res) => {
   const agencyId = req.user.agency_id;
   const isAdmin = req.user.role === 'super_admin';
-  
-  const query = isAdmin
-    ? `SELECT lc.*, b.name as batch_name, c.title as course_title,
-        a.name as agency_name
+  const isFaculty = req.user.role === 'faculty';
+
+  let query, params;
+  if (isFaculty) {
+    // Faculty sees classes assigned to them or in their batches
+    query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
+        a.name as agency_name,
+        u.name as faculty_name
        FROM live_classes lc
        JOIN batches b ON lc.batch_id = b.id
        JOIN courses c ON b.course_id = c.id
        JOIN agencies a ON lc.agency_id = a.id
-       ORDER BY lc.scheduled_at DESC`
-    : `SELECT lc.*, b.name as batch_name, c.title as course_title
+       LEFT JOIN users u ON lc.faculty_id = u.id
+       WHERE lc.faculty_id = ? OR b.trainer_id = ?
+       ORDER BY lc.scheduled_at DESC`;
+    params = [req.user.id, req.user.id];
+  } else if (isAdmin) {
+    query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
+        a.name as agency_name,
+        u.name as faculty_name
        FROM live_classes lc
        JOIN batches b ON lc.batch_id = b.id
        JOIN courses c ON b.course_id = c.id
+       JOIN agencies a ON lc.agency_id = a.id
+       LEFT JOIN users u ON lc.faculty_id = u.id
+       ORDER BY lc.scheduled_at DESC`;
+    params = [];
+  } else {
+    query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
+        u.name as faculty_name
+       FROM live_classes lc
+       JOIN batches b ON lc.batch_id = b.id
+       JOIN courses c ON b.course_id = c.id
+       LEFT JOIN users u ON lc.faculty_id = u.id
        WHERE lc.agency_id = ?
        ORDER BY lc.scheduled_at DESC`;
-  
-  const [rows] = await getPool().query(query, isAdmin ? [] : [agencyId]);
+    params = [agencyId];
+  }
+
+  const [rows] = await getPool().query(query, params);
   res.json(rows);
 });
 
@@ -1011,44 +1048,114 @@ app.get('/api/live-classes/upcoming', authMiddleware(), async (req, res) => {
 app.post('/api/live-classes', authMiddleware(['partner_admin', 'super_admin']), async (req, res) => {
   const {
     batch_id, title, description, lesson_id, scheduled_at,
-    duration_minutes, class_mode, auto_record
+    duration_minutes, class_mode, auto_record, faculty_id
   } = req.body;
-  
+
   try {
-    // Get batch details for Jitsi room name
     const [[batch]] = await getPool().query(
-      'SELECT b.*, a.slug as agency_slug FROM batches b JOIN agencies a ON b.agency_id = a.id WHERE b.id=?',
+      `SELECT b.*, a.slug as agency_slug, a.name as agency_name
+       FROM batches b JOIN agencies a ON b.agency_id = a.id WHERE b.id=?`,
       [batch_id]
     );
     if (!batch) return res.status(404).json({ error: 'Batch not found' });
-    
-    // Verify access for partner
+
     if (req.user.role === 'partner_admin' && batch.agency_id !== req.user.agency_id) {
       return res.status(403).json({ error: 'Access denied' });
     }
-    
-    // Generate unique Jitsi room name
+
+    // Auto-generate title: "Agency – Batch – Date Time" if not provided
+    const autoTitle = title || (() => {
+      const dt = scheduled_at ? new Date(scheduled_at) : new Date();
+      const datePart = dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      const timePart = dt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+      return `${batch.agency_name} – ${batch.name} – ${datePart} ${timePart}`;
+    })();
+
     const roomName = `${batch.jitsi_room_prefix || batch.agency_slug}-class-${Date.now()}`;
-    const meetingUrl = `https://meet.jit.si/${roomName}`;
-    
+    const meetingUrl = `https://8x8.vc/${roomName}`;
+
     const [result] = await getPool().query(
       `INSERT INTO live_classes (batch_id, agency_id, title, description, lesson_id,
         scheduled_at, duration_minutes, jitsi_room_name, jitsi_meeting_url,
-        class_mode, auto_record, created_by, status)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [batch_id, batch.agency_id, title, description, lesson_id,
+        class_mode, auto_record, created_by, faculty_id, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [batch_id, batch.agency_id, autoTitle, description, lesson_id,
        scheduled_at, duration_minutes || 60, roomName, meetingUrl,
-       class_mode || 'interactive', auto_record || 0, req.user.id, 'scheduled']
+       class_mode || 'interactive', auto_record || 0, req.user.id,
+       faculty_id || null, 'scheduled']
     );
-    
-    res.json({ 
-      id: result.insertId, 
+
+    res.json({
+      id: result.insertId,
       message: 'Live class scheduled',
-      jitsi_room_name: roomName,
-      jitsi_meeting_url: meetingUrl
+      title: autoTitle,
+      jitsi_room_name: roomName
     });
   } catch (e) {
     res.status(400).json({ error: e.message });
+  }
+});
+
+// Faculty creates a class → pending_approval until admin approves
+app.post('/api/faculty/live-classes', authMiddleware(['faculty']), async (req, res) => {
+  const { batch_id, title, description, scheduled_at, duration_minutes, class_mode } = req.body;
+  try {
+    const [[batch]] = await getPool().query(
+      `SELECT b.*, a.slug as agency_slug, a.name as agency_name
+       FROM batches b JOIN agencies a ON b.agency_id = a.id WHERE b.id=?`,
+      [batch_id]
+    );
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+
+    // Faculty can only create classes for batches assigned to them
+    const [[assigned]] = await getPool().query(
+      'SELECT id FROM batches WHERE id = ? AND trainer_id = ?',
+      [batch_id, req.user.id]
+    );
+    if (!assigned) return res.status(403).json({ error: 'Not assigned to this batch' });
+
+    const autoTitle = title || (() => {
+      const dt = scheduled_at ? new Date(scheduled_at) : new Date();
+      const datePart = dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      const timePart = dt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+      return `${batch.agency_name} – ${batch.name} – ${datePart} ${timePart}`;
+    })();
+
+    const roomName = `${batch.jitsi_room_prefix || batch.agency_slug}-class-${Date.now()}`;
+    const meetingUrl = `https://8x8.vc/${roomName}`;
+
+    const [result] = await getPool().query(
+      `INSERT INTO live_classes (batch_id, agency_id, title, description,
+        scheduled_at, duration_minutes, jitsi_room_name, jitsi_meeting_url,
+        class_mode, created_by, faculty_id, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [batch_id, batch.agency_id, autoTitle, description,
+       scheduled_at, duration_minutes || 60, roomName, meetingUrl,
+       class_mode || 'interactive', req.user.id, req.user.id, 'pending_approval']
+    );
+
+    res.json({ id: result.insertId, message: 'Class submitted for admin approval', title: autoTitle });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Admin approves a faculty-created class
+app.put('/api/admin/live-classes/:id/approve', authMiddleware(['super_admin', 'partner_admin']), async (req, res) => {
+  const classId = req.params.id;
+  try {
+    const [[lc]] = await getPool().query('SELECT * FROM live_classes WHERE id=?', [classId]);
+    if (!lc) return res.status(404).json({ error: 'Class not found' });
+    if (req.user.role === 'partner_admin' && lc.agency_id !== req.user.agency_id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    await getPool().query(
+      `UPDATE live_classes SET status='scheduled', approved_by=? WHERE id=?`,
+      [req.user.id, classId]
+    );
+    res.json({ message: 'Class approved and scheduled' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -1105,12 +1212,13 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
       canJoin = liveClass.agency_id === req.user.agency_id;
       isModerator = true;
     } else if (userRole === 'faculty') {
-      // Faculty is moderator for classes in their assigned batches
-      const [[assigned]] = await getPool().query(
+      // Faculty is moderator if directly assigned or batch trainer
+      const isAssigned = liveClass.faculty_id === userId;
+      const [[batchTrainer]] = await getPool().query(
         'SELECT id FROM batches WHERE id = ? AND trainer_id = ?',
         [liveClass.batch_id, userId]
       );
-      if (assigned) {
+      if (isAssigned || batchTrainer) {
         canJoin = true;
         isModerator = true;
       }
@@ -1595,6 +1703,19 @@ async function runMigrations() {
       ALTER TABLE live_classes
         ADD COLUMN IF NOT EXISTS started_at TIMESTAMP NULL,
         ADD COLUMN IF NOT EXISTS ended_at TIMESTAMP NULL
+    `).catch(() => {});
+
+    // Faculty assignment + approval workflow
+    await getPool().query(`
+      ALTER TABLE live_classes
+        ADD COLUMN IF NOT EXISTS faculty_id INT DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS approved_by INT DEFAULT NULL
+    `).catch(() => {});
+
+    // Extend status enum to include pending_approval
+    await getPool().query(`
+      ALTER TABLE live_classes MODIFY COLUMN status
+        ENUM('pending_approval','scheduled','live','ended','cancelled','recorded') DEFAULT 'scheduled'
     `).catch(() => {});
 
     // Class-access coupons (admin gives to partner, partner distributes to students)
