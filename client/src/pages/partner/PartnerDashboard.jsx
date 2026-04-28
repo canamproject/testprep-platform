@@ -1213,6 +1213,7 @@ export default function PartnerDashboard() {
     <DashLayout
       bgColor={accent}
       logoUrl={logoUrl}
+      onLiveClasses={() => setSection('liveclasses')}
       sidebar={{
         logo: (
           <div>

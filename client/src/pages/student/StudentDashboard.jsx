@@ -393,8 +393,9 @@ function StudentLiveClasses({ accent }) {
     }
   };
 
-  const isLive = (scheduledAt) => Math.abs(new Date() - new Date(scheduledAt)) / 60000 < 60;
-  const canJoin = (scheduledAt) => (new Date(scheduledAt) - new Date()) / 60000 <= 15;
+  const parseDT = (s) => s ? new Date(s.slice(0, 19)) : new Date(0);
+  const isLive = (scheduledAt) => Math.abs(new Date() - parseDT(scheduledAt)) / 60000 < 60;
+  const canJoin = (scheduledAt) => (parseDT(scheduledAt) - new Date()) / 60000 <= 15;
 
   if (loading) return <div className="text-slate-400 text-sm">Loading...</div>;
 
@@ -440,7 +441,7 @@ function StudentLiveClasses({ accent }) {
         <div className="card text-center py-12">
           <p className="text-4xl mb-3">📺</p>
           <p className="text-slate-400">No upcoming live classes scheduled</p>
-          <p className="text-sm text-slate-400 mt-1">Join a batch to get access to live classes</p>
+          <p className="text-sm text-slate-400 mt-1">Check back soon — all partner classes appear here as free 15-min previews</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -461,9 +462,10 @@ function StudentLiveClasses({ accent }) {
                     </div>
                     <p className="text-sm text-slate-500 mb-3">{c.description}</p>
                     <div className="flex flex-wrap gap-4 text-sm text-slate-600">
-                      <span>📅 {new Date(c.scheduled_at).toLocaleDateString()}</span>
-                      <span>🕐 {new Date(c.scheduled_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
+                      <span>📅 {parseDT(c.scheduled_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</span>
+                      <span>🕐 {parseDT(c.scheduled_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true})}</span>
                       <span>⏱️ {c.duration_minutes} min</span>
+                      {c.agency_name && <span>🏫 {c.agency_name}</span>}
                       {c.batch_name && <span>🎓 {c.batch_name}</span>}
                       <span className="badge badge-blue">{c.class_mode}</span>
                     </div>
@@ -485,7 +487,7 @@ function StudentLiveClasses({ accent }) {
                     ) : (
                       <div className="text-center">
                         <span className="text-xs text-slate-400 block">Starts in</span>
-                        <span className="text-sm font-semibold text-slate-600">{Math.ceil((new Date(c.scheduled_at)-new Date())/3600000)}h</span>
+                        <span className="text-sm font-semibold text-slate-600">{Math.ceil((parseDT(c.scheduled_at)-new Date())/3600000)}h</span>
                       </div>
                     )}
                     {isDemo && (
@@ -709,6 +711,7 @@ export default function StudentDashboard() {
   return (
     <DashLayout
       bgColor={accent}
+      onLiveClasses={() => setSection('liveclasses')}
       sidebar={{
         logo: (
           <div>

@@ -4,6 +4,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import DashLayout, { NavItem } from '../../components/DashLayout';
 
 const fmt = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
+// Parse DB datetime as local time (strip Z so JS doesn't shift by UTC offset)
+const parseDT = (s) => s ? new Date(s.slice(0, 19)) : new Date(0);
+const fmtDate = (s) => parseDT(s).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+const fmtTime = (s) => parseDT(s).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+// Convert DB datetime string to datetime-local input value (local time)
+const toInputDT = (s) => s ? s.slice(0, 16) : '';
 
 function StatCard({ label, value, sub, color = 'blue' }) {
   const colors = { blue: 'bg-blue-50 text-blue-600', green: 'bg-emerald-50 text-emerald-600', amber: 'bg-amber-50 text-amber-700', purple: 'bg-purple-50 text-purple-600' };
@@ -798,6 +804,7 @@ function LiveClassesAdmin() {
   const [batches, setBatches] = useState([]);
   const [facultyList, setFacultyList] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [editClass, setEditClass] = useState(null); // class being edited
   const EMPTY_FORM = { batch_id: '', title: '', description: '', scheduled_at: '', duration_minutes: 60, class_mode: 'interactive', auto_record: false, faculty_id: '' };
   const [form, setForm] = useState(EMPTY_FORM);
   const [msg, setMsg] = useState({ text: '', ok: false });
@@ -847,6 +854,23 @@ function LiveClassesAdmin() {
     } catch (err) { alert(err.message); }
   };
 
+  const openEdit = (c) => setEditClass({
+    id: c.id, title: c.title, description: c.description || '',
+    scheduled_at: toInputDT(c.scheduled_at),
+    duration_minutes: c.duration_minutes, class_mode: c.class_mode,
+  });
+
+  const handleEditSave = async (e) => {
+    e.preventDefault();
+    try {
+      await api.put(`/live-classes/${editClass.id}`, {
+        ...editClass, status: undefined,
+      });
+      setEditClass(null); loadClasses();
+      setMsg({ text: 'Class updated!', ok: true });
+    } catch (err) { setMsg({ text: err.message, ok: false }); }
+  };
+
   const statusColor = (s) => ({
     pending_approval: 'bg-amber-100 text-amber-700',
     scheduled: 'bg-blue-100 text-blue-700',
@@ -857,6 +881,56 @@ function LiveClassesAdmin() {
 
   return (
     <div>
+      {/* Edit Class Modal */}
+      {editClass && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(15,23,42,0.6)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-black text-slate-900 text-lg">Edit Live Class</h3>
+              <button onClick={() => setEditClass(null)} className="text-slate-400 hover:text-slate-600 text-xl">✕</button>
+            </div>
+            <form onSubmit={handleEditSave} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Date & Time *</label>
+                  <input type="datetime-local" className="input" required
+                    value={editClass.scheduled_at}
+                    onChange={e => setEditClass({ ...editClass, scheduled_at: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Duration (min)</label>
+                  <input type="number" className="input" min="15"
+                    value={editClass.duration_minutes}
+                    onChange={e => setEditClass({ ...editClass, duration_minutes: +e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <label className="label">Title</label>
+                <input className="input" value={editClass.title}
+                  onChange={e => setEditClass({ ...editClass, title: e.target.value })} />
+              </div>
+              <div>
+                <label className="label">Class Mode</label>
+                <select className="input" value={editClass.class_mode}
+                  onChange={e => setEditClass({ ...editClass, class_mode: e.target.value })}>
+                  <option value="interactive">Interactive (2-way video)</option>
+                  <option value="broadcast">Broadcast (1-way only)</option>
+                </select>
+              </div>
+              <div>
+                <label className="label">Description</label>
+                <textarea className="input" rows="2" value={editClass.description}
+                  onChange={e => setEditClass({ ...editClass, description: e.target.value })} />
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button type="submit" className="btn-primary flex-1">Save Changes</button>
+                <button type="button" className="btn-ghost" onClick={() => setEditClass(null)}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-black text-slate-900">Live Classes <span className="text-base font-normal text-slate-400 ml-2">{classes.length} total</span></h2>
         <button className="btn-primary" onClick={() => setShowForm(!showForm)}>+ Schedule Class</button>
@@ -945,8 +1019,8 @@ function LiveClassesAdmin() {
                       : <span className="text-xs text-slate-400">Admin-led</span>}
                   </td>
                   <td>
-                    <div className="text-sm">{new Date(c.scheduled_at).toLocaleDateString()}</div>
-                    <div className="text-xs text-slate-400">{new Date(c.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                    <div className="text-sm">{fmtDate(c.scheduled_at)}</div>
+                    <div className="text-xs text-slate-400">{fmtTime(c.scheduled_at)}</div>
                   </td>
                   <td><span className="badge badge-blue">{c.class_mode}</span></td>
                   <td>
@@ -959,6 +1033,11 @@ function LiveClassesAdmin() {
                       {c.status === 'pending_approval' && (
                         <button className="text-xs px-3 py-1 rounded-lg bg-amber-500 text-white font-semibold hover:bg-amber-600 transition" onClick={() => handleApprove(c.id)}>
                           ✓ Approve
+                        </button>
+                      )}
+                      {(c.status === 'scheduled' || c.status === 'pending_approval' || c.status === 'live') && (
+                        <button className="text-xs px-3 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 transition" onClick={() => openEdit(c)}>
+                          ✏️ Edit
                         </button>
                       )}
                       {(c.status === 'scheduled' || c.status === 'live') && (
@@ -1340,6 +1419,7 @@ export default function AdminDashboard() {
   return (
     <DashLayout
       bgColor="#0f172a"
+      onLiveClasses={() => setSection('liveclasses')}
       sidebar={{
         logo: (
           <div>

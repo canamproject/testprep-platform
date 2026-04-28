@@ -14,18 +14,21 @@ function Badge({ status }) {
   return <span className={`badge ${map[status] || 'badge-gray'}`}>{status?.replace(/_/g, ' ')}</span>;
 }
 
+// Parse DB datetime as local time (strips Z so JS won't shift by UTC offset)
+const parseDT = (s) => s ? new Date(s.slice(0, 19)) : new Date(0);
 function fmtTime(dt) {
-  return new Date(dt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return parseDT(dt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 }
 function fmtDate(dt) {
-  return new Date(dt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return parseDT(dt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
+const toInputDT = (s) => s ? s.slice(0, 16) : '';
 function isLive(lc) {
-  return lc.status === 'live' || Math.abs(new Date() - new Date(lc.scheduled_at)) / 60000 < 30;
+  return lc.status === 'live' || Math.abs(new Date() - parseDT(lc.scheduled_at)) / 60000 < 30;
 }
 function canStart(lc) {
-  const diff = (new Date(lc.scheduled_at) - new Date()) / 60000;
-  return diff <= 15;
+  const diff = (parseDT(lc.scheduled_at) - new Date()) / 60000;
+  return diff <= 30; // allow starting 30 min before scheduled time
 }
 
 // ── MY BATCHES ───────────────────────────────────────────────
@@ -193,7 +196,8 @@ function MyClasses({ accent }) {
   const [classes, setClasses] = useState([]);
   const [scope, setScope] = useState('upcoming');
   const [loading, setLoading] = useState(true);
-  const [schedModal, setSchedModal] = useState(null); // batch obj
+  const [schedModal, setSchedModal] = useState(null);
+  const [editModal, setEditModal] = useState(null); // class being edited
   const [batches, setBatches] = useState([]);
   const [actionLoading, setActionLoading] = useState(null);
 
@@ -224,6 +228,20 @@ function MyClasses({ accent }) {
     finally { setActionLoading(null); }
   };
 
+  const openEdit = (c) => setEditModal({
+    id: c.id, title: c.title, description: c.description || '',
+    scheduled_at: toInputDT(c.scheduled_at),
+    duration_minutes: c.duration_minutes, class_mode: c.class_mode,
+  });
+
+  const handleEditSave = async (e) => {
+    e.preventDefault();
+    try {
+      await api.put(`/faculty/classes/${editModal.id}`, editModal);
+      setEditModal(null); load();
+    } catch (err) { alert(err.message); }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -248,6 +266,58 @@ function MyClasses({ accent }) {
           )}
         </div>
       </div>
+
+      {/* Edit Class Modal */}
+      {editModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(15,23,42,0.6)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-black text-slate-900 text-lg">Edit Class</h3>
+              <button onClick={() => setEditModal(null)} className="text-slate-400 hover:text-slate-600 text-xl">✕</button>
+            </div>
+            <form onSubmit={handleEditSave} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Date & Time *</label>
+                  <input type="datetime-local" className="input" required
+                    value={editModal.scheduled_at}
+                    onChange={e => setEditModal({ ...editModal, scheduled_at: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Duration (min)</label>
+                  <input type="number" className="input" min="15"
+                    value={editModal.duration_minutes}
+                    onChange={e => setEditModal({ ...editModal, duration_minutes: +e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <label className="label">Title</label>
+                <input className="input" value={editModal.title}
+                  onChange={e => setEditModal({ ...editModal, title: e.target.value })} />
+              </div>
+              <div>
+                <label className="label">Class Mode</label>
+                <select className="input" value={editModal.class_mode}
+                  onChange={e => setEditModal({ ...editModal, class_mode: e.target.value })}>
+                  <option value="interactive">Interactive (students can speak)</option>
+                  <option value="broadcast">Broadcast (view-only for students)</option>
+                </select>
+              </div>
+              <div>
+                <label className="label">Description</label>
+                <textarea className="input" rows="2" value={editModal.description}
+                  onChange={e => setEditModal({ ...editModal, description: e.target.value })} />
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button type="submit" className="flex-1 py-2.5 rounded-xl text-white font-bold hover:opacity-90"
+                  style={{ background: accent }}>Save Changes</button>
+                <button type="button" className="px-5 py-2.5 rounded-xl border text-slate-600 hover:bg-slate-50"
+                  onClick={() => setEditModal(null)}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-slate-400 text-sm">Loading...</div>
@@ -319,8 +389,12 @@ function MyClasses({ accent }) {
                     {!startable && !live && !isPending && c.status === 'scheduled' && (
                       <div className="text-center text-sm text-slate-400">
                         <span className="block text-xs">Starts in</span>
-                        <span className="font-bold">{Math.ceil((new Date(c.scheduled_at) - new Date()) / 3600000)}h</span>
+                        <span className="font-bold">{Math.ceil((parseDT(c.scheduled_at) - new Date()) / 3600000)}h</span>
                       </div>
+                    )}
+                    {(c.status === 'scheduled' || c.status === 'pending_approval') && (
+                      <button className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition text-slate-600"
+                        onClick={() => openEdit(c)}>✏️ Edit</button>
                     )}
                     {(c.status === 'ended' || c.status === 'recorded') && c.recording_url && (
                       <a href={c.recording_url} target="_blank" rel="noopener noreferrer"
@@ -473,6 +547,7 @@ export default function FacultyDashboard() {
   return (
     <DashLayout
       bgColor={accent}
+      onLiveClasses={() => setSection('classes')}
       sidebar={{
         logo: (
           <div>

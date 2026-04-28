@@ -949,6 +949,29 @@ app.put('/api/faculty/classes/:id/end', authMiddleware(['faculty']), async (req,
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// Faculty edits their own scheduled class
+app.put('/api/faculty/classes/:id', authMiddleware(['faculty']), async (req, res) => {
+  const { title, description, scheduled_at, duration_minutes, class_mode } = req.body;
+  try {
+    const [[lc]] = await getPool().query(
+      `SELECT lc.*, b.trainer_id FROM live_classes lc JOIN batches b ON lc.batch_id=b.id WHERE lc.id=?`,
+      [req.params.id]
+    );
+    if (!lc) return res.status(404).json({ error: 'Class not found' });
+    if (lc.faculty_id !== req.user.id && lc.trainer_id !== req.user.id) {
+      return res.status(403).json({ error: 'Not assigned to this class' });
+    }
+    if (lc.status === 'live' || lc.status === 'ended') {
+      return res.status(400).json({ error: 'Cannot edit a live or ended class' });
+    }
+    await getPool().query(
+      `UPDATE live_classes SET title=?, description=?, scheduled_at=?, duration_minutes=?, class_mode=?, updated_at=NOW() WHERE id=?`,
+      [title, description, scheduled_at, duration_minutes, class_mode, req.params.id]
+    );
+    res.json({ message: 'Class updated' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // ─── CLASS ACCESS COUPONS ─────────────────────────────────────
 
 // Admin: create coupon
@@ -1415,8 +1438,8 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
               ? null
               : couponAccess.allowed_count - couponAccess.classes_used - 1
           };
-        } else if (req.user.agency_id === liveClass.agency_id) {
-          // 3. Demo mode — same-agency student gets 15 min free preview
+        } else {
+          // 3. Demo mode — ANY student can join any class for 15 min free preview
           canJoin = true;
           isDemo = true;
         }
@@ -1474,24 +1497,24 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
 // ─── STUDENT: ALL UPCOMING CLASSES (enrolled + previewable) ───
 app.get('/api/student/all-classes', authMiddleware(['student']), async (req, res) => {
   const studentId = req.user.id;
-  const agencyId = req.user.agency_id;
   try {
     const [rows] = await getPool().query(`
       SELECT lc.*, b.name as batch_name, b.course_id,
         c.title as course_title, c.price as course_price, c.category,
+        a.name as agency_name,
         (SELECT e.id FROM enrollments e
          WHERE e.course_id = b.course_id AND e.student_id = ? AND e.status = 'active' LIMIT 1) as is_enrolled
       FROM live_classes lc
       JOIN batches b ON lc.batch_id = b.id
       JOIN courses c ON b.course_id = c.id
-      WHERE b.agency_id = ?
-        AND (
+      JOIN agencies a ON b.agency_id = a.id
+      WHERE (
           lc.status = 'live'
           OR (lc.status = 'scheduled' AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 30 MINUTE))
         )
       ORDER BY lc.status = 'live' DESC, lc.scheduled_at ASC
-      LIMIT 30
-    `, [studentId, agencyId]);
+      LIMIT 50
+    `, [studentId]);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
