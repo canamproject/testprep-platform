@@ -108,16 +108,62 @@ function AgencyLogoUpload({ agency, onDone }) {
   );
 }
 
+const PARTNER_SECTIONS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'students', label: 'Students' },
+  { id: 'enrollments', label: 'Enrollments' },
+  { id: 'purchases', label: 'Online Bookings' },
+  { id: 'batches', label: 'Batches' },
+  { id: 'faculty', label: 'Faculty' },
+  { id: 'liveclasses', label: 'Live Classes' },
+  { id: 'earnings', label: 'Earnings' },
+  { id: 'claim', label: 'Claim Commission' },
+  { id: 'crm', label: 'CRM / Leads' },
+  { id: 'coupons', label: 'Coupons' },
+  { id: 'branding', label: 'Branding' },
+  { id: 'agencyprofile', label: 'Agency Profile' },
+  { id: 'paymentconfig', label: 'Payment Config' },
+];
+
+const LAYOUT_OPTIONS = [
+  { id: 1, label: 'Classic', desc: 'Solid brand-color sidebar', preview: 'bg-gradient-to-b from-blue-700 to-blue-800' },
+  { id: 2, label: 'Light', desc: 'White sidebar, clean minimal', preview: 'bg-white border border-slate-200' },
+  { id: 3, label: 'Bold', desc: 'Gradient sidebar, large logo', preview: 'bg-gradient-to-b from-blue-600 to-blue-900' },
+];
+
 function AgencyEditModal({ agency, onClose, onSaved }) {
   const [form, setForm] = useState({ name: agency.name||'', email: agency.email||'', phone: agency.phone||'', city: agency.city||'', brand_color: agency.brand_color||'#1e40af', commission_rate: agency.commission_rate||60, status: agency.status||'active' });
   const [history, setHistory] = useState([]);
   const [tab, setTab] = useState('edit');
   const [msg, setMsg] = useState('');
   const [resetting, setResetting] = useState(false);
+  // Portal settings state
+  const defaultSections = (() => {
+    try { return agency.visible_sections ? JSON.parse(agency.visible_sections) : PARTNER_SECTIONS.map(s => s.id); } catch { return PARTNER_SECTIONS.map(s => s.id); }
+  })();
+  const [visibleSections, setVisibleSections] = useState(defaultSections);
+  const [layoutType, setLayoutType] = useState(agency.layout_type || 1);
+  const [portalSaving, setPortalSaving] = useState(false);
+  const [portalMsg, setPortalMsg] = useState('');
 
   useEffect(() => {
     api.get(`/admin/agencies/${agency.id}/history`).then(setHistory).catch(() => {});
   }, [agency.id]);
+
+  const savePortalSettings = async () => {
+    setPortalSaving(true); setPortalMsg('');
+    try {
+      await api.put(`/admin/agencies/${agency.id}/portal-settings`, { visible_sections: visibleSections, layout_type: layoutType });
+      setPortalMsg('✅ Portal settings saved!');
+      onSaved();
+      setTimeout(() => setPortalMsg(''), 2500);
+    } catch (e) { setPortalMsg(e.message); }
+    finally { setPortalSaving(false); }
+  };
+
+  const toggleSection = (id) => {
+    setVisibleSections(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -151,7 +197,7 @@ function AgencyEditModal({ agency, onClose, onSaved }) {
         </div>
 
         <div className="flex gap-1 px-5 pt-3 border-b border-slate-100 flex-shrink-0">
-          {[['edit','✏️ Edit'],['history','📋 History']].map(([t,l]) => (
+          {[['edit','✏️ Edit'],['portal','🎨 Portal'],['history','📋 History']].map(([t,l]) => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-4 py-2 text-sm font-semibold rounded-t-xl transition ${tab===t ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>
               {l}
@@ -197,6 +243,77 @@ function AgencyEditModal({ agency, onClose, onSaved }) {
                 <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
               </div>
             </form>
+          )}
+
+          {tab === 'portal' && (
+            <div className="space-y-6">
+              {/* Layout Selector */}
+              <div>
+                <p className="text-sm font-black text-slate-800 mb-1">Portal Layout</p>
+                <p className="text-xs text-slate-500 mb-3">Choose the visual style for this partner's dashboard. Changes take effect on their next login.</p>
+                <div className="grid grid-cols-3 gap-3">
+                  {LAYOUT_OPTIONS.map(opt => (
+                    <button key={opt.id} onClick={() => setLayoutType(opt.id)}
+                      className={`rounded-2xl border-2 overflow-hidden text-left transition ${layoutType === opt.id ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200 hover:border-slate-300'}`}>
+                      {/* Mini sidebar preview */}
+                      <div className="flex h-20">
+                        <div className={`w-8 h-full ${opt.preview} flex flex-col gap-1 p-1`}>
+                          <div className={`w-full h-2 rounded ${opt.id === 2 ? 'bg-slate-200' : 'bg-white/30'}`} />
+                          <div className={`w-full h-1.5 rounded ${opt.id === 2 ? 'bg-blue-400' : 'bg-white/50'}`} />
+                          <div className={`w-3/4 h-1.5 rounded ${opt.id === 2 ? 'bg-slate-200' : 'bg-white/20'}`} />
+                          <div className={`w-3/4 h-1.5 rounded ${opt.id === 2 ? 'bg-slate-200' : 'bg-white/20'}`} />
+                          <div className={`w-3/4 h-1.5 rounded ${opt.id === 2 ? 'bg-slate-200' : 'bg-white/20'}`} />
+                        </div>
+                        <div className="flex-1 bg-slate-50 p-1.5">
+                          <div className="w-full h-2 bg-slate-200 rounded mb-1" />
+                          <div className="w-3/4 h-1.5 bg-slate-100 rounded" />
+                        </div>
+                      </div>
+                      <div className="p-2 border-t border-slate-100">
+                        <p className="text-xs font-black text-slate-800">{opt.label}</p>
+                        <p className="text-xs text-slate-400 leading-tight">{opt.desc}</p>
+                      </div>
+                      {layoutType === opt.id && <div className="text-center text-xs font-bold text-blue-600 pb-1.5">✓ Selected</div>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Visible Sections */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-sm font-black text-slate-800">Visible Menu Items</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => setVisibleSections(PARTNER_SECTIONS.map(s=>s.id))} className="text-xs text-blue-600 hover:underline">All</button>
+                    <button onClick={() => setVisibleSections(['overview'])} className="text-xs text-slate-400 hover:underline">None</button>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500 mb-3">Unchecked items are hidden from this partner's sidebar. Overview is always available.</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {PARTNER_SECTIONS.map(s => {
+                    const checked = visibleSections.includes(s.id);
+                    const isCore = s.id === 'overview';
+                    return (
+                      <label key={s.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition
+                        ${checked ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-slate-50 opacity-60'}
+                        ${isCore ? 'cursor-not-allowed' : ''}`}>
+                        <input type="checkbox" checked={checked} disabled={isCore}
+                          onChange={() => !isCore && toggleSection(s.id)}
+                          className="rounded accent-blue-600" />
+                        <span className="text-sm font-semibold text-slate-700">{s.label}</span>
+                        {isCore && <span className="text-xs text-slate-400 ml-auto">required</span>}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {portalMsg && <p className={`text-xs font-bold ${portalMsg.includes('✅') ? 'text-emerald-600' : 'text-red-500'}`}>{portalMsg}</p>}
+              <button onClick={savePortalSettings} disabled={portalSaving}
+                className="w-full py-3 rounded-xl font-black text-white text-sm bg-blue-600 hover:bg-blue-700 transition disabled:opacity-50">
+                {portalSaving ? 'Saving...' : '💾 Save Portal Settings'}
+              </button>
+            </div>
           )}
 
           {tab === 'history' && (
