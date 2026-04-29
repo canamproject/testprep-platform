@@ -699,6 +699,127 @@ function Branding({ user, accent, logoUrl, onLogoChange }) {
   );
 }
 
+// ── PARTNER PAYMENT CONFIG ────────────────────────────────────
+function PartnerPaymentConfig({ accent }) {
+  const [cfg, setCfg] = useState(null);
+  const [permitted, setPermitted] = useState(null);
+  const [form, setForm] = useState({ upi_id:'', upi_name:'', qr_code_image:'', payment_link:'', mobile_number:'', mobile_instructions:'' });
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    api.get('/partner/payment-config').then(d => {
+      setPermitted(true);
+      setCfg(d);
+      if (d) setForm({
+        upi_id: d.upi_id||'', upi_name: d.upi_name||'',
+        qr_code_image: d.qr_code_image||'', payment_link: d.payment_link||'',
+        mobile_number: d.mobile_number||'', mobile_instructions: d.mobile_instructions||'',
+      });
+    }).catch(e => {
+      if (e.message?.includes('403') || e.message?.toLowerCase().includes('permission')) setPermitted(false);
+    });
+  }, []);
+
+  const handleQR = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setForm(f => ({ ...f, qr_code_image: ev.target.result }));
+    reader.readAsDataURL(file);
+  };
+
+  const handleSave = async () => {
+    setSaving(true); setMsg('');
+    try {
+      await api.put('/partner/payment-config', form);
+      setMsg('Saved!');
+      setTimeout(() => setMsg(''), 2000);
+    } catch (e) { setMsg(e.message); }
+    finally { setSaving(false); }
+  };
+
+  if (permitted === null) return <div className="text-center py-8 text-slate-400 text-sm">Loading...</div>;
+
+  if (permitted === false) return (
+    <div>
+      <h2 className="text-xl font-black text-slate-900 mb-4">Payment Configuration</h2>
+      <div className="card max-w-lg">
+        <div className="flex flex-col items-center text-center p-6 gap-3">
+          <span className="text-5xl">🔒</span>
+          <h3 className="text-lg font-black text-slate-800">Payment Config Locked</h3>
+          <p className="text-sm text-slate-500">Your payment method is managed by the platform admin. Students will see the admin-configured payment details.</p>
+          <p className="text-sm text-amber-700 bg-amber-50 rounded-xl px-4 py-2 font-semibold mt-2">Contact the platform admin if you need to configure a custom payment method for your students.</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      <h2 className="text-xl font-black text-slate-900 mb-2">Payment Configuration</h2>
+      <p className="text-sm text-slate-500 mb-5">These payment details will be shown to your students when they click Pay Now.</p>
+      <div className="max-w-lg space-y-5">
+        <div className="p-4 bg-blue-50 rounded-xl space-y-3">
+          <p className="text-xs font-black text-blue-700 uppercase tracking-wide">💳 UPI Payment</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-bold text-slate-600 block mb-1">UPI ID</label>
+              <input value={form.upi_id} onChange={e => setForm(f=>({...f,upi_id:e.target.value}))}
+                placeholder="name@upi" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-slate-600 block mb-1">Account Name</label>
+              <input value={form.upi_name} onChange={e => setForm(f=>({...f,upi_name:e.target.value}))}
+                placeholder="Recipient name" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+          </div>
+        </div>
+
+        <div className="p-4 bg-slate-50 rounded-xl space-y-3">
+          <p className="text-xs font-black text-slate-700 uppercase tracking-wide">📷 QR Code</p>
+          <label className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl cursor-pointer transition
+            ${form.qr_code_image ? 'border-emerald-400 bg-emerald-50' : 'border-slate-300 hover:bg-slate-100'}`}>
+            {form.qr_code_image
+              ? <img src={form.qr_code_image} alt="QR" className="h-full object-contain rounded-lg p-1" />
+              : <><span className="text-3xl mb-1">📷</span><span className="text-xs text-slate-500">Click to upload QR code image</span></>
+            }
+            <input type="file" accept="image/*" className="hidden" onChange={handleQR} />
+          </label>
+          {form.qr_code_image && (
+            <button onClick={() => setForm(f=>({...f,qr_code_image:''}))} className="text-xs text-red-500 hover:underline">Remove QR</button>
+          )}
+        </div>
+
+        <div className="p-4 bg-emerald-50 rounded-xl">
+          <p className="text-xs font-black text-emerald-700 uppercase tracking-wide mb-2">🔗 Payment Link</p>
+          <input value={form.payment_link} onChange={e => setForm(f=>({...f,payment_link:e.target.value}))}
+            placeholder="https://rzp.io/l/... or any payment URL"
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+        </div>
+
+        <div className="p-4 bg-purple-50 rounded-xl space-y-3">
+          <p className="text-xs font-black text-purple-700 uppercase tracking-wide">📱 Mobile Pay (Paytm / PhonePe / GPay)</p>
+          <input value={form.mobile_number} onChange={e => setForm(f=>({...f,mobile_number:e.target.value}))}
+            placeholder="+91 98765 43210"
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" />
+          <textarea value={form.mobile_instructions} onChange={e => setForm(f=>({...f,mobile_instructions:e.target.value}))}
+            placeholder="e.g. Send to this number via Paytm. Add your name in remarks."
+            rows={2}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none" />
+        </div>
+
+        {msg && <p className={`text-xs font-bold ${msg==='Saved!' ? 'text-emerald-600' : 'text-red-500'}`}>{msg}</p>}
+        <button onClick={handleSave} disabled={saving}
+          className="w-full py-3 rounded-xl font-black text-white text-sm transition disabled:opacity-50"
+          style={{ background: accent }}>
+          {saving ? 'Saving...' : 'Save Payment Config'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── SIGNUP LINK BOX ─────────────────────────────────────────
 function SignupLinkBox({ slug, accent, agencyName }) {
   const [copied, setCopied] = useState(false);
@@ -1529,6 +1650,7 @@ const SECTIONS = [
   { id: 'coupons', icon: '🏷️', label: 'Coupons' },
   { id: 'branding', icon: '🎨', label: 'Branding' },
   { id: 'agencyprofile', icon: '🏢', label: 'Agency Profile' },
+  { id: 'paymentconfig', icon: '💳', label: 'Payment Config' },
 ];
 
 export default function PartnerDashboard() {
@@ -1553,6 +1675,7 @@ export default function PartnerDashboard() {
     coupons: <Coupons accent={accent} />,
     branding: <Branding user={user} accent={accent} logoUrl={logoUrl} onLogoChange={setLogoUrl} />,
     agencyprofile: <AgencyProfile accent={accent} user={user} />,
+    paymentconfig: <PartnerPaymentConfig accent={accent} />,
   };
 
   return (

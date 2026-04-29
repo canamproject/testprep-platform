@@ -1543,38 +1543,8 @@ function AllUsers() {
   );
 }
 
-// ── PAYMENT CONFIG ────────────────────────────────────────────
-function PaymentConfig() {
-  const [agencies, setAgencies] = useState([]);
-  const [configs, setConfigs] = useState({});
-  const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState('');
-
-  useEffect(() => {
-    api.get('/admin/agencies').then(setAgencies);
-    api.get('/admin/payment-config').then(rows => {
-      const m = {};
-      rows.forEach(r => { m[r.agency_id] = r; });
-      setConfigs(m);
-    }).catch(() => {});
-  }, []);
-
-  const openEdit = (ag) => {
-    const cfg = configs[ag.id] || {};
-    setForm({
-      upi_id: cfg.upi_id || '',
-      upi_name: cfg.upi_name || '',
-      qr_code_image: cfg.qr_code_image || '',
-      payment_link: cfg.payment_link || '',
-      mobile_number: cfg.mobile_number || '',
-      mobile_instructions: cfg.mobile_instructions || '',
-    });
-    setEditing(ag);
-    setMsg('');
-  };
-
+// ── PAYMENT CONFIG (Global + Partner Overrides) ───────────────
+function PaymentConfigForm({ form, setForm, saving, onSave, msg, accentColor = '#1e40af' }) {
   const handleQR = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -1582,126 +1552,243 @@ function PaymentConfig() {
     reader.onload = ev => setForm(f => ({ ...f, qr_code_image: ev.target.result }));
     reader.readAsDataURL(file);
   };
+  return (
+    <div className="space-y-5">
+      <div className="p-4 bg-blue-50 rounded-xl space-y-3">
+        <p className="text-xs font-black text-blue-700 uppercase tracking-wide">💳 UPI Payment</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-bold text-slate-600 block mb-1">UPI ID</label>
+            <input value={form.upi_id} onChange={e => setForm(f=>({...f,upi_id:e.target.value}))}
+              placeholder="name@upi" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-600 block mb-1">Account Name</label>
+            <input value={form.upi_name} onChange={e => setForm(f=>({...f,upi_name:e.target.value}))}
+              placeholder="Recipient name" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          </div>
+        </div>
+      </div>
 
-  const handleSave = async () => {
-    setSaving(true); setMsg('');
-    try {
-      await api.put(`/admin/payment-config/${editing.id}`, form);
-      setConfigs(prev => ({ ...prev, [editing.id]: { ...form, agency_id: editing.id } }));
-      setMsg('Saved!');
-      setTimeout(() => { setEditing(null); setMsg(''); }, 1200);
-    } catch (e) { setMsg(e.message); }
-    finally { setSaving(false); }
+      <div className="p-4 bg-slate-50 rounded-xl space-y-3">
+        <p className="text-xs font-black text-slate-700 uppercase tracking-wide">📷 QR Code</p>
+        <label className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl cursor-pointer transition
+          ${form.qr_code_image ? 'border-emerald-400 bg-emerald-50' : 'border-slate-300 hover:bg-slate-100'}`}>
+          {form.qr_code_image
+            ? <img src={form.qr_code_image} alt="QR" className="h-full object-contain rounded-lg p-1" />
+            : <><span className="text-3xl mb-1">📷</span><span className="text-xs text-slate-500">Click to upload QR code image</span></>
+          }
+          <input type="file" accept="image/*" className="hidden" onChange={handleQR} />
+        </label>
+        {form.qr_code_image && (
+          <button onClick={() => setForm(f=>({...f,qr_code_image:''}))} className="text-xs text-red-500 hover:underline">Remove QR</button>
+        )}
+      </div>
+
+      <div className="p-4 bg-emerald-50 rounded-xl">
+        <p className="text-xs font-black text-emerald-700 uppercase tracking-wide mb-2">🔗 Payment Link</p>
+        <input value={form.payment_link} onChange={e => setForm(f=>({...f,payment_link:e.target.value}))}
+          placeholder="https://rzp.io/l/... or any payment URL"
+          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+      </div>
+
+      <div className="p-4 bg-purple-50 rounded-xl space-y-3">
+        <p className="text-xs font-black text-purple-700 uppercase tracking-wide">📱 Mobile Pay (Paytm / PhonePe / GPay)</p>
+        <input value={form.mobile_number} onChange={e => setForm(f=>({...f,mobile_number:e.target.value}))}
+          placeholder="+91 98765 43210"
+          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" />
+        <textarea value={form.mobile_instructions} onChange={e => setForm(f=>({...f,mobile_instructions:e.target.value}))}
+          placeholder="e.g. Send to this number via Paytm. Add your name in remarks."
+          rows={2}
+          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none" />
+      </div>
+
+      {msg && <p className={`text-xs font-bold ${msg==='Saved!' ? 'text-emerald-600' : 'text-red-500'}`}>{msg}</p>}
+
+      <button onClick={onSave} disabled={saving}
+        className="w-full py-3 rounded-xl font-black text-white text-sm transition disabled:opacity-50"
+        style={{ background: accentColor }}>
+        {saving ? 'Saving...' : 'Save Payment Config'}
+      </button>
+    </div>
+  );
+}
+
+const EMPTY_FORM = { upi_id:'', upi_name:'', qr_code_image:'', payment_link:'', mobile_number:'', mobile_instructions:'' };
+
+function PaymentConfig() {
+  const [tab, setTab] = useState('global');
+  const [globalForm, setGlobalForm] = useState(EMPTY_FORM);
+  const [globalSaving, setGlobalSaving] = useState(false);
+  const [globalMsg, setGlobalMsg] = useState('');
+  const [agencies, setAgencies] = useState([]);
+  const [overrides, setOverrides] = useState({});
+  const [permToggles, setPermToggles] = useState({});
+  const [overrideModal, setOverrideModal] = useState(null);
+  const [overrideForm, setOverrideForm] = useState(EMPTY_FORM);
+  const [overrideSaving, setOverrideSaving] = useState(false);
+  const [overrideMsg, setOverrideMsg] = useState('');
+
+  const loadAll = () => {
+    api.get('/admin/global-payment-config').then(d => {
+      if (d) setGlobalForm({
+        upi_id: d.upi_id||'', upi_name: d.upi_name||'',
+        qr_code_image: d.qr_code_image||'', payment_link: d.payment_link||'',
+        mobile_number: d.mobile_number||'', mobile_instructions: d.mobile_instructions||'',
+      });
+    }).catch(() => {});
+    api.get('/admin/agencies').then(ags => {
+      setAgencies(ags);
+      const perms = {};
+      ags.forEach(a => { perms[a.id] = !!a.can_configure_payment; });
+      setPermToggles(perms);
+    }).catch(() => {});
+    api.get('/admin/payment-config').then(rows => {
+      const m = {};
+      rows.forEach(r => { m[r.agency_id] = r; });
+      setOverrides(m);
+    }).catch(() => {});
   };
+  useEffect(loadAll, []);
+
+  const saveGlobal = async () => {
+    setGlobalSaving(true); setGlobalMsg('');
+    try {
+      await api.put('/admin/global-payment-config', globalForm);
+      setGlobalMsg('Saved!');
+      setTimeout(() => setGlobalMsg(''), 2000);
+    } catch (e) { setGlobalMsg(e.message); }
+    finally { setGlobalSaving(false); }
+  };
+
+  const togglePerm = async (agId, current) => {
+    const next = current ? 0 : 1;
+    setPermToggles(p => ({ ...p, [agId]: !!next }));
+    try {
+      await api.put(`/admin/agencies/${agId}/payment-permission`, { can_configure_payment: next });
+    } catch (e) {
+      setPermToggles(p => ({ ...p, [agId]: !!current }));
+    }
+  };
+
+  const openOverride = (ag) => {
+    const cfg = overrides[ag.id] || {};
+    setOverrideForm({
+      upi_id: cfg.upi_id||'', upi_name: cfg.upi_name||'',
+      qr_code_image: cfg.qr_code_image||'', payment_link: cfg.payment_link||'',
+      mobile_number: cfg.mobile_number||'', mobile_instructions: cfg.mobile_instructions||'',
+    });
+    setOverrideModal(ag);
+    setOverrideMsg('');
+  };
+
+  const saveOverride = async () => {
+    setOverrideSaving(true); setOverrideMsg('');
+    try {
+      await api.put(`/admin/payment-config/${overrideModal.id}`, overrideForm);
+      setOverrides(prev => ({ ...prev, [overrideModal.id]: { ...overrideForm, agency_id: overrideModal.id } }));
+      setOverrideMsg('Saved!');
+      setTimeout(() => { setOverrideModal(null); setOverrideMsg(''); }, 1200);
+    } catch (e) { setOverrideMsg(e.message); }
+    finally { setOverrideSaving(false); }
+  };
+
+  const globalHasConfig = !!(globalForm.upi_id || globalForm.qr_code_image || globalForm.payment_link || globalForm.mobile_number);
 
   return (
     <div>
-      <h2 className="text-xl font-black text-slate-900 mb-2">Payment Configuration</h2>
-      <p className="text-sm text-slate-500 mb-6">Configure how students can pay for each agency — UPI, QR code, payment link, or mobile number.</p>
+      <h2 className="text-xl font-black text-slate-900 mb-1">Payment Configuration</h2>
+      <p className="text-sm text-slate-500 mb-5">Set one global payment method for all students. Optionally grant specific partners their own override.</p>
 
-      <div className="grid gap-4">
-        {agencies.map(ag => {
-          const cfg = configs[ag.id];
-          const methods = [
-            cfg?.upi_id && '💳 UPI',
-            cfg?.qr_code_image && '📷 QR Code',
-            cfg?.payment_link && '🔗 Link',
-            cfg?.mobile_number && '📱 Mobile',
-          ].filter(Boolean);
-          return (
-            <div key={ag.id} className="card flex items-center gap-4">
-              <div className="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center font-black text-white text-sm overflow-hidden"
-                style={{ background: ag.brand_color }}>
-                {ag.logo_url ? <img src={ag.logo_url} className="w-full h-full object-contain" alt="logo" /> : ag.name?.[0]}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-bold text-slate-900">{ag.name}</p>
-                {methods.length > 0
-                  ? <p className="text-xs text-emerald-600 mt-0.5">{methods.join(' · ')}</p>
-                  : <p className="text-xs text-amber-500 mt-0.5">No payment methods configured</p>
-                }
-              </div>
-              <button onClick={() => openEdit(ag)}
-                className="px-3 py-1.5 rounded-lg text-xs font-bold text-white transition hover:opacity-90"
-                style={{ background: ag.brand_color }}>
-                {cfg ? 'Edit' : 'Configure'}
-              </button>
-            </div>
-          );
-        })}
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6">
+        {[['global','🌐 Global Default'],['partners','🏢 Partner Overrides']].map(([id,label]) => (
+          <button key={id} onClick={() => setTab(id)}
+            className={`px-4 py-2 rounded-xl text-sm font-bold transition ${tab===id ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+            {label}
+          </button>
+        ))}
       </div>
 
-      {editing && (
+      {tab === 'global' && (
+        <div className="max-w-lg">
+          <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+            <p className="text-sm font-black text-blue-800">This is the default payment method for ALL students</p>
+            <p className="text-xs text-blue-600 mt-1">Every student will see these payment details unless their agency has been granted an override below.</p>
+          </div>
+          {!globalHasConfig && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700 font-semibold">
+              No global config saved yet — students will see "Payment not set up" until you save at least one method below.
+            </div>
+          )}
+          <PaymentConfigForm form={globalForm} setForm={setGlobalForm} saving={globalSaving} onSave={saveGlobal} msg={globalMsg} accentColor="#0f172a" />
+        </div>
+      )}
+
+      {tab === 'partners' && (
+        <div>
+          <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+            <p className="text-sm font-black text-amber-800">Partner overrides are disabled by default</p>
+            <p className="text-xs text-amber-700 mt-1">Toggle the switch to allow a specific partner to configure their own payment method for their students. When disabled, the global default applies.</p>
+          </div>
+          <div className="grid gap-4">
+            {agencies.map(ag => {
+              const hasPerm = !!permToggles[ag.id];
+              const cfg = overrides[ag.id];
+              const methods = [
+                cfg?.upi_id && '💳 UPI',
+                cfg?.qr_code_image && '📷 QR',
+                cfg?.payment_link && '🔗 Link',
+                cfg?.mobile_number && '📱 Mobile',
+              ].filter(Boolean);
+              return (
+                <div key={ag.id} className={`card flex items-center gap-4 transition ${hasPerm ? 'ring-2 ring-emerald-300' : ''}`}>
+                  <div className="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center font-black text-white text-sm overflow-hidden"
+                    style={{ background: ag.brand_color }}>
+                    {ag.logo_url ? <img src={ag.logo_url} className="w-full h-full object-contain" alt="" /> : ag.name?.[0]}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-slate-900">{ag.name}</p>
+                    {hasPerm
+                      ? methods.length > 0
+                        ? <p className="text-xs text-emerald-600 mt-0.5">Override: {methods.join(' · ')}</p>
+                        : <p className="text-xs text-amber-500 mt-0.5">Override enabled — no config set yet</p>
+                      : <p className="text-xs text-slate-400 mt-0.5">Using global default</p>
+                    }
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {hasPerm && (
+                      <button onClick={() => openOverride(ag)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+                        {cfg ? 'Edit Override' : 'Set Override'}
+                      </button>
+                    )}
+                    <button onClick={() => togglePerm(ag.id, hasPerm)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none
+                        ${hasPerm ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform
+                        ${hasPerm ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {overrideModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-5 border-b border-slate-100 flex items-center justify-between">
               <div>
-                <h3 className="font-black text-slate-900">Payment Config — {editing.name}</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Students will see these options when they click Pay Now</p>
+                <h3 className="font-black text-slate-900">Override Config — {overrideModal.name}</h3>
+                <p className="text-xs text-slate-400 mt-0.5">This will override the global default for this partner's students only</p>
               </div>
-              <button onClick={() => setEditing(null)} className="text-slate-400 hover:text-slate-700 text-2xl">&times;</button>
+              <button onClick={() => setOverrideModal(null)} className="text-slate-400 hover:text-slate-700 text-2xl">&times;</button>
             </div>
-            <div className="p-5 space-y-5">
-              {/* UPI */}
-              <div className="p-4 bg-blue-50 rounded-xl space-y-3">
-                <p className="text-xs font-black text-blue-700 uppercase tracking-wide">💳 UPI Payment</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-bold text-slate-600 block mb-1">UPI ID</label>
-                    <input value={form.upi_id} onChange={e => setForm(f=>({...f,upi_id:e.target.value}))}
-                      placeholder="name@upi" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-slate-600 block mb-1">Account Name</label>
-                    <input value={form.upi_name} onChange={e => setForm(f=>({...f,upi_name:e.target.value}))}
-                      placeholder="Recipient name" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                  </div>
-                </div>
-              </div>
-
-              {/* QR Code */}
-              <div className="p-4 bg-slate-50 rounded-xl space-y-3">
-                <p className="text-xs font-black text-slate-700 uppercase tracking-wide">📷 QR Code</p>
-                <label className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl cursor-pointer transition
-                  ${form.qr_code_image ? 'border-emerald-400 bg-emerald-50' : 'border-slate-300 hover:bg-slate-100'}`}>
-                  {form.qr_code_image
-                    ? <img src={form.qr_code_image} alt="QR" className="h-full object-contain rounded-lg p-1" />
-                    : <><span className="text-3xl mb-1">📷</span><span className="text-xs text-slate-500">Click to upload QR code image</span></>
-                  }
-                  <input type="file" accept="image/*" className="hidden" onChange={handleQR} />
-                </label>
-                {form.qr_code_image && (
-                  <button onClick={() => setForm(f=>({...f,qr_code_image:''}))} className="text-xs text-red-500 hover:underline">Remove QR</button>
-                )}
-              </div>
-
-              {/* Payment Link */}
-              <div className="p-4 bg-emerald-50 rounded-xl">
-                <p className="text-xs font-black text-emerald-700 uppercase tracking-wide mb-2">🔗 Payment Link</p>
-                <input value={form.payment_link} onChange={e => setForm(f=>({...f,payment_link:e.target.value}))}
-                  placeholder="https://rzp.io/l/... or any payment URL"
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
-              </div>
-
-              {/* Mobile */}
-              <div className="p-4 bg-purple-50 rounded-xl space-y-3">
-                <p className="text-xs font-black text-purple-700 uppercase tracking-wide">📱 Mobile Pay (Paytm / PhonePe / GPay)</p>
-                <input value={form.mobile_number} onChange={e => setForm(f=>({...f,mobile_number:e.target.value}))}
-                  placeholder="+91 98765 43210"
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" />
-                <textarea value={form.mobile_instructions} onChange={e => setForm(f=>({...f,mobile_instructions:e.target.value}))}
-                  placeholder="e.g. Send to this number via Paytm. Add your name in remarks."
-                  rows={2}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none" />
-              </div>
-
-              {msg && <p className={`text-xs font-bold ${msg==='Saved!' ? 'text-emerald-600' : 'text-red-500'}`}>{msg}</p>}
-
-              <button onClick={handleSave} disabled={saving}
-                className="w-full py-3 rounded-xl font-black text-white text-sm transition disabled:opacity-50"
-                style={{ background: editing.brand_color || '#1e40af' }}>
-                {saving ? 'Saving...' : 'Save Payment Config'}
-              </button>
+            <div className="p-5">
+              <PaymentConfigForm form={overrideForm} setForm={setOverrideForm} saving={overrideSaving} onSave={saveOverride} msg={overrideMsg} accentColor={overrideModal.brand_color || '#1e40af'} />
             </div>
           </div>
         </div>
@@ -1774,10 +1861,10 @@ function AdminPayments() {
         {loading ? <div className="text-center py-8 text-slate-400 text-sm">Loading...</div> : (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Student</th><th>Agency</th><th>Course</th><th>Amount</th><th>Method</th><th>Date</th><th>Status</th><th>Action</th></tr></thead>
+              <thead><tr><th>Student</th><th>Agency</th><th>Course</th><th>Amount</th><th>Method</th><th>Receipt</th><th>Date</th><th>Status</th><th>Action</th></tr></thead>
               <tbody>
                 {filtered.length === 0 && (
-                  <tr><td colSpan={8} className="text-center text-slate-400 py-6">No payment records found</td></tr>
+                  <tr><td colSpan={9} className="text-center text-slate-400 py-6">No payment records found</td></tr>
                 )}
                 {filtered.map(p => (
                   <tr key={p.id}>
@@ -1789,6 +1876,12 @@ function AdminPayments() {
                     <td className="text-sm">{p.course_title || '—'}</td>
                     <td className="font-black">{fmt(p.amount)}</td>
                     <td><span className="text-base">{methodIcon[p.payment_method] || '💸'}</span> <span className="text-xs text-slate-500">{p.payment_method}</span></td>
+                    <td>
+                      {p.proof_image
+                        ? <span className="text-emerald-600 text-xs font-bold">✅ Uploaded</span>
+                        : <span className="text-red-500 text-xs font-bold">⚠️ Missing</span>
+                      }
+                    </td>
                     <td className="text-xs text-slate-400">{p.created_at?.split('T')[0]}</td>
                     <td><span className={`badge ${statusColor[p.status]}`}>{p.status}</span></td>
                     <td>
@@ -1834,12 +1927,20 @@ function AdminPayments() {
 
               {viewing.proof_image ? (
                 <div>
-                  <p className="text-xs font-bold text-slate-500 uppercase mb-2">Payment Screenshot</p>
+                  <p className="text-xs font-bold text-slate-500 uppercase mb-2">Payment Receipt <span className="text-emerald-600">✅ Uploaded</span></p>
                   <img src={viewing.proof_image} alt="proof" className="w-full rounded-xl border border-slate-200 object-contain max-h-64" />
                 </div>
               ) : (
-                <div className="p-4 bg-amber-50 rounded-xl text-center">
-                  <p className="text-sm text-amber-700 font-semibold">No screenshot uploaded</p>
+                <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-center">
+                  <p className="text-sm font-black text-red-700">⚠️ No Receipt Uploaded</p>
+                  <p className="text-xs text-red-500 mt-1">Course should NOT be issued without a valid receipt.</p>
+                </div>
+              )}
+
+              {viewing.verified_at && (
+                <div className="p-3 bg-emerald-50 rounded-xl text-xs text-emerald-700">
+                  <span className="font-bold">Verified</span> on {viewing.verified_at?.split('T')[0]}
+                  {viewing.verified_by_name && <> by <span className="font-bold">{viewing.verified_by_name}</span></>}
                 </div>
               )}
 
