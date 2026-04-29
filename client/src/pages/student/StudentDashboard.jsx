@@ -1006,18 +1006,20 @@ function PayNowModal({ enrollment, onClose, onSuccess, accent }) {
               {submitting ? 'Submitting...' : !proofImg ? '📎 Upload Receipt to Submit' : '✅ Submit Payment Proof'}
             </button>
 
-            {cfg?.agency_phone && (
-              <button
-                onClick={() => {
-                  const phone = cfg.agency_phone.replace(/\D/g, '');
-                  const msg = `Hi! I'm enrolling in "${enrollment.course_title}" and would love to get a discount coupon. Could you please share a coupon code? Amount: ₹${enrollment.fee_paid}. Thank you!`;
+            <button
+              onClick={() => {
+                const phone = (cfg?.agency_phone || '').replace(/\D/g, '');
+                const msg = `Hi${cfg?.agency_name ? ` ${cfg.agency_name}` : ''}! I'm interested in "${enrollment.course_title}" (₹${enrollment.fee_paid}). Could you please share a discount coupon code for me? Thank you!`;
+                if (phone) {
                   window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
-                }}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-white transition hover:opacity-90"
-                style={{ background: '#25D366' }}>
-                <span>📱</span> Ask for Discount Coupon on WhatsApp
-              </button>
-            )}
+                } else {
+                  window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+                }
+              }}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-white transition hover:opacity-90"
+              style={{ background: '#25D366' }}>
+              <span>📱</span> Ask for Discount Coupon on WhatsApp
+            </button>
           </div>
         )}
       </div>
