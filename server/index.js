@@ -137,7 +137,7 @@ app.post('/api/auth/login', async (req, res) => {
   if (!email || !password) return res.status(400).json({ error: 'Missing fields' });
   try {
     const [rows] = await getPool().query(
-      'SELECT u.*, a.name as agency_name, a.slug, a.brand_color, a.logo_initials, a.logo_url, a.commission_rate FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.email = ?',
+      'SELECT u.*, a.name as agency_name, a.slug, a.brand_color, a.logo_initials, a.logo_url, a.commission_rate, a.visible_sections, a.layout_type FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.email = ?',
       [email]
     );
     if (!rows.length) return res.status(401).json({ error: 'Invalid credentials' });
@@ -189,7 +189,7 @@ app.post('/api/auth/signup', async (req, res) => {
 
     // Auto-login: return token
     const [[newUser]] = await getPool().query(
-      'SELECT u.*, a.name as agency_name, a.slug, a.brand_color, a.logo_initials, a.logo_url, a.commission_rate FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.id=?',
+      'SELECT u.*, a.name as agency_name, a.slug, a.brand_color, a.logo_initials, a.logo_url, a.commission_rate, a.visible_sections, a.layout_type FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.id=?',
       [result.insertId]
     );
     const token = jwt.sign(
@@ -214,7 +214,7 @@ app.post('/api/auth/signup', async (req, res) => {
 app.get('/api/auth/me', authMiddleware(), async (req, res) => {
   try {
     const [rows] = await getPool().query(
-      'SELECT u.id, u.name, u.email, u.role, u.agency_id, u.phone, u.lms_user_id, a.name as agency_name, a.slug, a.brand_color, a.logo_initials, a.logo_url, a.commission_rate, a.email as agency_email, a.phone as agency_phone, a.city FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.id = ?',
+      'SELECT u.id, u.name, u.email, u.role, u.agency_id, u.phone, u.lms_user_id, a.name as agency_name, a.slug, a.brand_color, a.logo_initials, a.logo_url, a.commission_rate, a.email as agency_email, a.phone as agency_phone, a.city, a.visible_sections, a.layout_type FROM users u LEFT JOIN agencies a ON u.agency_id = a.id WHERE u.id = ?',
       [req.user.id]
     );
     const row = rows[0];
@@ -2011,6 +2011,18 @@ app.put('/api/admin/agencies/:id/payment-permission', authMiddleware(['super_adm
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// Admin: portal settings (visible sections + layout) for a partner
+app.put('/api/admin/agencies/:id/portal-settings', authMiddleware(['super_admin']), async (req, res) => {
+  const { visible_sections, layout_type } = req.body;
+  try {
+    await getPool().query(
+      'UPDATE agencies SET visible_sections=?, layout_type=? WHERE id=?',
+      [visible_sections ? JSON.stringify(visible_sections) : null, layout_type || 1, req.params.id]
+    );
+    res.json({ message: 'Portal settings saved' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // Student: get payment config — agency override if permitted, else global default
 app.get('/api/student/payment-config', authMiddleware(['student']), async (req, res) => {
   try {
@@ -2278,6 +2290,9 @@ async function runMigrations() {
     // Payment proof: track verified_by
     await getPool().query(`ALTER TABLE payment_proofs ADD COLUMN verified_by_user_id INT`).catch(() => {});
     await getPool().query(`ALTER TABLE payment_proofs ADD COLUMN verified_at TIMESTAMP`).catch(() => {});
+    // Partner portal customization
+    await getPool().query(`ALTER TABLE agencies ADD COLUMN visible_sections TEXT`).catch(() => {});
+    await getPool().query(`ALTER TABLE agencies ADD COLUMN layout_type INT DEFAULT 1`).catch(() => {});
     await getPool().query(`
       CREATE TABLE IF NOT EXISTS agency_edit_history (
         id INT AUTO_INCREMENT PRIMARY KEY,
