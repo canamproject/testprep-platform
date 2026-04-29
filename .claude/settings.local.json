@@ -84,7 +84,20 @@
       "Bash(curl -s --max-time 15 --dns-servers 8.8.8.8 \"https://testprep-platform-production.up.railway.app/api/health\")",
       "Bash(curl -s --max-time 15 --resolve \"testprep-platform-production.up.railway.app:443:151.101.2.15\" \"https://testprep-platform-production.up.railway.app/api/health\")",
       "Bash(curl -s https://client-alpha-sepia.vercel.app/index.html)",
-      "Bash(curl -s https://client-alpha-sepia.vercel.app/assets/index-DQ2WL9Uo.js)"
+      "Bash(curl -s https://client-alpha-sepia.vercel.app/assets/index-DQ2WL9Uo.js)",
+      "Bash(npx vercel *)",
+      "Bash(Start-Sleep -Seconds 60)",
+      "Bash(curl -s \"https://testprep-platform-production.up.railway.app/api/health\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://testprep-platform-production.up.railway.app/api/admin/payment-config\" -H \"Authorization: Bearer test\")",
+      "Bash(curl -s \"https://testprep-platform-production.up.railway.app/api/admin/agencies\" -H \"Authorization: Bearer test\")",
+      "Bash(curl -s \"https://testprep-platform-production.up.railway.app/api/admin/payment-config\" -H \"Authorization: Bearer test\")",
+      "Bash(node --check index.js)",
+      "Bash(railway redeploy *)",
+      "Bash(railway deployment *)",
+      "Bash(timeout 5 node index.js)",
+      "Bash(python3 -c \"import sys,json; [print\\(json.loads\\(l\\).get\\('message',''\\)\\) for l in sys.stdin if l.strip\\(\\)]\")",
+      "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.read\\(\\)\\); [print\\(x['id'][:8], x['status'], x['meta'].get\\('configErrors',''\\)\\) for x in d[:3]]\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://client-alpha-sepia.vercel.app/student\")"
     ]
   }
 }
