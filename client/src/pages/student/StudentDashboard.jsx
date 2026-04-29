@@ -28,7 +28,7 @@ function loadRazorpayScript() {
 // ── COURSE CATALOG ──────────────────────────────────────────
 function CourseCatalog({ accent, user, onEnrolled }) {
   const [courses, setCourses]     = useState([]);
-  const [enrollments, setEnrollments] = useState([]);
+  const [enrollments, setEnrollments] = useState({}); // map: course_id → enrollment obj
   const [loading, setLoading]     = useState(true);
   const [buying, setBuying]       = useState(null); // course id being purchased
   const [coupon, setCoupon]       = useState('');
@@ -41,7 +41,14 @@ function CourseCatalog({ accent, user, onEnrolled }) {
       api.get('/student/dashboard'),
     ]).then(([cats, dash]) => {
       setCourses(cats);
-      setEnrollments((dash.enrollments || []).map(e => e.course_id));
+      // Store full enrollment info per course_id, keyed by course_id
+      // If a course has multiple enrollments, prefer paid over pending
+      const map = {};
+      (dash.enrollments || []).forEach(e => {
+        const existing = map[e.course_id];
+        if (!existing || e.payment_status === 'paid') map[e.course_id] = e;
+      });
+      setEnrollments(map);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -67,7 +74,7 @@ function CourseCatalog({ accent, user, onEnrolled }) {
                 ...payment, course_id: course.id, amount: res.amount, discount: res.discount
               });
               setMsg(`✅ Payment successful! You are now enrolled in ${res.course_title}.`);
-              setEnrollments(prev => [...prev, course.id]);
+              setEnrollments(prev => ({ ...prev, [course.id]: { course_id: course.id, payment_status: 'paid' } }));
               onEnrolled?.();
             } catch (e) { setMsg('Payment verification failed: ' + e.message); }
           },
@@ -76,7 +83,7 @@ function CourseCatalog({ accent, user, onEnrolled }) {
         }).open();
       } else {
         setMsg(`✅ ${res.message}`);
-        setEnrollments(prev => [...prev, course.id]);
+        setEnrollments(prev => ({ ...prev, [course.id]: { course_id: course.id, payment_status: 'pending' } }));
         onEnrolled?.();
       }
     } catch (e) {
@@ -122,25 +129,25 @@ function CourseCatalog({ accent, user, onEnrolled }) {
         ))}
       </div>
 
-      {/* Enrolled courses pinned at top */}
-      {visible.some(c => enrollments.includes(c.id)) && (
-        <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-700 font-semibold flex items-center gap-2">
-          ✅ Courses you've already enrolled in are shown below with a green banner — you can't purchase them again.
-        </div>
-      )}
-
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {visible.map(course => {
-          const enrolled = enrollments.includes(course.id);
+          const enr = enrollments[course.id]; // enrollment obj or undefined
+          const isPaid    = enr?.payment_status === 'paid';
+          const isPending = enr && !isPaid;
           const color = catColors[course.category] || accent;
+          const borderColor = isPaid ? '#10b981' : isPending ? '#f59e0b' : color;
           return (
-            <div key={course.id} className={`card relative overflow-hidden transition-all ${enrolled ? 'opacity-80' : ''}`}>
-              <div className="absolute top-0 left-0 right-0 h-1.5" style={{ background: enrolled ? '#10b981' : color }} />
-              {enrolled && (
-                <div className="absolute top-3 right-3 bg-emerald-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">✓ ENROLLED</div>
+            <div key={course.id} className="card relative overflow-hidden transition-all">
+              <div className="absolute top-0 left-0 right-0 h-1.5" style={{ background: borderColor }} />
+              {/* Status badge */}
+              {isPaid && (
+                <div className="absolute top-3 right-3 bg-emerald-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">✅ Purchased</div>
+              )}
+              {isPending && (
+                <div className="absolute top-3 right-3 bg-amber-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">⏳ Payment Due</div>
               )}
               <div className="flex items-start gap-3 mt-2 mb-3">
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl flex-shrink-0" style={{ background: (enrolled ? '#10b981' : color) + '18' }}>
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl flex-shrink-0" style={{ background: borderColor + '18' }}>
                   {catIcons[course.category] || '📚'}
                 </div>
                 <div className="flex-1">
@@ -148,10 +155,8 @@ function CourseCatalog({ accent, user, onEnrolled }) {
                   <div className="text-xs text-slate-400">{course.duration_weeks} weeks · {course.category.replace('_', ' ')}</div>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <div className="text-xl font-black" style={{ color: enrolled ? '#10b981' : color }}>
-                    {enrolled ? '—' : fmt(course.price)}
-                  </div>
-                  {coupon && !enrolled && <div className="text-xs text-emerald-600 font-medium">Coupon applied</div>}
+                  <div className="text-xl font-black" style={{ color: borderColor }}>{fmt(course.price)}</div>
+                  {coupon && <div className="text-xs text-emerald-600 font-medium">Coupon applied</div>}
                 </div>
               </div>
 
@@ -159,20 +164,36 @@ function CourseCatalog({ accent, user, onEnrolled }) {
                 <p className="text-sm text-slate-500 mb-4 line-clamp-2">{course.description}</p>
               )}
 
-              {enrolled ? (
-                <div className="w-full py-2.5 rounded-xl text-sm text-center font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  ✅ Already Enrolled — Go to My Courses to continue learning
-                </div>
-              ) : (
-                <div className="flex gap-2">
+              {isPending ? (
+                /* Has enrollment but payment pending — complete payment */
+                <PayNowFromCard
+                  enrollment={{ ...enr, course_title: course.title, fee_paid: course.price }}
+                  accent={color}
+                  onSuccess={() => setEnrollments(prev => ({ ...prev, [course.id]: { ...prev[course.id], payment_status: 'paid' } }))}
+                  label="Complete Payment to Unlock"
+                />
+              ) : isPaid ? (
+                /* Already paid — show status + allow re-purchase */
+                <div className="space-y-2">
+                  <div className="w-full py-2 rounded-xl text-sm text-center font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    ✅ Purchased — learning unlocked
+                  </div>
                   <button
                     onClick={() => handlePurchase(course)}
                     disabled={buying === course.id}
-                    className="flex-1 py-2.5 text-white font-bold rounded-xl text-sm transition hover:opacity-90 disabled:opacity-50"
-                    style={{ background: color }}>
-                    {buying === course.id ? 'Processing...' : `Enroll Now — ${fmt(course.price)}`}
+                    className="w-full py-2 rounded-xl text-sm font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50 transition disabled:opacity-50">
+                    {buying === course.id ? 'Processing...' : `🔄 Purchase Again — ${fmt(course.price)}`}
                   </button>
                 </div>
+              ) : (
+                /* Not enrolled at all */
+                <button
+                  onClick={() => handlePurchase(course)}
+                  disabled={buying === course.id}
+                  className="w-full py-2.5 text-white font-bold rounded-xl text-sm transition hover:opacity-90 disabled:opacity-50"
+                  style={{ background: color }}>
+                  {buying === course.id ? 'Processing...' : `Enroll Now — ${fmt(course.price)}`}
+                </button>
               )}
             </div>
           );
@@ -795,20 +816,15 @@ function StartLearningBtn({ enrollmentId, accent }) {
 }
 
 // ── PAY NOW FROM CARD (inline trigger) ───────────────────────
-function PayNowFromCard({ enrollment, accent, onSuccess }) {
+function PayNowFromCard({ enrollment, accent, onSuccess, label }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <div className="flex gap-2">
-        <div className="flex-1 px-3 py-2 rounded-xl text-xs text-center font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-          ⚠️ Payment pending — course locked
-        </div>
-        <button onClick={() => setOpen(true)}
-          className="px-4 py-2 rounded-xl text-xs font-black text-white transition hover:opacity-90 flex-shrink-0"
-          style={{ background: accent }}>
-          Pay Now
-        </button>
-      </div>
+      <button onClick={() => setOpen(true)}
+        className="w-full py-2.5 rounded-xl text-sm font-black text-white transition hover:opacity-90"
+        style={{ background: '#f59e0b' }}>
+        💳 {label || 'Pay Now'}
+      </button>
       {open && (
         <PayNowModal
           enrollment={enrollment}
@@ -1118,10 +1134,11 @@ export default function StudentDashboard() {
 
   useEffect(() => { loadEnrollments(); }, [loadEnrollments]);
 
-  const accent     = enrollments[0]?.brand_color || user?.brand_color || '#1e40af';
-  const agencyLogo = enrollments[0]?.logo_initials || 'TP';
-  const agencyName = enrollments[0]?.agency_name || user?.agency_name || 'TestPrep';
-  const enrichedUser = { ...user, brand_color: accent, agency_logo: agencyLogo, agency_name: agencyName };
+  const accent        = enrollments[0]?.brand_color || user?.brand_color || '#1e40af';
+  const agencyLogo    = enrollments[0]?.logo_initials || 'TP';
+  const agencyLogoUrl = enrollments[0]?.agency_logo_url || user?.logo_url || null;
+  const agencyName    = enrollments[0]?.agency_name || user?.agency_name || 'TestPrep';
+  const enrichedUser  = { ...user, brand_color: accent, agency_logo: agencyLogo, agency_name: agencyName };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-400">Loading...</div>;
 
@@ -1142,7 +1159,10 @@ export default function StudentDashboard() {
         logo: (
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center font-black text-white text-sm">{agencyLogo}</div>
+              {agencyLogoUrl
+                ? <img src={agencyLogoUrl} alt="logo" className="w-8 h-8 rounded-lg object-contain bg-white/20 p-0.5" />
+                : <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center font-black text-white text-sm">{agencyLogo}</div>
+              }
               <div className="text-white font-bold text-sm">{agencyName}</div>
             </div>
             <div className="text-xs text-white/50">Student Portal</div>
