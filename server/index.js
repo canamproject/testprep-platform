@@ -301,7 +301,7 @@ app.post('/api/partner/logo', authMiddleware(['partner_admin']), async (req, res
 app.get('/api/partner/agency-profile', authMiddleware(['partner_admin']), async (req, res) => {
   try {
     const [[agency]] = await getPool().query(
-      'SELECT id, name, email, phone, city, brand_color, logo_url, logo_initials, slug, commission_rate, partner_edit_count, visible_sections, layout_type FROM agencies WHERE id=?',
+      'SELECT id, name, email, phone, city, brand_color, logo_url, logo_initials, slug, commission_rate, partner_edit_count, visible_sections, COALESCE(layout_type, 1) as layout_type FROM agencies WHERE id=?',
       [req.user.agency_id]
     );
     res.json(agency || {});
