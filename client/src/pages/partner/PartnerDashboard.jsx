@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
 import DashLayout, { NavItem } from '../../components/DashLayout';
+import { logoShapeStyle } from '../admin/AdminDashboard';
 
 const fmt = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 
@@ -1696,6 +1697,7 @@ export default function PartnerDashboard() {
       if (d) setPortalSettings({
         visible_sections: d.visible_sections,
         layout_type: d.layout_type != null ? Number(d.layout_type) : null,
+        logo_shape: d.logo_shape || 'rounded',
       });
     }).catch(() => {});
   }, []);
@@ -1745,9 +1747,11 @@ export default function PartnerDashboard() {
     paymentconfig: <PartnerPaymentConfig accent={accent} />,
   };
 
-  // Logo size per layout
-  const logoSize = layoutType === 1 ? 'w-12 h-12' : 'w-16 h-16';
-  const logoBg = layoutType === 2 ? 'rounded-2xl border-2 border-slate-200 bg-white shadow-sm' : 'rounded-2xl bg-white/20';
+  // Logo shape + size
+  const logoShape = portalSettings?.logo_shape ?? user?.logo_shape ?? 'rounded';
+  const logoShapeSt = logoShapeStyle(logoShape);
+  const logoPx = layoutType === 1 ? 48 : 60;
+  const logoBorder = layoutType === 2 ? { border: '2px solid #e2e8f0', background: 'white', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' } : { background: 'rgba(255,255,255,0.18)' };
   const nameColor = layoutType === 2 ? 'text-slate-800 font-black text-base' : 'text-white font-bold text-sm';
   const subColor = layoutType === 2 ? 'text-slate-400' : 'text-white/50';
 
@@ -1768,11 +1772,11 @@ export default function PartnerDashboard() {
       sidebar={{
         logo: (
           <div>
-            {/* Large logo */}
-            <div className={`${logoSize} ${logoBg} flex items-center justify-center overflow-hidden mb-3 flex-shrink-0`}>
+            {/* Logo with shape */}
+            <div style={{ width: logoPx, height: logoPx, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 10, flexShrink: 0, ...logoShapeSt, ...logoBorder }}>
               {logoUrl
-                ? <img src={logoUrl} alt="logo" className="w-full h-full object-contain p-1" />
-                : <span className="font-black text-xl" style={{ color: layoutType === 2 ? accent : 'white' }}>{user?.logo_initials || 'P'}</span>
+                ? <img src={logoUrl} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 4 }} />
+                : <span style={{ fontWeight: 900, fontSize: 20, color: layoutType === 2 ? accent : 'white' }}>{user?.logo_initials || 'P'}</span>
               }
             </div>
             <div className={`font-bold truncate mb-0.5 ${nameColor}`}>{user?.agency_name}</div>
