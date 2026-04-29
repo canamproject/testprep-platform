@@ -109,20 +109,20 @@ function AgencyLogoUpload({ agency, onDone }) {
 }
 
 const PARTNER_SECTIONS = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'students', label: 'Students' },
-  { id: 'enrollments', label: 'Enrollments' },
-  { id: 'purchases', label: 'Online Bookings' },
-  { id: 'batches', label: 'Batches' },
-  { id: 'faculty', label: 'Faculty' },
-  { id: 'liveclasses', label: 'Live Classes' },
-  { id: 'earnings', label: 'Earnings' },
-  { id: 'claim', label: 'Claim Commission' },
-  { id: 'crm', label: 'CRM / Leads' },
-  { id: 'coupons', label: 'Coupons' },
-  { id: 'branding', label: 'Branding' },
-  { id: 'agencyprofile', label: 'Agency Profile' },
-  { id: 'paymentconfig', label: 'Payment Config' },
+  { id: 'overview', label: 'Overview', icon: '🏠' },
+  { id: 'students', label: 'Students', icon: '👥' },
+  { id: 'enrollments', label: 'Enrollments', icon: '📋' },
+  { id: 'purchases', label: 'Online Bookings', icon: '🛒' },
+  { id: 'batches', label: 'Batches', icon: '🗂️' },
+  { id: 'faculty', label: 'Faculty', icon: '👨‍🏫' },
+  { id: 'liveclasses', label: 'Live Classes', icon: '📺' },
+  { id: 'earnings', label: 'Earnings', icon: '💰' },
+  { id: 'claim', label: 'Claim Commission', icon: '💸' },
+  { id: 'crm', label: 'CRM / Leads', icon: '🤝' },
+  { id: 'coupons', label: 'Coupons', icon: '🎟️' },
+  { id: 'branding', label: 'Branding', icon: '🎨' },
+  { id: 'agencyprofile', label: 'Agency Profile', icon: '🏢' },
+  { id: 'paymentconfig', label: 'Payment Config', icon: '⚙️' },
 ];
 
 const LAYOUT_OPTIONS = [
@@ -130,6 +130,142 @@ const LAYOUT_OPTIONS = [
   { id: 2, label: 'Light', desc: 'White sidebar, clean minimal', preview: 'bg-white border border-slate-200' },
   { id: 3, label: 'Bold', desc: 'Gradient sidebar, large logo', preview: 'bg-gradient-to-b from-blue-600 to-blue-900' },
 ];
+
+const LOGO_SHAPES = [
+  { id: 'rounded', label: 'Rounded', style: { borderRadius: '12px' } },
+  { id: 'circle',  label: 'Circle',  style: { borderRadius: '50%' } },
+  { id: 'oval',    label: 'Oval',    style: { borderRadius: '50%', transform: 'scaleX(1.35)' } },
+  { id: 'square',  label: 'Square',  style: { borderRadius: '0' } },
+];
+
+export function logoShapeStyle(shape) {
+  return LOGO_SHAPES.find(s => s.id === shape)?.style || { borderRadius: '12px' };
+}
+
+// ── PORTAL PREVIEW ────────────────────────────────────────────
+function PortalPreview({ agency, visibleSections, layoutType, logoShape, onClose }) {
+  const lt = Number(layoutType) || 1;
+  const accent = agency.brand_color || '#1e40af';
+
+  function darken(hex, amt) {
+    try {
+      const n = parseInt(hex.replace('#',''), 16);
+      const r = Math.max(0,(n>>16)-amt), g = Math.max(0,((n>>8)&255)-amt), b = Math.max(0,(n&255)-amt);
+      return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
+    } catch { return hex; }
+  }
+
+  const sidebarBg = lt === 2
+    ? '#f8fafc'
+    : lt === 3
+      ? `linear-gradient(160deg, ${accent} 0%, ${darken(accent, 30)} 100%)`
+      : accent;
+  const isDark = lt !== 2;
+  const textPrimary = isDark ? 'rgba(255,255,255,0.95)' : '#1e293b';
+  const textSub = isDark ? 'rgba(255,255,255,0.5)' : '#94a3b8';
+  const navBg = isDark ? 'rgba(255,255,255,0.12)' : '#e2e8f0';
+  const navText = isDark ? 'rgba(255,255,255,0.9)' : '#475569';
+
+  const shapeStyle = logoShapeStyle(logoShape);
+  const logoSize = lt === 1 ? 48 : 60;
+  const visibleList = visibleSections.length > 0
+    ? PARTNER_SECTIONS.filter(s => visibleSections.includes(s.id))
+    : PARTNER_SECTIONS;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl overflow-hidden w-full max-w-4xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+          <div>
+            <h3 className="font-black text-slate-900 text-base">Portal Preview — {agency.name}</h3>
+            <p className="text-xs text-slate-400">This is how the partner dashboard will look. Changes are not live yet.</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-2xl leading-none">&times;</button>
+        </div>
+
+        {/* Preview window */}
+        <div className="flex" style={{ height: 480 }}>
+          {/* Simulated Sidebar */}
+          <div className="flex flex-col flex-shrink-0 overflow-hidden" style={{ width: 200, background: sidebarBg }}>
+            {/* Logo area */}
+            <div className="p-4" style={{ borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0'}` }}>
+              <div className="flex items-center justify-center mb-2">
+                <div style={{ width: logoSize, height: logoSize, overflow: 'hidden', background: isDark ? 'rgba(255,255,255,0.15)' : '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, ...shapeStyle }}>
+                  {agency.logo_url
+                    ? <img src={agency.logo_url} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 4 }} />
+                    : <span style={{ fontWeight: 900, fontSize: 20, color: isDark ? 'white' : accent }}>{agency.logo_initials || agency.name?.[0]}</span>
+                  }
+                </div>
+              </div>
+              <div style={{ color: textPrimary, fontWeight: 700, fontSize: 13, textAlign: 'center', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{agency.name}</div>
+              <div style={{ color: textSub, fontSize: 10, textAlign: 'center', fontFamily: 'monospace' }}>/{agency.slug}</div>
+              <div style={{ marginTop: 8, background: 'rgba(37,211,102,0.85)', borderRadius: 8, padding: '5px 8px', fontSize: 10, fontWeight: 700, color: '#fff', textAlign: 'center' }}>📱 Share My Link</div>
+            </div>
+            {/* Nav items */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 6px' }}>
+              {visibleList.slice(0, 12).map((s, i) => (
+                <div key={s.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8, marginBottom: 1,
+                  background: i === 0 ? navBg : 'transparent',
+                  color: i === 0 ? (isDark ? 'white' : accent) : navText,
+                  fontSize: 12, fontWeight: i === 0 ? 700 : 500, cursor: 'default',
+                  ...(lt !== 2 && i === 0 ? { borderLeft: `3px solid rgba(255,255,255,0.9)` } : {})
+                }}>
+                  <span style={{ fontSize: 14 }}>{s.icon || '•'}</span>
+                  <span>{s.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Simulated Content Area */}
+          <div className="flex-1 bg-slate-50 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-slate-100">
+              <div className="w-24 h-3 bg-slate-200 rounded-full" />
+              <div className="flex items-center gap-2">
+                <div className="w-16 h-6 bg-red-100 rounded-lg" />
+                <div className="w-20 h-5 bg-slate-100 rounded" />
+                <div className="w-8 h-8 rounded-full bg-slate-200" />
+              </div>
+            </div>
+            <div className="p-4">
+              <div className="w-40 h-5 bg-slate-700 rounded mb-4" />
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                {[...Array(4)].map((_,i) => (
+                  <div key={i} className="bg-white rounded-xl p-3 shadow-sm">
+                    <div className="w-20 h-2 bg-slate-200 rounded mb-2" />
+                    <div className="w-16 h-5 rounded" style={{ background: accent + '30' }} />
+                  </div>
+                ))}
+              </div>
+              <div className="bg-white rounded-xl p-3 shadow-sm">
+                <div className="w-32 h-3 bg-slate-200 rounded mb-3" />
+                {[...Array(3)].map((_,i) => (
+                  <div key={i} className="flex gap-3 py-2 border-b border-slate-50 last:border-0">
+                    <div className="w-24 h-2.5 bg-slate-100 rounded" />
+                    <div className="flex-1 h-2.5 bg-slate-100 rounded" />
+                    <div className="w-12 h-2.5 rounded" style={{ background: accent + '40' }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex items-center gap-3">
+          <div className="flex items-center gap-4 text-xs text-slate-500">
+            <span>Layout: <strong className="text-slate-700">{LAYOUT_OPTIONS.find(l=>l.id===lt)?.label || 'Classic'}</strong></span>
+            <span>Logo: <strong className="text-slate-700">{LOGO_SHAPES.find(s=>s.id===logoShape)?.label || 'Rounded'}</strong></span>
+            <span>Sections: <strong className="text-slate-700">{visibleList.length} visible</strong></span>
+          </div>
+          <button onClick={onClose} className="ml-auto px-4 py-2 bg-slate-800 text-white text-sm font-bold rounded-xl hover:bg-slate-700 transition">
+            Close Preview
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function AgencyEditModal({ agency, onClose, onSaved }) {
   const [form, setForm] = useState({ name: agency.name||'', email: agency.email||'', phone: agency.phone||'', city: agency.city||'', brand_color: agency.brand_color||'#1e40af', commission_rate: agency.commission_rate||60, status: agency.status||'active' });
@@ -142,7 +278,9 @@ function AgencyEditModal({ agency, onClose, onSaved }) {
     try { return agency.visible_sections ? JSON.parse(agency.visible_sections) : PARTNER_SECTIONS.map(s => s.id); } catch { return PARTNER_SECTIONS.map(s => s.id); }
   })();
   const [visibleSections, setVisibleSections] = useState(defaultSections);
-  const [layoutType, setLayoutType] = useState(agency.layout_type || 1);
+  const [layoutType, setLayoutType] = useState(Number(agency.layout_type) || 1);
+  const [logoShape, setLogoShape] = useState(agency.logo_shape || 'rounded');
+  const [showPreview, setShowPreview] = useState(false);
   const [portalSaving, setPortalSaving] = useState(false);
   const [portalMsg, setPortalMsg] = useState('');
 
@@ -153,7 +291,7 @@ function AgencyEditModal({ agency, onClose, onSaved }) {
   const savePortalSettings = async () => {
     setPortalSaving(true); setPortalMsg('');
     try {
-      await api.put(`/admin/agencies/${agency.id}/portal-settings`, { visible_sections: visibleSections, layout_type: layoutType });
+      await api.put(`/admin/agencies/${agency.id}/portal-settings`, { visible_sections: visibleSections, layout_type: layoutType, logo_shape: logoShape });
       setPortalMsg('✅ Portal settings saved!');
       onSaved();
       setTimeout(() => setPortalMsg(''), 2500);
@@ -247,10 +385,17 @@ function AgencyEditModal({ agency, onClose, onSaved }) {
 
           {tab === 'portal' && (
             <div className="space-y-6">
+
+              {/* Preview Button */}
+              <button onClick={() => setShowPreview(true)}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-dashed border-blue-300 text-blue-700 font-bold text-sm hover:bg-blue-50 transition">
+                👁️ Preview Partner Portal
+              </button>
+
               {/* Layout Selector */}
               <div>
                 <p className="text-sm font-black text-slate-800 mb-1">Portal Layout</p>
-                <p className="text-xs text-slate-500 mb-3">Choose the visual style for this partner's dashboard. Changes take effect on their next login.</p>
+                <p className="text-xs text-slate-500 mb-3">Choose the visual style for this partner's dashboard.</p>
                 <div className="grid grid-cols-3 gap-3">
                   {LAYOUT_OPTIONS.map(opt => (
                     <button key={opt.id} onClick={() => setLayoutType(opt.id)}
@@ -276,6 +421,29 @@ function AgencyEditModal({ agency, onClose, onSaved }) {
                       {layoutType === opt.id && <div className="text-center text-xs font-bold text-blue-600 pb-1.5">✓ Selected</div>}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              {/* Logo Shape */}
+              <div>
+                <p className="text-sm font-black text-slate-800 mb-1">Logo Shape</p>
+                <p className="text-xs text-slate-500 mb-3">Controls how the partner's logo appears in their sidebar.</p>
+                <div className="grid grid-cols-4 gap-3">
+                  {LOGO_SHAPES.map(shape => {
+                    const bg = agency.brand_color || '#1e40af';
+                    return (
+                      <button key={shape.id} onClick={() => setLogoShape(shape.id)}
+                        className={`flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition ${logoShape === shape.id ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}>
+                        <div style={{ width: 44, height: 44, background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', color: 'white', fontWeight: 900, fontSize: 16, ...shape.style }}>
+                          {agency.logo_url
+                            ? <img src={agency.logo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 3 }} />
+                            : (agency.logo_initials || agency.name?.[0] || 'P')
+                          }
+                        </div>
+                        <span className={`text-xs font-bold ${logoShape === shape.id ? 'text-blue-600' : 'text-slate-500'}`}>{shape.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -309,11 +477,27 @@ function AgencyEditModal({ agency, onClose, onSaved }) {
               </div>
 
               {portalMsg && <p className={`text-xs font-bold ${portalMsg.includes('✅') ? 'text-emerald-600' : 'text-red-500'}`}>{portalMsg}</p>}
-              <button onClick={savePortalSettings} disabled={portalSaving}
-                className="w-full py-3 rounded-xl font-black text-white text-sm bg-blue-600 hover:bg-blue-700 transition disabled:opacity-50">
-                {portalSaving ? 'Saving...' : '💾 Save Portal Settings'}
-              </button>
+              <div className="flex gap-3">
+                <button onClick={() => setShowPreview(true)}
+                  className="flex-1 py-3 rounded-xl font-black text-sm border-2 border-slate-200 text-slate-700 hover:bg-slate-50 transition">
+                  👁️ Preview First
+                </button>
+                <button onClick={savePortalSettings} disabled={portalSaving}
+                  className="flex-1 py-3 rounded-xl font-black text-white text-sm bg-blue-600 hover:bg-blue-700 transition disabled:opacity-50">
+                  {portalSaving ? 'Saving...' : '💾 Save & Go Live'}
+                </button>
+              </div>
             </div>
+          )}
+
+          {showPreview && (
+            <PortalPreview
+              agency={{ ...agency, brand_color: form.brand_color || agency.brand_color }}
+              visibleSections={visibleSections}
+              layoutType={layoutType}
+              logoShape={logoShape}
+              onClose={() => setShowPreview(false)}
+            />
           )}
 
           {tab === 'history' && (
