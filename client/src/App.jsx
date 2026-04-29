@@ -10,6 +10,11 @@ import StudentDashboard from './pages/student/StudentDashboard';
 import FacultyDashboard from './pages/faculty/FacultyDashboard';
 import LiveClassRoom from './pages/LiveClassRoom';
 
+function studentHome(user) {
+  const slug = user?.slug || user?.agency_slug;
+  return slug ? `/${slug}/student` : '/student';
+}
+
 function RequireAuth({ children, role }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-400 text-sm">Loading...</div>;
@@ -18,7 +23,7 @@ function RequireAuth({ children, role }) {
     if (user.role === 'super_admin') return <Navigate to="/admin" replace />;
     if (user.role === 'partner_admin') return <Navigate to="/partner" replace />;
     if (user.role === 'faculty') return <Navigate to="/faculty" replace />;
-    if (user.role === 'student') return <Navigate to="/student" replace />;
+    if (user.role === 'student') return <Navigate to={studentHome(user)} replace />;
   }
   return children;
 }
@@ -29,7 +34,7 @@ function HomeRedirect() {
   if (user.role === 'super_admin') return <Navigate to="/admin" replace />;
   if (user.role === 'partner_admin') return <Navigate to="/partner" replace />;
   if (user.role === 'faculty') return <Navigate to="/faculty" replace />;
-  return <Navigate to="/student" replace />;
+  return <Navigate to={studentHome(user)} replace />;
 }
 
 // Tenant route: /agent/:slug — loads partner branding then student login
@@ -58,6 +63,10 @@ export default function App() {
             <RequireAuth role="partner_admin"><PartnerDashboard /></RequireAuth>
           } />
           <Route path="/student/*" element={
+            <RequireAuth role="student"><StudentDashboard /></RequireAuth>
+          } />
+          {/* Slug-based student URL: e.g. /rtconsultants/student */}
+          <Route path="/:slug/student/*" element={
             <RequireAuth role="student"><StudentDashboard /></RequireAuth>
           } />
           <Route path="/faculty/*" element={
