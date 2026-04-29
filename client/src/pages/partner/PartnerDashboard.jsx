@@ -1688,15 +1688,26 @@ export default function PartnerDashboard() {
   const { user } = useAuth();
   const [section, setSection] = useState('overview');
   const [logoUrl, setLogoUrl] = useState(user?.logo_url || null);
+  const [portalSettings, setPortalSettings] = useState(null); // fetched fresh from server
+
+  // Fetch fresh portal settings on mount so admin changes apply immediately
+  useEffect(() => {
+    api.get('/partner/agency-profile').then(d => {
+      if (d) setPortalSettings({ visible_sections: d.visible_sections, layout_type: d.layout_type });
+    }).catch(() => {});
+  }, []);
+
   const accent = user?.brand_color || '#1e40af';
   const commRate = user?.commission_rate || 60;
   const slug = user?.slug || user?.agency_slug || '';
-  const layoutType = user?.layout_type || 1;
+  // Use fresh portal settings if loaded, fall back to JWT user data
+  const layoutType = portalSettings?.layout_type ?? user?.layout_type ?? 1;
 
-  // Compute visible sections from admin config
+  // Compute visible sections from fresh server data
   let visibleIds = null;
   try {
-    if (user?.visible_sections) visibleIds = JSON.parse(user.visible_sections);
+    const raw = portalSettings?.visible_sections ?? user?.visible_sections;
+    if (raw) visibleIds = typeof raw === 'string' ? JSON.parse(raw) : raw;
   } catch {}
   const SECTIONS = visibleIds
     ? ALL_SECTIONS.filter(s => visibleIds.includes(s.id))
