@@ -2273,6 +2273,8 @@ async function runMigrations() {
       )
     `).catch(() => {});
 
+    // Fix proof_image column size (TEXT→MEDIUMTEXT for base64 images)
+    await getPool().query(`ALTER TABLE payment_proofs MODIFY COLUMN proof_image MEDIUMTEXT`).catch(() => {});
     // Agency profile edit tracking
     await getPool().query(`ALTER TABLE agencies ADD COLUMN partner_edit_count INT DEFAULT 0`).catch(() => {});
     // Partner payment permission
