@@ -253,11 +253,30 @@ app.post('/api/admin/agencies', authMiddleware(['super_admin']), async (req, res
 
 app.put('/api/admin/agencies/:id', authMiddleware(['super_admin']), async (req, res) => {
   const { name, email, phone, city, brand_color, commission_rate, status } = req.body;
-  await getPool().query(
-    'UPDATE agencies SET name=?, email=?, phone=?, city=?, brand_color=?, commission_rate=?, status=? WHERE id=?',
-    [name, email, phone, city, brand_color, commission_rate, status, req.params.id]
-  );
-  res.json({ message: 'Updated' });
+  try {
+    const [[old]] = await getPool().query('SELECT name,email,phone,city,brand_color,commission_rate,status FROM agencies WHERE id=?', [req.params.id]);
+    await getPool().query(
+      'UPDATE agencies SET name=?, email=?, phone=?, city=?, brand_color=?, commission_rate=?, status=? WHERE id=?',
+      [name, email, phone, city, brand_color, commission_rate, status, req.params.id]
+    );
+    const changes = {};
+    if (old) {
+      if (name !== old.name) changes.name = { from: old.name, to: name };
+      if (email !== old.email) changes.email = { from: old.email, to: email };
+      if (phone !== old.phone) changes.phone = { from: old.phone, to: phone };
+      if (city !== old.city) changes.city = { from: old.city, to: city };
+      if (brand_color !== old.brand_color) changes.brand_color = { from: old.brand_color, to: brand_color };
+      if (String(commission_rate) !== String(old.commission_rate)) changes.commission_rate = { from: old.commission_rate, to: commission_rate };
+      if (status !== old.status) changes.status = { from: old.status, to: status };
+    }
+    if (Object.keys(changes).length > 0) {
+      await getPool().query(
+        'INSERT INTO agency_edit_history (agency_id, changed_by_user_id, changed_by_name, changed_by_role, changes_json) VALUES (?,?,?,?,?)',
+        [req.params.id, req.user.id, req.user.name || 'Admin', 'super_admin', JSON.stringify(changes)]
+      );
+    }
+    res.json({ message: 'Updated' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 // Admin: upload logo for any agency (base64 data URI)
@@ -276,6 +295,83 @@ app.post('/api/partner/logo', authMiddleware(['partner_admin']), async (req, res
   if (!agencyId) return res.status(400).json({ error: 'No agency linked' });
   await getPool().query('UPDATE agencies SET logo_url=? WHERE id=?', [logo_url, agencyId]);
   res.json({ message: 'Logo updated', logo_url });
+});
+
+// Partner: get own agency profile
+app.get('/api/partner/agency-profile', authMiddleware(['partner_admin']), async (req, res) => {
+  try {
+    const [[agency]] = await getPool().query(
+      'SELECT id, name, email, phone, city, brand_color, logo_url, logo_initials, slug, commission_rate, partner_edit_count FROM agencies WHERE id=?',
+      [req.user.agency_id]
+    );
+    res.json(agency || {});
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Partner: update own agency profile (max 2 edits)
+app.put('/api/partner/agency-profile', authMiddleware(['partner_admin']), async (req, res) => {
+  try {
+    const [[agency]] = await getPool().query('SELECT * FROM agencies WHERE id=?', [req.user.agency_id]);
+    if (!agency) return res.status(404).json({ error: 'Agency not found' });
+    if (agency.partner_edit_count >= 2) return res.status(403).json({ error: 'Edit limit reached. Only admin can make further changes.' });
+
+    const { name, email, phone, city, brand_color, logo_url } = req.body;
+    const changes = {};
+    if (name && name !== agency.name) changes.name = { from: agency.name, to: name };
+    if (email && email !== agency.email) changes.email = { from: agency.email, to: email };
+    if (phone && phone !== agency.phone) changes.phone = { from: agency.phone, to: phone };
+    if (city && city !== agency.city) changes.city = { from: agency.city, to: city };
+    if (brand_color && brand_color !== agency.brand_color) changes.brand_color = { from: agency.brand_color, to: brand_color };
+    if (logo_url !== undefined && logo_url !== agency.logo_url) changes.logo_url = { from: 'previous', to: 'updated' };
+
+    await getPool().query(
+      'UPDATE agencies SET name=?, email=?, phone=?, city=?, brand_color=?, partner_edit_count=partner_edit_count+1 WHERE id=?',
+      [name||agency.name, email||agency.email, phone||agency.phone, city||agency.city, brand_color||agency.brand_color, req.user.agency_id]
+    );
+    if (logo_url !== undefined) {
+      await getPool().query('UPDATE agencies SET logo_url=? WHERE id=?', [logo_url||null, req.user.agency_id]);
+    }
+    await getPool().query(
+      'INSERT INTO agency_edit_history (agency_id, changed_by_user_id, changed_by_name, changed_by_role, changes_json) VALUES (?,?,?,?,?)',
+      [req.user.agency_id, req.user.id, req.user.name, 'partner_admin', JSON.stringify(changes)]
+    );
+    const [[updated]] = await getPool().query('SELECT partner_edit_count FROM agencies WHERE id=?', [req.user.agency_id]);
+    res.json({ message: 'Profile updated', edits_used: updated.partner_edit_count, edits_remaining: 2 - updated.partner_edit_count });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Partner: get own agency edit history
+app.get('/api/partner/agency-profile/history', authMiddleware(['partner_admin']), async (req, res) => {
+  try {
+    const [rows] = await getPool().query(
+      'SELECT * FROM agency_edit_history WHERE agency_id=? ORDER BY changed_at DESC',
+      [req.user.agency_id]
+    );
+    res.json(rows);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: get edit history for any agency
+app.get('/api/admin/agencies/:id/history', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [rows] = await getPool().query(
+      'SELECT * FROM agency_edit_history WHERE agency_id=? ORDER BY changed_at DESC',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: reset partner edit count
+app.put('/api/admin/agencies/:id/reset-edits', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    await getPool().query('UPDATE agencies SET partner_edit_count=0 WHERE id=?', [req.params.id]);
+    await getPool().query(
+      'INSERT INTO agency_edit_history (agency_id, changed_by_user_id, changed_by_name, changed_by_role, changes_json) VALUES (?,?,?,?,?)',
+      [req.params.id, req.user.id, req.user.name || 'Admin', 'super_admin', JSON.stringify({ action: 'edit_count_reset' })]
+    );
+    res.json({ message: 'Edit count reset to 0' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 // ─── ADMIN: OVERVIEW STATS ────────────────────────────────────
@@ -411,7 +507,7 @@ app.post('/api/partner/students', authMiddleware(['partner_admin']), async (req,
 
 app.get('/api/partner/enrollments', authMiddleware(['partner_admin']), async (req, res) => {
   const [rows] = await getPool().query(`
-    SELECT e.*, u.name as student_name, u.email as student_email,
+    SELECT e.*, u.name as student_name, u.email as student_email, u.phone as student_phone,
       c.title as course_title, c.category, c.price as course_price
     FROM enrollments e
     JOIN users u ON e.student_id = u.id
@@ -530,9 +626,9 @@ app.get('/api/partner/earnings', authMiddleware(['partner_admin']), async (req, 
 // ─── STUDENT: DASHBOARD ───────────────────────────────────────
 app.get('/api/student/dashboard', authMiddleware(['student']), async (req, res) => {
   const [enrollments] = await getPool().query(`
-    SELECT e.id, e.fee_paid, e.payment_status, e.enrolled_at, e.progress_percent, e.status,
+    SELECT e.id, e.course_id, e.fee_paid, e.payment_status, e.enrolled_at, e.progress_percent, e.status,
       c.title as course_title, c.category, c.duration_weeks,
-      a.name as agency_name, a.brand_color, a.logo_initials, a.email as agency_email
+      a.name as agency_name, a.brand_color, a.logo_initials, a.logo_url as agency_logo_url, a.slug as agency_slug, a.email as agency_email
     FROM enrollments e
     JOIN courses c ON e.course_id = c.id
     JOIN agencies a ON e.agency_id = a.id
@@ -1837,7 +1933,7 @@ app.get('/api/student/my-batches', authMiddleware(['student']), async (req, res)
 app.get('/api/partner/purchases', authMiddleware(['partner_admin']), async (req, res) => {
   try {
     const [rows] = await getPool().query(`
-      SELECT e.*, u.name as student_name, u.email as student_email,
+      SELECT e.*, u.name as student_name, u.email as student_email, u.phone as student_phone,
         c.title as course_title, c.category
       FROM enrollments e
       JOIN users u ON e.student_id=u.id
@@ -1852,10 +1948,35 @@ app.get('/api/partner/purchases', authMiddleware(['partner_admin']), async (req,
 // ─── PAYMENT CONFIG ──────────────────────────────────────────
 
 // Admin: get payment config for their platform (all agencies)
+// Admin: get global default payment config
+app.get('/api/admin/global-payment-config', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [[cfg]] = await getPool().query('SELECT * FROM global_payment_config WHERE id=1');
+    res.json(cfg || {});
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: save global default payment config
+app.put('/api/admin/global-payment-config', authMiddleware(['super_admin']), async (req, res) => {
+  const { upi_id, upi_name, qr_code_image, payment_link, mobile_number, mobile_instructions } = req.body;
+  try {
+    await getPool().query(`
+      INSERT INTO global_payment_config (id, upi_id, upi_name, qr_code_image, payment_link, mobile_number, mobile_instructions)
+      VALUES (1,?,?,?,?,?,?)
+      ON DUPLICATE KEY UPDATE
+        upi_id=VALUES(upi_id), upi_name=VALUES(upi_name),
+        qr_code_image=VALUES(qr_code_image), payment_link=VALUES(payment_link),
+        mobile_number=VALUES(mobile_number), mobile_instructions=VALUES(mobile_instructions)
+    `, [upi_id||null, upi_name||null, qr_code_image||null, payment_link||null, mobile_number||null, mobile_instructions||null]);
+    res.json({ message: 'Global payment config saved' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: get per-agency overrides
 app.get('/api/admin/payment-config', authMiddleware(['super_admin']), async (req, res) => {
   try {
     const [rows] = await getPool().query(`
-      SELECT apc.*, a.name as agency_name, a.brand_color
+      SELECT apc.*, a.name as agency_name, a.brand_color, a.can_configure_payment
       FROM agency_payment_config apc
       JOIN agencies a ON apc.agency_id = a.id
       ORDER BY a.name
@@ -1864,7 +1985,7 @@ app.get('/api/admin/payment-config', authMiddleware(['super_admin']), async (req
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// Admin: save payment config for a specific agency
+// Admin: save payment config for a specific agency (override)
 app.put('/api/admin/payment-config/:agency_id', authMiddleware(['super_admin']), async (req, res) => {
   const { upi_id, upi_name, qr_code_image, payment_link, mobile_number, mobile_instructions } = req.body;
   try {
@@ -1881,35 +2002,90 @@ app.put('/api/admin/payment-config/:agency_id', authMiddleware(['super_admin']),
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// Student: get payment config for their agency
+// Admin: toggle partner payment permission
+app.put('/api/admin/agencies/:id/payment-permission', authMiddleware(['super_admin']), async (req, res) => {
+  const { can_configure_payment } = req.body;
+  try {
+    await getPool().query('UPDATE agencies SET can_configure_payment=? WHERE id=?', [can_configure_payment ? 1 : 0, req.params.id]);
+    res.json({ message: 'Permission updated' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Student: get payment config — agency override if permitted, else global default
 app.get('/api/student/payment-config', authMiddleware(['student']), async (req, res) => {
   try {
-    const [[cfg]] = await getPool().query(
-      `SELECT upi_id, upi_name, qr_code_image, payment_link, mobile_number, mobile_instructions
-       FROM agency_payment_config WHERE agency_id=?`,
-      [req.user.agency_id]
+    const [[agency]] = await getPool().query(
+      'SELECT can_configure_payment, phone, name FROM agencies WHERE id=?', [req.user.agency_id]
     );
+    let cfg = null;
+    // Use agency-specific config only if admin granted permission
+    if (agency?.can_configure_payment) {
+      const [[agencyCfg]] = await getPool().query(
+        `SELECT upi_id, upi_name, qr_code_image, payment_link, mobile_number, mobile_instructions
+         FROM agency_payment_config WHERE agency_id=?`, [req.user.agency_id]
+      );
+      if (agencyCfg && (agencyCfg.upi_id || agencyCfg.qr_code_image || agencyCfg.payment_link || agencyCfg.mobile_number)) {
+        cfg = agencyCfg;
+      }
+    }
+    // Fall back to global default
+    if (!cfg) {
+      const [[global]] = await getPool().query('SELECT * FROM global_payment_config WHERE id=1');
+      cfg = global;
+    }
+    res.json({ ...(cfg || {}), agency_phone: agency?.phone, agency_name: agency?.name });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Partner: get own payment config (only if permitted)
+app.get('/api/partner/payment-config', authMiddleware(['partner_admin']), async (req, res) => {
+  try {
+    const [[agency]] = await getPool().query('SELECT can_configure_payment FROM agencies WHERE id=?', [req.user.agency_id]);
+    if (!agency?.can_configure_payment) return res.status(403).json({ error: 'not_permitted' });
+    const [[cfg]] = await getPool().query('SELECT * FROM agency_payment_config WHERE agency_id=?', [req.user.agency_id]);
     res.json(cfg || {});
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// Student: submit payment proof
+// Partner: save own payment config (only if permitted)
+app.put('/api/partner/payment-config', authMiddleware(['partner_admin']), async (req, res) => {
+  const { upi_id, upi_name, qr_code_image, payment_link, mobile_number, mobile_instructions } = req.body;
+  try {
+    const [[agency]] = await getPool().query('SELECT can_configure_payment FROM agencies WHERE id=?', [req.user.agency_id]);
+    if (!agency?.can_configure_payment) return res.status(403).json({ error: 'Contact admin to enable payment configuration' });
+    await getPool().query(`
+      INSERT INTO agency_payment_config (agency_id, upi_id, upi_name, qr_code_image, payment_link, mobile_number, mobile_instructions)
+      VALUES (?,?,?,?,?,?,?)
+      ON DUPLICATE KEY UPDATE
+        upi_id=VALUES(upi_id), upi_name=VALUES(upi_name),
+        qr_code_image=VALUES(qr_code_image), payment_link=VALUES(payment_link),
+        mobile_number=VALUES(mobile_number), mobile_instructions=VALUES(mobile_instructions)
+    `, [req.user.agency_id, upi_id||null, upi_name||null, qr_code_image||null, payment_link||null, mobile_number||null, mobile_instructions||null]);
+    res.json({ message: 'Payment config saved' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Student: submit payment proof (receipt MANDATORY)
 app.post('/api/student/payment-proof', authMiddleware(['student']), async (req, res) => {
   const { enrollment_id, amount, payment_method, proof_image, notes } = req.body;
   if (!enrollment_id) return res.status(400).json({ error: 'enrollment_id required' });
+  if (!proof_image) return res.status(400).json({ error: 'Payment receipt screenshot is required to submit proof.' });
   try {
-    // Verify enrollment belongs to this student
     const [[enr]] = await getPool().query(
       `SELECT id, agency_id FROM enrollments WHERE id=? AND student_id=?`,
       [enrollment_id, req.user.id]
     );
     if (!enr) return res.status(404).json({ error: 'Enrollment not found' });
+    // Check if a pending proof already exists
+    const [[existing]] = await getPool().query(
+      'SELECT id FROM payment_proofs WHERE enrollment_id=? AND status="pending"', [enrollment_id]
+    );
+    if (existing) return res.status(400).json({ error: 'A payment proof is already pending review for this enrollment.' });
     const [r] = await getPool().query(`
       INSERT INTO payment_proofs (enrollment_id, student_id, agency_id, amount, payment_method, proof_image, notes)
       VALUES (?,?,?,?,?,?,?)
-    `, [enrollment_id, req.user.id, enr.agency_id, amount||null,
-        payment_method||'other', proof_image||null, notes||null]);
-    res.json({ id: r.insertId, message: 'Payment proof submitted successfully' });
+    `, [enrollment_id, req.user.id, enr.agency_id, amount||null, payment_method||'other', proof_image, notes||null]);
+    res.json({ id: r.insertId, message: 'Payment proof submitted! Your course will be unlocked once the admin verifies your receipt.' });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
@@ -1920,12 +2096,14 @@ app.get('/api/admin/payments', authMiddleware(['super_admin']), async (req, res)
       SELECT pp.*,
         u.name as student_name, u.email as student_email, u.phone as student_phone,
         a.name as agency_name, a.brand_color,
-        c.title as course_title
+        c.title as course_title,
+        vu.name as verified_by_name
       FROM payment_proofs pp
       JOIN users u ON pp.student_id = u.id
       JOIN agencies a ON pp.agency_id = a.id
       LEFT JOIN enrollments e ON pp.enrollment_id = e.id
       LEFT JOIN courses c ON e.course_id = c.id
+      LEFT JOIN users vu ON pp.verified_by_user_id = vu.id
       ORDER BY pp.created_at DESC
       LIMIT 500
     `);
@@ -1939,19 +2117,26 @@ app.put('/api/admin/payments/:id', authMiddleware(['super_admin']), async (req, 
   if (!['verified','rejected'].includes(status)) return res.status(400).json({ error: 'status must be verified or rejected' });
   try {
     await getPool().query(
-      `UPDATE payment_proofs SET status=?, admin_note=? WHERE id=?`,
-      [status, admin_note||null, req.params.id]
+      `UPDATE payment_proofs SET status=?, admin_note=?, verified_by_user_id=?, verified_at=NOW() WHERE id=?`,
+      [status, admin_note||null, req.user.id, req.params.id]
     );
-    // If verified, mark enrollment as paid
     if (status === 'verified') {
       const [[pp]] = await getPool().query(`SELECT enrollment_id FROM payment_proofs WHERE id=?`, [req.params.id]);
-      if (pp) {
+      if (pp?.enrollment_id) {
         await getPool().query(
-          `UPDATE enrollments SET payment_status='paid' WHERE id=?`, [pp.enrollment_id]
+          `UPDATE enrollments SET payment_status='paid', payment_date=NOW() WHERE id=?`, [pp.enrollment_id]
+        );
+      }
+    } else if (status === 'rejected') {
+      // Rejected: keep enrollment payment_status as pending (student can resubmit)
+      const [[pp]] = await getPool().query(`SELECT enrollment_id FROM payment_proofs WHERE id=?`, [req.params.id]);
+      if (pp?.enrollment_id) {
+        await getPool().query(
+          `UPDATE enrollments SET payment_status='pending' WHERE id=?`, [pp.enrollment_id]
         );
       }
     }
-    res.json({ message: `Payment ${status}` });
+    res.json({ message: `Payment ${status}. ${status==='verified'?'Course access granted.':'Student can resubmit proof.'}` });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
@@ -2036,6 +2221,8 @@ async function runMigrations() {
 
     // Logo URL for agencies
     await getPool().query(`ALTER TABLE agencies ADD COLUMN logo_url TEXT`).catch(() => {});
+    // Widen logo_url to MEDIUMTEXT (base64 images exceed TEXT 64KB limit)
+    await getPool().query(`ALTER TABLE agencies MODIFY COLUMN logo_url MEDIUMTEXT`).catch(() => {});
 
     // Payment config per agency (UPI, QR, link, mobile)
     await getPool().query(`
@@ -2071,6 +2258,36 @@ async function runMigrations() {
         admin_note TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `).catch(() => {});
+
+    // Agency profile edit tracking
+    await getPool().query(`ALTER TABLE agencies ADD COLUMN partner_edit_count INT DEFAULT 0`).catch(() => {});
+    // Partner payment permission
+    await getPool().query(`ALTER TABLE agencies ADD COLUMN can_configure_payment TINYINT(1) DEFAULT 0`).catch(() => {});
+    // Global admin payment config (single row, id always 1)
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS global_payment_config (
+        id INT DEFAULT 1 PRIMARY KEY,
+        upi_id VARCHAR(100), upi_name VARCHAR(100),
+        qr_code_image MEDIUMTEXT, payment_link TEXT,
+        mobile_number VARCHAR(20), mobile_instructions TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `).catch(() => {});
+    // Payment proof: track verified_by
+    await getPool().query(`ALTER TABLE payment_proofs ADD COLUMN verified_by_user_id INT`).catch(() => {});
+    await getPool().query(`ALTER TABLE payment_proofs ADD COLUMN verified_at TIMESTAMP`).catch(() => {});
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS agency_edit_history (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        agency_id INT NOT NULL,
+        changed_by_user_id INT NOT NULL,
+        changed_by_name VARCHAR(200),
+        changed_by_role VARCHAR(50),
+        changes_json TEXT,
+        changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (agency_id) REFERENCES agencies(id)
       )
     `).catch(() => {});
 
