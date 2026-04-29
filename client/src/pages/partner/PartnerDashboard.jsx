@@ -1690,26 +1690,33 @@ export default function PartnerDashboard() {
   const [logoUrl, setLogoUrl] = useState(user?.logo_url || null);
   const [portalSettings, setPortalSettings] = useState(null); // fetched fresh from server
 
-  // Fetch fresh portal settings on mount so admin changes apply immediately
+  // Fetch fresh portal settings on mount — picks up admin changes without re-login
   useEffect(() => {
     api.get('/partner/agency-profile').then(d => {
-      if (d) setPortalSettings({ visible_sections: d.visible_sections, layout_type: d.layout_type });
+      if (d) setPortalSettings({
+        visible_sections: d.visible_sections,
+        layout_type: d.layout_type != null ? Number(d.layout_type) : null,
+      });
     }).catch(() => {});
   }, []);
 
   const accent = user?.brand_color || '#1e40af';
   const commRate = user?.commission_rate || 60;
   const slug = user?.slug || user?.agency_slug || '';
-  // Use fresh portal settings if loaded, fall back to JWT user data
-  const layoutType = portalSettings?.layout_type ?? user?.layout_type ?? 1;
+
+  // Coerce to number — MySQL2 may return integers as strings depending on config
+  const rawLayout = portalSettings?.layout_type ?? (user?.layout_type != null ? Number(user.layout_type) : null);
+  const layoutType = rawLayout != null ? Number(rawLayout) : 1;
 
   // Compute visible sections from fresh server data
   let visibleIds = null;
   try {
-    const raw = portalSettings?.visible_sections ?? user?.visible_sections;
-    if (raw) visibleIds = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const raw = portalSettings !== null
+      ? portalSettings?.visible_sections
+      : user?.visible_sections;
+    if (raw) visibleIds = typeof raw === 'string' ? JSON.parse(raw) : Array.isArray(raw) ? raw : null;
   } catch {}
-  const SECTIONS = visibleIds
+  const SECTIONS = Array.isArray(visibleIds) && visibleIds.length > 0
     ? ALL_SECTIONS.filter(s => visibleIds.includes(s.id))
     : ALL_SECTIONS;
 
