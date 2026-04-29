@@ -68,13 +68,30 @@ function Overview({ accent }) {
 }
 
 // ── STUDENTS ─────────────────────────────────────────────────
-function Students({ accent }) {
+function Students({ accent, partnerPhone, agencyName, slug }) {
   const [students, setStudents] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', phone: '' });
   const [msg, setMsg] = useState('');
   const load = () => api.get('/partner/students').then(setStudents);
   useEffect(() => { load(); }, []);
+
+  const base = window.location.origin;
+  const signupUrl = `${base}/${slug}/signup`;
+
+  const waStudent = (s, text) => {
+    if (!s.phone) return alert('No phone number for this student.');
+    const phone = s.phone.replace(/\D/g, '');
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, '_blank');
+  };
+
+  const waShareLink = (s) => waStudent(s,
+    `Hi ${s.name}! Take the first step toward your dream career today.\n👉 Sign up / log in to our online coaching academy and get started instantly.\n🚀 Learn, grow, and achieve your goals with ${agencyName || 'us'}\n🔗 Click here to begin: ${signupUrl}`
+  );
+
+  const waCoursePayReminder = (s) =>
+    waStudent(s, `Hi ${s.name}! Your enrollment payment is pending. Please complete your payment to activate your course access. Contact us for help.`);
+
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -109,7 +126,7 @@ function Students({ accent }) {
       <div className="card">
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Courses</th><th>Total Paid</th><th>LMS ID</th><th>Joined</th></tr></thead>
+            <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Courses</th><th>Total Paid</th><th>LMS ID</th><th>Joined</th><th>Actions</th></tr></thead>
             <tbody>
               {students.map(s => (
                 <tr key={s.id}>
@@ -125,6 +142,19 @@ function Students({ accent }) {
                   <td className="font-semibold text-emerald-600">{fmt(s.total_paid)}</td>
                   <td><span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">{s.lms_user_id || '—'}</span></td>
                   <td className="text-slate-400 text-xs">{s.created_at?.split('T')[0]}</td>
+                  <td>
+                    <div className="flex gap-1">
+                      <button onClick={() => waShareLink(s)}
+                        title="Send signup link"
+                        className="text-xs px-2 py-1 rounded-lg font-semibold text-white transition hover:opacity-90"
+                        style={{ background: '#25D366' }}>📱</button>
+                      {Number(s.total_paid) === 0 && (
+                        <button onClick={() => waCoursePayReminder(s)}
+                          title="Send payment reminder"
+                          className="text-xs px-2 py-1 rounded-lg font-semibold text-white bg-amber-500 hover:bg-amber-600 transition">💳</button>
+                      )}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -136,7 +166,7 @@ function Students({ accent }) {
 }
 
 // ── ENROLLMENTS ──────────────────────────────────────────────
-function Enrollments({ accent }) {
+function Enrollments({ accent, partnerPhone }) {
   const [enrollments, setEnrollments] = useState([]);
   const [students, setStudents] = useState([]);
   const [courses, setCourses] = useState([]);
@@ -162,6 +192,13 @@ function Enrollments({ accent }) {
   const markPaid = async (id) => {
     await api.put(`/partner/enrollments/${id}/payment`, {});
     load();
+  };
+
+  const waPayReminder = (e) => {
+    if (!e.student_phone) return alert('No phone number for this student.');
+    const phone = e.student_phone.replace(/\D/g, '');
+    const msg = `Hi ${e.student_name}! Your payment of ₹${e.fee_paid} for "${e.course_title}" is pending. Please complete your payment to activate your access. Contact us if you need help or a discount coupon.`;
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   const catColors = { IELTS: 'badge-blue', PTE: 'badge-green', TOEFL: 'badge-purple', GERMAN: 'badge-amber', FRENCH: 'badge-red', SPOKEN_ENGLISH: 'badge-blue', OTHER: 'badge-gray' };
@@ -226,9 +263,16 @@ function Enrollments({ accent }) {
                   </td>
                   <td className="text-slate-400 text-xs">{e.enrolled_at?.split('T')[0]}</td>
                   <td>
-                    {e.payment_status === 'pending' && (
-                      <button onClick={() => markPaid(e.id)} className="text-xs font-semibold text-emerald-600 hover:underline">Mark Paid</button>
-                    )}
+                    <div className="flex flex-col gap-1">
+                      {e.payment_status === 'pending' && (
+                        <>
+                          <button onClick={() => markPaid(e.id)} className="text-xs font-semibold text-emerald-600 hover:underline">Mark Paid</button>
+                          <button onClick={() => waPayReminder(e)}
+                            className="text-xs px-2 py-0.5 rounded-lg font-semibold text-white transition hover:opacity-90"
+                            style={{ background: '#25D366' }}>📱 Remind</button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -632,7 +676,7 @@ function Branding({ user, accent, logoUrl, onLogoChange }) {
       <div className="card mb-6">
         <h3 className="text-sm font-bold text-slate-700 mb-2">Student Signup Link</h3>
         <p className="text-sm text-slate-500 mb-3">Share this link with prospective students. They'll sign up under your institute automatically.</p>
-        <SignupLinkBox slug={slug} accent={accent} />
+        <SignupLinkBox slug={slug} accent={accent} agencyName={user?.agency_name} />
       </div>
       <div className="card">
         <h3 className="text-sm font-bold text-slate-700 mb-2">White-Label Info</h3>
@@ -656,23 +700,36 @@ function Branding({ user, accent, logoUrl, onLogoChange }) {
 }
 
 // ── SIGNUP LINK BOX ─────────────────────────────────────────
-function SignupLinkBox({ slug, accent }) {
+function SignupLinkBox({ slug, accent, agencyName }) {
   const [copied, setCopied] = useState(false);
   const base = window.location.origin;
   const signupUrl = `${base}/${slug}/signup`;
-  const copy = () => {
-    navigator.clipboard.writeText(signupUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const shareMsg = `Take the first step toward your dream career today.\n👉 Sign up / log in to our online coaching academy and get started instantly.\n🚀 Learn, grow, and achieve your goals with ${agencyName || 'our Academy'}\n🔗 Click here to begin: ${signupUrl}`;
+  const copy = () => { navigator.clipboard.writeText(signupUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+  const shareWA = () => window.open(`https://wa.me/?text=${encodeURIComponent(shareMsg)}`, '_blank');
+  const shareEmail = () => window.open(`mailto:?subject=Join ${agencyName || 'Our Academy'}&body=${encodeURIComponent(shareMsg)}`, '_blank');
   return (
-    <div className="flex items-center gap-2 p-3 rounded-xl border-2 border-dashed" style={{ borderColor: accent + '60', background: accent + '08' }}>
-      <span className="font-mono text-xs text-slate-700 flex-1 truncate">{signupUrl}</span>
-      <button onClick={copy}
-        className="flex-shrink-0 px-4 py-1.5 rounded-lg text-sm font-bold text-white transition hover:opacity-90"
-        style={{ background: accent }}>
-        {copied ? '✓ Copied!' : 'Copy Link'}
-      </button>
+    <div>
+      <div className="flex items-center gap-2 p-3 rounded-xl border-2 border-dashed" style={{ borderColor: accent + '60', background: accent + '08' }}>
+        <span className="font-mono text-xs text-slate-700 flex-1 truncate">{signupUrl}</span>
+        <button onClick={copy}
+          className="flex-shrink-0 px-4 py-1.5 rounded-lg text-sm font-bold text-white transition hover:opacity-90"
+          style={{ background: accent }}>
+          {copied ? '✓ Copied!' : 'Copy Link'}
+        </button>
+      </div>
+      <div className="flex gap-2 mt-2">
+        <button onClick={shareWA}
+          className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-bold text-white transition hover:opacity-90"
+          style={{ background: '#25D366' }}>
+          <span>📱</span> WhatsApp
+        </button>
+        <button onClick={shareEmail}
+          className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-bold text-white transition hover:opacity-90"
+          style={{ background: '#6366f1' }}>
+          <span>✉️</span> Email
+        </button>
+      </div>
     </div>
   );
 }
@@ -916,7 +973,7 @@ function PartnerLiveClasses({ accent }) {
 }
 
 // ── ONLINE PURCHASES ─────────────────────────────────────────
-function OnlinePurchases({ accent }) {
+function OnlinePurchases({ accent, partnerPhone }) {
   const [purchases, setPurchases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
@@ -931,6 +988,13 @@ function OnlinePurchases({ accent }) {
       load();
       setTimeout(() => setMsg(''), 3000);
     } catch (e) { setMsg(e.message); }
+  };
+
+  const waPayReminder = (p) => {
+    if (!p.student_phone) return alert('No phone number for this student.');
+    const phone = p.student_phone.replace(/\D/g, '');
+    const msg = `Hi ${p.student_name}! Your payment of ₹${p.fee_paid} for "${p.course_title}" is pending. Please complete your payment to activate your access. Contact us if you need help.`;
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   const paid = purchases.filter(p => p.payment_status === 'paid');
@@ -984,11 +1048,18 @@ function OnlinePurchases({ accent }) {
                       <td className="font-black">{fmt(p.fee_paid)}</td>
                       <td className="text-xs text-slate-400">{p.enrolled_at?.split('T')[0]}</td>
                       <td>
-                        <button onClick={() => markPaid(p.id)}
-                          className="text-xs px-3 py-1.5 rounded-lg font-bold text-white transition hover:opacity-90"
-                          style={{ background: accent }}>
-                          Mark Paid
-                        </button>
+                        <div className="flex flex-col gap-1">
+                          <button onClick={() => markPaid(p.id)}
+                            className="text-xs px-3 py-1.5 rounded-lg font-bold text-white transition hover:opacity-90"
+                            style={{ background: accent }}>
+                            Mark Paid
+                          </button>
+                          <button onClick={() => waPayReminder(p)}
+                            className="text-xs px-3 py-1.5 rounded-lg font-bold text-white transition hover:opacity-90"
+                            style={{ background: '#25D366' }}>
+                            📱 Remind
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1196,9 +1267,9 @@ export default function PartnerDashboard() {
 
   const panels = {
     overview: <Overview accent={accent} />,
-    students: <Students accent={accent} />,
-    enrollments: <Enrollments accent={accent} />,
-    purchases: <OnlinePurchases accent={accent} />,
+    students: <Students accent={accent} partnerPhone={user?.agency_phone} agencyName={user?.agency_name} slug={slug} />,
+    enrollments: <Enrollments accent={accent} partnerPhone={user?.agency_phone} />,
+    purchases: <OnlinePurchases accent={accent} partnerPhone={user?.agency_phone} />,
     batches: <PartnerBatches accent={accent} />,
     faculty: <PartnerFaculty accent={accent} />,
     liveclasses: <PartnerLiveClasses accent={accent} />,
@@ -1224,7 +1295,18 @@ export default function PartnerDashboard() {
               }
               <div className="text-white font-bold text-sm truncate">{user?.agency_name}</div>
             </div>
-            <div className="text-xs text-white/50 font-mono">testprep.com/{slug}</div>
+            <div className="text-xs text-white/50 font-mono mb-2">testprep.com/{slug}</div>
+            <button
+              onClick={() => {
+                const base = window.location.origin;
+                const url = `${base}/${slug}/signup`;
+                const msg = `Take the first step toward your dream career today.\n👉 Sign up / log in to our online coaching academy and get started instantly.\n🚀 Learn, grow, and achieve your goals with ${user?.agency_name || 'us'}\n🔗 Click here to begin: ${url}`;
+                window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+              }}
+              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold transition hover:opacity-90"
+              style={{ background: 'rgba(37,211,102,0.9)', color: '#fff' }}>
+              📱 Share My Link
+            </button>
           </div>
         ),
         items: SECTIONS.map(s => (
