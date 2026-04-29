@@ -868,13 +868,14 @@ function PayNowModal({ enrollment, onClose, onSuccess, accent }) {
 
   const handleSubmit = async () => {
     if (!method) return setErr('Please select a payment method');
+    if (!proofImg) return setErr('Payment receipt screenshot is required to unlock your course.');
     setSubmitting(true); setErr('');
     try {
       await api.post('/student/payment-proof', {
         enrollment_id: enrollment.id,
         amount: enrollment.fee_paid,
         payment_method: method,
-        proof_image: proofImg || null,
+        proof_image: proofImg,
         notes: notes || null,
       });
       setDone(true);
@@ -967,16 +968,22 @@ function PayNowModal({ enrollment, onClose, onSuccess, accent }) {
               </div>
             )}
 
-            {/* Proof upload */}
+            {/* Proof upload — MANDATORY */}
             <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Upload Payment Screenshot <span className="text-slate-300 font-normal">(optional but recommended)</span></p>
+              <p className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                Upload Payment Receipt <span className="text-red-500">*</span>
+                <span className="text-red-500 font-semibold normal-case ml-1">Required</span>
+              </p>
+              <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mb-2 font-semibold">
+                Your course is unlocked only after admin verifies your receipt. Receipt is mandatory.
+              </p>
               <label className={`flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-xl cursor-pointer transition
-                ${proofImg ? 'border-emerald-400 bg-emerald-50' : 'border-slate-300 bg-slate-50 hover:bg-slate-100'}`}>
+                ${proofImg ? 'border-emerald-400 bg-emerald-50' : 'border-red-300 bg-red-50 hover:bg-red-100'}`}>
                 {proofImg
                   ? <img src={proofImg} alt="proof" className="h-full w-full object-contain rounded-xl p-1" />
                   : <>
                       <span className="text-2xl mb-1">📎</span>
-                      <span className="text-xs text-slate-500">Click to upload screenshot</span>
+                      <span className="text-xs text-red-600 font-semibold">Click to upload payment screenshot</span>
                     </>
                 }
                 <input type="file" accept="image/*" className="hidden" onChange={handleProof} />
@@ -993,10 +1000,10 @@ function PayNowModal({ enrollment, onClose, onSuccess, accent }) {
 
             {err && <p className="text-xs text-red-500 font-semibold">{err}</p>}
 
-            <button onClick={handleSubmit} disabled={submitting || !method}
+            <button onClick={handleSubmit} disabled={submitting || !method || !proofImg}
               className="w-full py-3 rounded-xl font-black text-white text-sm transition disabled:opacity-50"
               style={{ background: accent || '#2563eb' }}>
-              {submitting ? 'Submitting...' : '✅ Submit Payment Proof'}
+              {submitting ? 'Submitting...' : !proofImg ? '📎 Upload Receipt to Submit' : '✅ Submit Payment Proof'}
             </button>
 
             {cfg?.agency_phone && (
