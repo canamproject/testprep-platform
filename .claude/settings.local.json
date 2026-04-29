@@ -100,7 +100,8 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://client-alpha-sepia.vercel.app/student\")",
       "WebFetch(domain:testprep-platform-production.up.railway.app)",
       "WebFetch(domain:client-alpha-sepia.vercel.app)",
-      "Bash(where vercel *)"
+      "Bash(where vercel *)",
+      "Bash(vercel project *)"
     ]
   }
 }
