@@ -97,7 +97,9 @@
       "Bash(timeout 5 node index.js)",
       "Bash(python3 -c \"import sys,json; [print\\(json.loads\\(l\\).get\\('message',''\\)\\) for l in sys.stdin if l.strip\\(\\)]\")",
       "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.read\\(\\)\\); [print\\(x['id'][:8], x['status'], x['meta'].get\\('configErrors',''\\)\\) for x in d[:3]]\")",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://client-alpha-sepia.vercel.app/student\")"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://client-alpha-sepia.vercel.app/student\")",
+      "WebFetch(domain:testprep-platform-production.up.railway.app)",
+      "WebFetch(domain:client-alpha-sepia.vercel.app)"
     ]
   }
 }

@@ -643,7 +643,12 @@ function Dashboard({ enrollments, accent, user, onNavigate }) {
                       <div className="font-bold text-slate-900 truncate">{e.course_title}</div>
                       <div className="text-xs text-slate-400">{e.duration_weeks}w · {e.category?.replace('_',' ')}</div>
                     </div>
-                    <span className={`badge flex-shrink-0 ${isPaid ? 'badge-green' : 'badge-amber'}`}>{isPaid ? 'Active' : 'Pending'}</span>
+                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                      <span className="badge badge-blue text-[10px]">✓ Enrolled</span>
+                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${isPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {isPaid ? '✅ Paid' : '⏳ Pay Pending'}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Progress bar */}
@@ -677,9 +682,7 @@ function Dashboard({ enrollments, accent, user, onNavigate }) {
                   {isPaid ? (
                     <StartLearningBtn enrollmentId={e.id} accent={color} />
                   ) : (
-                    <div className="px-4 py-2.5 rounded-xl text-sm text-center font-semibold bg-amber-50 text-amber-600 border border-amber-200">
-                      ⚠️ Complete payment to unlock learning
-                    </div>
+                    <PayNowFromCard enrollment={e} accent={color} onSuccess={() => window.location.reload()} />
                   )}
                 </div>
               );
@@ -787,6 +790,33 @@ function StartLearningBtn({ enrollmentId, accent }) {
         style={{background:accent}}>
         {loading ? 'Connecting...' : '▶ Start Learning'}
       </button>
+    </>
+  );
+}
+
+// ── PAY NOW FROM CARD (inline trigger) ───────────────────────
+function PayNowFromCard({ enrollment, accent, onSuccess }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <div className="flex gap-2">
+        <div className="flex-1 px-3 py-2 rounded-xl text-xs text-center font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+          ⚠️ Payment pending — course locked
+        </div>
+        <button onClick={() => setOpen(true)}
+          className="px-4 py-2 rounded-xl text-xs font-black text-white transition hover:opacity-90 flex-shrink-0"
+          style={{ background: accent }}>
+          Pay Now
+        </button>
+      </div>
+      {open && (
+        <PayNowModal
+          enrollment={enrollment}
+          accent={accent}
+          onClose={() => setOpen(false)}
+          onSuccess={() => { setOpen(false); onSuccess(); }}
+        />
+      )}
     </>
   );
 }
@@ -994,7 +1024,14 @@ function Payments({ enrollments, accent, onRefresh }) {
                   <td className="font-semibold">{e.course_title}</td>
                   <td><span className="badge badge-blue">{e.category}</span></td>
                   <td className="font-black">{fmt(e.fee_paid)}</td>
-                  <td><span className={`badge ${e.payment_status==='paid'?'badge-green':'badge-amber'}`}>{e.payment_status}</span></td>
+                  <td>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="badge badge-blue text-[10px]">✓ Enrolled</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full w-fit ${e.payment_status==='paid'?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-700'}`}>
+                        {e.payment_status==='paid' ? '✅ Paid' : '⏳ Payment Pending'}
+                      </span>
+                    </div>
+                  </td>
                   <td className="text-slate-400 text-xs">{e.enrolled_at?.split('T')[0]}</td>
                   <td>
                     {e.payment_status === 'pending' && (
