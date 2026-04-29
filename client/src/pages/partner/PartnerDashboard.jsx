@@ -1636,7 +1636,7 @@ function AgencyProfile({ accent, user: partnerUser }) {
 }
 
 // ── MAIN ─────────────────────────────────────────────────────
-const SECTIONS = [
+const ALL_SECTIONS = [
   { id: 'overview', icon: '📊', label: 'Overview' },
   { id: 'students', icon: '👥', label: 'Students' },
   { id: 'enrollments', icon: '📚', label: 'Enrollments' },
@@ -1653,13 +1653,62 @@ const SECTIONS = [
   { id: 'paymentconfig', icon: '💳', label: 'Payment Config' },
 ];
 
+async function extractDominantColor(src) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 40; canvas.height = 40;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, 40, 40);
+        const data = ctx.getImageData(0, 0, 40, 40).data;
+        const map = {};
+        for (let i = 0; i < data.length; i += 4) {
+          const a = data[i+3]; if (a < 100) continue;
+          const r = Math.round(data[i]/32)*32, g = Math.round(data[i+1]/32)*32, b = Math.round(data[i+2]/32)*32;
+          if (r > 220 && g > 220 && b > 220) continue;
+          if (r < 30 && g < 30 && b < 30) continue;
+          const k = `${r},${g},${b}`;
+          map[k] = (map[k]||0) + 1;
+        }
+        const top = Object.entries(map).sort((a,b)=>b[1]-a[1])[0];
+        if (!top) return resolve(null);
+        const [r,g,b] = top[0].split(',').map(Number);
+        resolve(`#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`);
+      } catch { resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
 export default function PartnerDashboard() {
-  const { user, loginWithToken } = useAuth();
+  const { user } = useAuth();
   const [section, setSection] = useState('overview');
   const [logoUrl, setLogoUrl] = useState(user?.logo_url || null);
   const accent = user?.brand_color || '#1e40af';
   const commRate = user?.commission_rate || 60;
   const slug = user?.slug || user?.agency_slug || '';
+  const layoutType = user?.layout_type || 1;
+
+  // Compute visible sections from admin config
+  let visibleIds = null;
+  try {
+    if (user?.visible_sections) visibleIds = JSON.parse(user.visible_sections);
+  } catch {}
+  const SECTIONS = visibleIds
+    ? ALL_SECTIONS.filter(s => visibleIds.includes(s.id))
+    : ALL_SECTIONS;
+
+  // If current section was hidden, fall back to first visible
+  const activeSection = SECTIONS.find(s => s.id === section) ? section : SECTIONS[0]?.id || 'overview';
+
+  // Sidebar theme based on layout type
+  const sidebarTheme = layoutType === 2 ? 'light' : layoutType === 3 ? 'bold' : 'dark';
+  const navAccent = layoutType === 2 ? accent : 'rgba(255,255,255,0.9)';
+  const navTheme = layoutType === 2 ? 'light' : 'dark';
 
   const panels = {
     overview: <Overview accent={accent} />,
@@ -1678,29 +1727,39 @@ export default function PartnerDashboard() {
     paymentconfig: <PartnerPaymentConfig accent={accent} />,
   };
 
+  // Logo size per layout
+  const logoSize = layoutType === 1 ? 'w-12 h-12' : 'w-16 h-16';
+  const logoBg = layoutType === 2 ? 'rounded-2xl border-2 border-slate-200 bg-white shadow-sm' : 'rounded-2xl bg-white/20';
+  const nameColor = layoutType === 2 ? 'text-slate-800 font-black text-base' : 'text-white font-bold text-sm';
+  const subColor = layoutType === 2 ? 'text-slate-400' : 'text-white/50';
+
+  const shareLink = () => {
+    const base = window.location.origin;
+    const url = `${base}/${slug}/signup`;
+    const msg = `Take the first step toward your dream career today.\n👉 Sign up / log in to our online coaching academy and get started instantly.\n🚀 Learn, grow, and achieve your goals with ${user?.agency_name || 'us'}\n🔗 Click here to begin: ${url}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+
   return (
     <DashLayout
       bgColor={accent}
-      logoUrl={logoUrl}
+      accentColor={accent}
+      sidebarTheme={sidebarTheme}
+      logoUrl={null}
       onLiveClasses={() => setSection('liveclasses')}
       sidebar={{
         logo: (
           <div>
-            <div className="flex items-center gap-2 mb-1">
+            {/* Large logo */}
+            <div className={`${logoSize} ${logoBg} flex items-center justify-center overflow-hidden mb-3 flex-shrink-0`}>
               {logoUrl
-                ? <img src={logoUrl} alt="logo" className="w-8 h-8 rounded-lg object-contain bg-white/20 p-0.5" />
-                : <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center font-black text-white text-sm">{user?.logo_initials || 'P'}</div>
+                ? <img src={logoUrl} alt="logo" className="w-full h-full object-contain p-1" />
+                : <span className="font-black text-xl" style={{ color: layoutType === 2 ? accent : 'white' }}>{user?.logo_initials || 'P'}</span>
               }
-              <div className="text-white font-bold text-sm truncate">{user?.agency_name}</div>
             </div>
-            <div className="text-xs text-white/50 font-mono mb-2">testprep.com/{slug}</div>
-            <button
-              onClick={() => {
-                const base = window.location.origin;
-                const url = `${base}/${slug}/signup`;
-                const msg = `Take the first step toward your dream career today.\n👉 Sign up / log in to our online coaching academy and get started instantly.\n🚀 Learn, grow, and achieve your goals with ${user?.agency_name || 'us'}\n🔗 Click here to begin: ${url}`;
-                window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
-              }}
+            <div className={`font-bold truncate mb-0.5 ${nameColor}`}>{user?.agency_name}</div>
+            <div className={`text-xs font-mono mb-2 ${subColor}`}>{window.location.hostname}/{slug}</div>
+            <button onClick={shareLink}
               className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold transition hover:opacity-90"
               style={{ background: 'rgba(37,211,102,0.9)', color: '#fff' }}>
               📱 Share My Link
@@ -1708,7 +1767,7 @@ export default function PartnerDashboard() {
           </div>
         ),
         items: SECTIONS.map(s => (
-          <NavItem key={s.id} active={section === s.id} onClick={() => setSection(s.id)} icon={s.icon} label={s.label} accent="rgba(255,255,255,0.9)" />
+          <NavItem key={s.id} active={activeSection === s.id} onClick={() => setSection(s.id)} icon={s.icon} label={s.label} accent={navAccent} theme={navTheme} />
         ))
       }}
       headerRight={
@@ -1718,7 +1777,7 @@ export default function PartnerDashboard() {
         </div>
       }
     >
-      {panels[section]}
+      {panels[activeSection]}
     </DashLayout>
   );
 }

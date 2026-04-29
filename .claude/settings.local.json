@@ -99,7 +99,8 @@
       "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.read\\(\\)\\); [print\\(x['id'][:8], x['status'], x['meta'].get\\('configErrors',''\\)\\) for x in d[:3]]\")",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://client-alpha-sepia.vercel.app/student\")",
       "WebFetch(domain:testprep-platform-production.up.railway.app)",
-      "WebFetch(domain:client-alpha-sepia.vercel.app)"
+      "WebFetch(domain:client-alpha-sepia.vercel.app)",
+      "Bash(where vercel *)"
     ]
   }
 }
