@@ -108,9 +108,149 @@ function AgencyLogoUpload({ agency, onDone }) {
   );
 }
 
+function AgencyEditModal({ agency, onClose, onSaved }) {
+  const [form, setForm] = useState({ name: agency.name||'', email: agency.email||'', phone: agency.phone||'', city: agency.city||'', brand_color: agency.brand_color||'#1e40af', commission_rate: agency.commission_rate||60, status: agency.status||'active' });
+  const [history, setHistory] = useState([]);
+  const [tab, setTab] = useState('edit');
+  const [msg, setMsg] = useState('');
+  const [resetting, setResetting] = useState(false);
+
+  useEffect(() => {
+    api.get(`/admin/agencies/${agency.id}/history`).then(setHistory).catch(() => {});
+  }, [agency.id]);
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    try {
+      await api.put(`/admin/agencies/${agency.id}`, form);
+      setMsg('✅ Agency updated!');
+      onSaved();
+    } catch (e) { setMsg(e.message); }
+  };
+
+  const resetEdits = async () => {
+    setResetting(true);
+    try {
+      await api.put(`/admin/agencies/${agency.id}/reset-edits`, {});
+      setMsg('✅ Partner edit count reset to 0.');
+      api.get(`/admin/agencies/${agency.id}/history`).then(setHistory);
+      onSaved();
+    } catch (e) { setMsg(e.message); }
+    finally { setResetting(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
+          <div>
+            <h3 className="font-black text-slate-900 text-lg">{agency.name}</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Admin Edit · Partner edits used: <strong className={agency.partner_edit_count >= 2 ? 'text-red-600' : 'text-amber-600'}>{agency.partner_edit_count || 0}/2</strong></p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-2xl leading-none">&times;</button>
+        </div>
+
+        <div className="flex gap-1 px-5 pt-3 border-b border-slate-100 flex-shrink-0">
+          {[['edit','✏️ Edit'],['history','📋 History']].map(([t,l]) => (
+            <button key={t} onClick={() => setTab(t)}
+              className={`px-4 py-2 text-sm font-semibold rounded-t-xl transition ${tab===t ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>
+              {l}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          {msg && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-sm">{msg}</div>}
+
+          {tab === 'edit' && (
+            <form onSubmit={handleSave} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="label">Agency Name</label><input required value={form.name} onChange={e => setForm({...form, name: e.target.value})} /></div>
+                <div><label className="label">Email</label><input type="email" required value={form.email} onChange={e => setForm({...form, email: e.target.value})} /></div>
+                <div><label className="label">Phone</label><input value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} /></div>
+                <div><label className="label">City</label><input value={form.city} onChange={e => setForm({...form, city: e.target.value})} /></div>
+                <div><label className="label">Commission % (Partner)</label><input type="number" min="1" max="99" value={form.commission_rate} onChange={e => setForm({...form, commission_rate: Number(e.target.value)})} /></div>
+                <div>
+                  <label className="label">Status</label>
+                  <select value={form.status} onChange={e => setForm({...form, status: e.target.value})}>
+                    <option value="active">Active</option>
+                    <option value="on_hold">On Hold</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Brand Color</label>
+                  <div className="flex items-center gap-2">
+                    <input type="color" value={form.brand_color} onChange={e => setForm({...form, brand_color: e.target.value})} className="h-10 w-14 cursor-pointer rounded-lg border border-slate-200" />
+                    <span className="text-sm font-mono text-slate-600">{form.brand_color}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-2 border-t border-slate-100">
+                <button type="submit" className="btn-primary">💾 Save Changes</button>
+                {(agency.partner_edit_count || 0) > 0 && (
+                  <button type="button" onClick={resetEdits} disabled={resetting}
+                    className="px-4 py-2 rounded-xl text-sm font-bold text-white bg-amber-500 hover:bg-amber-600 transition disabled:opacity-50">
+                    {resetting ? 'Resetting...' : '🔓 Reset Partner Edit Limit'}
+                  </button>
+                )}
+                <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+              </div>
+            </form>
+          )}
+
+          {tab === 'history' && (
+            <div>
+              {history.length === 0 ? (
+                <p className="text-slate-400 text-sm text-center py-8">No edits recorded yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {history.map(h => {
+                    let changes = {};
+                    try { changes = JSON.parse(h.changes_json); } catch {}
+                    return (
+                      <div key={h.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${h.changed_by_role === 'super_admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                              {h.changed_by_role === 'super_admin' ? '👑 Admin' : '🏢 Partner'}
+                            </span>
+                            <span className="text-sm font-semibold text-slate-800">{h.changed_by_name}</span>
+                          </div>
+                          <span className="text-xs text-slate-400">{new Date(h.changed_at).toLocaleString()}</span>
+                        </div>
+                        <div className="space-y-1">
+                          {Object.entries(changes).map(([field, val]) => (
+                            <div key={field} className="text-xs text-slate-600 flex gap-2">
+                              <span className="font-bold text-slate-500 capitalize w-28 flex-shrink-0">{field.replace(/_/g, ' ')}:</span>
+                              {val.action ? (
+                                <span className="text-purple-600 font-semibold">{val.action}</span>
+                              ) : (
+                                <span>
+                                  <span className="text-red-500 line-through mr-1">{String(val.from).slice(0,40)}</span>
+                                  <span className="text-emerald-600 font-semibold">→ {String(val.to).slice(0,40)}</span>
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Agencies() {
   const [agencies, setAgencies] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [editModal, setEditModal] = useState(null);
   const [form, setForm] = useState({ name: '', slug: '', email: '', phone: '', city: '', brand_color: '#1e40af', commission_rate: 60 });
   const [msg, setMsg] = useState('');
 
@@ -174,15 +314,38 @@ function Agencies() {
               <Badge status={ag.status} />
               <span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">/agent/{ag.slug}</span>
               <AgencyLogoUpload agency={ag} onDone={load} />
+              <button onClick={() => setEditModal(ag)}
+                className="text-xs font-bold px-2 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50 transition">
+                ✏️ Edit
+              </button>
+              <button onClick={() => setEditModal({ ...ag, _historyOnly: true })}
+                className="text-xs font-bold px-2 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 transition">
+                📋 History
+              </button>
             </div>
             <div className="grid grid-cols-3 gap-3 border-t border-slate-50 pt-4">
               <div className="text-center"><div className="text-lg font-black text-slate-900">{ag.student_count}</div><div className="text-xs text-slate-400">Students</div></div>
               <div className="text-center"><div className="text-lg font-black text-slate-900">{fmt(ag.total_revenue).replace('₹', '').split(',')[0]}L</div><div className="text-xs text-slate-400">Revenue</div></div>
               <div className="text-center"><div className="text-lg font-black text-slate-900">{ag.commission_rate}%</div><div className="text-xs text-slate-400">Commission</div></div>
             </div>
+            {(ag.partner_edit_count || 0) > 0 && (
+              <div className="mt-2 pt-2 border-t border-slate-50">
+                <span className={`text-xs font-bold ${ag.partner_edit_count >= 2 ? 'text-red-600' : 'text-amber-600'}`}>
+                  {ag.partner_edit_count >= 2 ? '🔒 Partner edits locked (2/2)' : `⚡ Partner edits: ${ag.partner_edit_count}/2`}
+                </span>
+              </div>
+            )}
           </div>
         ))}
       </div>
+
+      {editModal && (
+        <AgencyEditModal
+          agency={editModal}
+          onClose={() => setEditModal(null)}
+          onSaved={() => { load(); }}
+        />
+      )}
     </div>
   );
 }

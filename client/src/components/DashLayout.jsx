@@ -76,15 +76,6 @@ export default function DashLayout({ sidebar, children, headerRight, bgColor = '
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
         {sidebar?.items}
       </nav>
-      <div className="p-3 border-t border-white/10">
-        <div className="px-3 py-2 mb-2">
-          <p className="text-sm font-semibold text-white truncate">{user?.name}</p>
-          <p className="text-xs text-white/50 truncate">{user?.email}</p>
-        </div>
-        <button onClick={handleLogout} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-white/60 hover:text-white hover:bg-white/10 rounded-lg transition">
-          <LogOut size={15} /> Logout
-        </button>
-      </div>
     </div>
   );
 
@@ -124,12 +115,27 @@ export default function DashLayout({ sidebar, children, headerRight, bgColor = '
             )}
           </div>
 
-          {/* Right side: live badge + extra + logo */}
+          {/* Right side: live badge + extra + user + logo */}
           <div className="flex items-center gap-2 ml-auto flex-shrink-0">
             {onLiveClasses && (
               <LiveClassesBadge onNavigate={onLiveClasses} />
             )}
             {headerRight && <div className="flex items-center gap-2">{headerRight}</div>}
+            {/* User info + logout */}
+            <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+              <div className="hidden sm:block text-right">
+                <p className="text-xs font-semibold text-slate-800 leading-tight">{user?.name}</p>
+                <p className="text-xs text-slate-400 leading-tight truncate max-w-[140px]">{user?.email}</p>
+              </div>
+              <button
+                onClick={handleLogout}
+                title="Logout"
+                className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:text-red-600 hover:bg-red-50 transition border border-slate-200 hover:border-red-200"
+              >
+                <LogOut size={13} />
+                <span className="hidden sm:inline">Logout</span>
+              </button>
+            </div>
             {logoUrl && (
               <img
                 src={logoUrl}

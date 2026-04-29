@@ -1241,6 +1241,279 @@ function PartnerFaculty({ accent }) {
   );
 }
 
+// ── PHONE INPUT WITH COUNTRY CODE ────────────────────────────
+const COUNTRY_CODES = [
+  { code: '+91', country: '🇮🇳 India' },
+  { code: '+1',  country: '🇺🇸 USA/Canada' },
+  { code: '+44', country: '🇬🇧 UK' },
+  { code: '+61', country: '🇦🇺 Australia' },
+  { code: '+64', country: '🇳🇿 New Zealand' },
+  { code: '+971', country: '🇦🇪 UAE' },
+  { code: '+65', country: '🇸🇬 Singapore' },
+  { code: '+60', country: '🇲🇾 Malaysia' },
+  { code: '+49', country: '🇩🇪 Germany' },
+  { code: '+33', country: '🇫🇷 France' },
+];
+
+function PhoneInput({ value, onChange, className }) {
+  const parsePhone = (v) => {
+    const found = COUNTRY_CODES.find(c => v?.startsWith(c.code));
+    return found
+      ? { cc: found.code, num: v.slice(found.code.length).trim() }
+      : { cc: '+91', num: v || '' };
+  };
+  const { cc, num } = parsePhone(value);
+  const update = (newCc, newNum) => onChange(`${newCc} ${newNum}`);
+  return (
+    <div className="flex gap-1">
+      <select value={cc} onChange={e => update(e.target.value, num)}
+        className="border border-slate-200 rounded-xl px-2 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300 w-36 flex-shrink-0">
+        {COUNTRY_CODES.map(c => <option key={c.code} value={c.code}>{c.country} ({c.code})</option>)}
+      </select>
+      <input value={num} onChange={e => update(cc, e.target.value)}
+        placeholder="Mobile number"
+        className={className || 'flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300'} />
+    </div>
+  );
+}
+
+// ── AGENCY PROFILE ────────────────────────────────────────────
+function AgencyProfile({ accent, user: partnerUser }) {
+  const [profile, setProfile] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [form, setForm] = useState(null);
+  const [logoPreview, setLogoPreview] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+
+  const load = () => {
+    api.get('/partner/agency-profile').then(p => {
+      setProfile(p);
+      setForm({ name: p.name||'', email: p.email||'', phone: p.phone||'', city: p.city||'', brand_color: p.brand_color||'#1e40af' });
+      setLogoPreview(p.logo_url||null);
+    });
+    api.get('/partner/agency-profile/history').then(setHistory).catch(() => {});
+  };
+  useEffect(() => { load(); }, []);
+
+  const handleLogoFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { setErr('Image must be under 2MB'); return; }
+    const reader = new FileReader();
+    reader.onload = ev => setLogoPreview(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSave = async () => {
+    setSaving(true); setErr(''); setMsg('');
+    try {
+      const payload = { ...form };
+      if (logoPreview !== profile.logo_url) payload.logo_url = logoPreview;
+      const res = await api.put('/partner/agency-profile', payload);
+      setMsg(`✅ Profile updated! ${res.edits_remaining} edit${res.edits_remaining !== 1 ? 's' : ''} remaining.`);
+      setEditing(false);
+      load();
+    } catch (e) { setErr(e.message); }
+    finally { setSaving(false); }
+  };
+
+  if (!profile || !form) return <div className="text-slate-400 text-sm">Loading...</div>;
+
+  const editsUsed = profile.partner_edit_count || 0;
+  const editsLeft = Math.max(0, 2 - editsUsed);
+  const locked = editsUsed >= 2;
+
+  return (
+    <div>
+      <h2 className="text-xl font-black text-slate-900 mb-6">Agency Profile</h2>
+
+      {/* Caution / Status Banner */}
+      {locked ? (
+        <div className="mb-6 p-5 rounded-2xl border-2 border-red-300 bg-red-50">
+          <div className="flex items-start gap-3">
+            <span className="text-3xl">🔒</span>
+            <div>
+              <p className="text-lg font-black text-red-700">Profile Editing Locked</p>
+              <p className="text-sm font-semibold text-red-600 mt-1">You have used all 2 allowed edits. Only the platform administrator can make further changes to your agency profile.</p>
+              <p className="text-sm text-red-500 mt-2">Contact support to request an edit reset.</p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="mb-6 p-5 rounded-2xl border-2 border-amber-300 bg-amber-50">
+          <div className="flex items-start gap-3">
+            <span className="text-3xl">⚠️</span>
+            <div>
+              <p className="text-lg font-black text-amber-800">
+                {editsLeft === 2 ? 'You have 2 edits available' : `⚡ Only ${editsLeft} edit remaining!`}
+              </p>
+              <p className="text-sm font-bold text-amber-700 mt-1">
+                You can edit your agency profile a maximum of <strong>2 times</strong>. After that, only the admin can make changes.
+              </p>
+              <p className="text-sm text-amber-600 mt-1">
+                Please review all changes carefully before saving. Edits used: <strong>{editsUsed}/2</strong>
+              </p>
+              <div className="flex gap-1 mt-2">
+                {[0,1].map(i => (
+                  <div key={i} className={`h-2.5 w-16 rounded-full ${i < editsUsed ? 'bg-red-500' : 'bg-amber-200'}`} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {msg && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-sm font-semibold">{msg}</div>}
+      {err && <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm font-semibold">{err}</div>}
+
+      {/* Profile card */}
+      <div className="card mb-6">
+        <div className="flex items-start gap-5 mb-6">
+          <div className="relative flex-shrink-0">
+            <div className="w-20 h-20 rounded-2xl overflow-hidden border-2 border-dashed border-slate-200 flex items-center justify-center"
+              style={{ background: (editing ? form.brand_color : profile.brand_color) + '20' }}>
+              {(editing ? logoPreview : profile.logo_url)
+                ? <img src={editing ? logoPreview : profile.logo_url} alt="logo" className="w-full h-full object-contain p-1" />
+                : <span className="text-2xl font-black text-white w-full h-full flex items-center justify-center rounded-2xl"
+                    style={{ background: editing ? form.brand_color : profile.brand_color }}>
+                    {profile.logo_initials || 'P'}
+                  </span>
+              }
+            </div>
+            {editing && !locked && (
+              <label className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-white shadow border border-slate-200 flex items-center justify-center cursor-pointer hover:bg-slate-50">
+                📷
+                <input type="file" accept="image/*" className="hidden" onChange={handleLogoFile} />
+              </label>
+            )}
+          </div>
+          <div className="flex-1">
+            {!editing ? (
+              <div>
+                <h3 className="text-xl font-black text-slate-900">{profile.name}</h3>
+                <p className="text-sm text-slate-500">{profile.city} · {profile.email}</p>
+                <p className="text-sm text-slate-500">{profile.phone}</p>
+                <div className="flex items-center gap-2 mt-2">
+                  <div className="w-5 h-5 rounded" style={{ background: profile.brand_color }} />
+                  <span className="text-xs text-slate-500 font-mono">{profile.brand_color}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Agency Name *</label>
+                  <input value={form.name} onChange={e => setForm({...form, name: e.target.value})}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Email *</label>
+                  <input type="email" value={form.email} onChange={e => setForm({...form, email: e.target.value})}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">City</label>
+                  <input value={form.city} onChange={e => setForm({...form, city: e.target.value})}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Phone (with country code)</label>
+                  <PhoneInput value={form.phone} onChange={v => setForm({...form, phone: v})} />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Brand Color</label>
+                  <div className="flex items-center gap-2">
+                    <input type="color" value={form.brand_color} onChange={e => setForm({...form, brand_color: e.target.value})}
+                      className="w-10 h-10 rounded-lg cursor-pointer border border-slate-200" />
+                    <span className="text-sm font-mono text-slate-600">{form.brand_color}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {!locked && (
+          <div className="flex gap-2 pt-4 border-t border-slate-100">
+            {!editing ? (
+              <button onClick={() => setEditing(true)}
+                className="px-4 py-2 rounded-xl text-sm font-bold text-white transition hover:opacity-90"
+                style={{ background: accent }}>
+                ✏️ Edit Profile ({editsLeft} edit{editsLeft !== 1 ? 's' : ''} left)
+              </button>
+            ) : (
+              <>
+                <button onClick={handleSave} disabled={saving}
+                  className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition disabled:opacity-50">
+                  {saving ? 'Saving...' : '✅ Save Changes'}
+                </button>
+                <button onClick={() => { setEditing(false); setErr(''); setLogoPreview(profile.logo_url); }}
+                  className="px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Edit History */}
+      <div className="card">
+        <button onClick={() => setShowHistory(!showHistory)}
+          className="flex items-center justify-between w-full text-left">
+          <h3 className="text-sm font-bold text-slate-700">📋 Edit History ({history.length} changes)</h3>
+          <span className="text-slate-400 text-xs">{showHistory ? '▲ Hide' : '▼ Show'}</span>
+        </button>
+        {showHistory && (
+          <div className="mt-4">
+            {history.length === 0 ? (
+              <p className="text-slate-400 text-sm text-center py-4">No edits recorded yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {history.map(h => {
+                  let changes = {};
+                  try { changes = JSON.parse(h.changes_json); } catch {}
+                  return (
+                    <div key={h.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${h.changed_by_role === 'super_admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                            {h.changed_by_role === 'super_admin' ? '👑 Admin' : '🏢 Partner'}
+                          </span>
+                          <span className="text-sm font-semibold text-slate-800">{h.changed_by_name}</span>
+                        </div>
+                        <span className="text-xs text-slate-400">{new Date(h.changed_at).toLocaleString()}</span>
+                      </div>
+                      <div className="space-y-1">
+                        {Object.entries(changes).map(([field, val]) => (
+                          <div key={field} className="text-xs text-slate-600 flex gap-2">
+                            <span className="font-bold text-slate-500 capitalize w-24 flex-shrink-0">{field.replace('_', ' ')}:</span>
+                            {val.action ? (
+                              <span className="text-purple-600 font-semibold">{val.action}</span>
+                            ) : (
+                              <span>
+                                <span className="text-red-500 line-through mr-1">{String(val.from).slice(0,40)}</span>
+                                <span className="text-emerald-600 font-semibold">→ {String(val.to).slice(0,40)}</span>
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── MAIN ─────────────────────────────────────────────────────
 const SECTIONS = [
   { id: 'overview', icon: '📊', label: 'Overview' },
@@ -1255,6 +1528,7 @@ const SECTIONS = [
   { id: 'crm', icon: '📋', label: 'CRM / Leads' },
   { id: 'coupons', icon: '🏷️', label: 'Coupons' },
   { id: 'branding', icon: '🎨', label: 'Branding' },
+  { id: 'agencyprofile', icon: '🏢', label: 'Agency Profile' },
 ];
 
 export default function PartnerDashboard() {
@@ -1278,6 +1552,7 @@ export default function PartnerDashboard() {
     crm: <CRM accent={accent} />,
     coupons: <Coupons accent={accent} />,
     branding: <Branding user={user} accent={accent} logoUrl={logoUrl} onLogoChange={setLogoUrl} />,
+    agencyprofile: <AgencyProfile accent={accent} user={user} />,
   };
 
   return (
