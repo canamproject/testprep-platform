@@ -100,29 +100,31 @@ function CourseCatalog({ accent, user, onEnrolled }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-black text-slate-900">Course Catalog</h2>
-        <div className="flex gap-2">
-          <input
-            className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm w-40"
-            placeholder="Coupon code"
-            value={coupon}
-            onChange={e => setCoupon(e.target.value.toUpperCase())}
-          />
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h2 className="text-xl font-black text-slate-900">Course Catalog 🎯</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Pick a course and start your journey</p>
         </div>
+        <input
+          className="border border-slate-200 rounded-xl px-3 py-2 text-sm w-36 focus:outline-none focus:ring-2"
+          style={{ '--tw-ring-color': accent }}
+          placeholder="🎟️ Coupon"
+          value={coupon}
+          onChange={e => setCoupon(e.target.value.toUpperCase())}
+        />
       </div>
 
       {msg && (
-        <div className={`mb-4 p-3 rounded-xl text-sm font-medium ${msg.startsWith('✅') ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-red-50 text-red-600 border border-red-100'}`}>
+        <div className={`mb-4 p-4 rounded-2xl text-sm font-semibold ${msg.startsWith('✅') ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-600 border border-red-200'}`}>
           {msg}
         </div>
       )}
 
       {/* Category filter */}
-      <div className="flex gap-2 mb-6 flex-wrap">
+      <div className="flex gap-2 mb-5 flex-wrap">
         {categories.map(cat => (
           <button key={cat} onClick={() => setFilter(cat)}
-            className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${filter === cat ? 'text-white shadow' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${filter === cat ? 'text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
             style={filter === cat ? { background: catColors[cat] || accent } : {}}>
             {catIcons[cat] || ''} {cat.replace('_', ' ')}
           </button>
@@ -131,77 +133,73 @@ function CourseCatalog({ accent, user, onEnrolled }) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {visible.map(course => {
-          const enr = enrollments[course.id]; // enrollment obj or undefined
+          const enr = enrollments[course.id];
           const isPaid    = enr?.payment_status === 'paid';
           const isPending = enr && !isPaid;
           const color = catColors[course.category] || accent;
-          const borderColor = isPaid ? '#10b981' : isPending ? '#f59e0b' : color;
+          const topColor = isPaid ? '#10b981' : isPending ? '#f59e0b' : color;
           return (
-            <div key={course.id} className="card relative overflow-hidden transition-all">
-              <div className="absolute top-0 left-0 right-0 h-1.5" style={{ background: borderColor }} />
-              {/* Status badge */}
-              {isPaid && (
-                <div className="absolute top-3 right-3 bg-emerald-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">✅ Purchased</div>
-              )}
-              {isPending && (
-                <div className="absolute top-3 right-3 bg-amber-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">⏳ Payment Due</div>
-              )}
-              <div className="flex items-start gap-3 mt-2 mb-3">
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl flex-shrink-0" style={{ background: borderColor + '18' }}>
-                  {catIcons[course.category] || '📚'}
+            <div key={course.id} className="rounded-2xl overflow-hidden bg-white shadow-sm border border-slate-100 hover:shadow-md transition-all">
+              {/* Gradient header */}
+              <div className="h-24 flex items-end px-4 pb-3 relative"
+                style={{ background: `linear-gradient(135deg, ${topColor}22 0%, ${topColor}08 100%)` }}>
+                <div className="absolute top-3 right-3">
+                  {isPaid && <span className="text-[10px] font-black bg-emerald-500 text-white px-2.5 py-1 rounded-full">✅ Owned</span>}
+                  {isPending && <span className="text-[10px] font-black bg-amber-500 text-white px-2.5 py-1 rounded-full">⏳ Pending</span>}
                 </div>
-                <div className="flex-1">
-                  <div className="font-bold text-slate-900">{course.title}</div>
-                  <div className="text-xs text-slate-400">{course.duration_weeks} weeks · {course.category.replace('_', ' ')}</div>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <div className="text-xl font-black" style={{ color: borderColor }}>{fmt(course.price)}</div>
-                  {coupon && <div className="text-xs text-emerald-600 font-medium">Coupon applied</div>}
+                <div className="flex items-end gap-3">
+                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl shadow-sm border-2 border-white bg-white">
+                    {catIcons[course.category] || '📚'}
+                  </div>
+                  <div>
+                    <div className="font-black text-slate-900 leading-tight">{course.title}</div>
+                    <div className="text-xs text-slate-400">{course.duration_weeks}w · {course.category.replace('_',' ')}</div>
+                  </div>
                 </div>
               </div>
-
-              {course.description && (
-                <p className="text-sm text-slate-500 mb-4 line-clamp-2">{course.description}</p>
-              )}
-
-              {isPending ? (
-                /* Has enrollment but payment pending — complete payment */
-                <PayNowFromCard
-                  enrollment={{ ...enr, course_title: course.title, fee_paid: course.price }}
-                  accent={color}
-                  onSuccess={() => setEnrollments(prev => ({ ...prev, [course.id]: { ...prev[course.id], payment_status: 'paid' } }))}
-                  label="Complete Payment to Unlock"
-                />
-              ) : isPaid ? (
-                /* Already paid — show status + allow re-purchase */
-                <div className="space-y-2">
-                  <div className="w-full py-2 rounded-xl text-sm text-center font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    ✅ Purchased — learning unlocked
-                  </div>
-                  <button
-                    onClick={() => handlePurchase(course)}
-                    disabled={buying === course.id}
-                    className="w-full py-2 rounded-xl text-sm font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50 transition disabled:opacity-50">
-                    {buying === course.id ? 'Processing...' : `🔄 Purchase Again — ${fmt(course.price)}`}
-                  </button>
+              <div className="px-4 pb-4 pt-2">
+                {course.description && (
+                  <p className="text-xs text-slate-500 mb-3 line-clamp-2">{course.description}</p>
+                )}
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-2xl font-black" style={{ color: topColor }}>{fmt(course.price)}</div>
+                  {coupon && <div className="text-xs text-emerald-600 font-semibold bg-emerald-50 px-2 py-1 rounded-lg">🎟️ Coupon ready</div>}
                 </div>
-              ) : (
-                /* Not enrolled at all */
-                <button
-                  onClick={() => handlePurchase(course)}
-                  disabled={buying === course.id}
-                  className="w-full py-2.5 text-white font-bold rounded-xl text-sm transition hover:opacity-90 disabled:opacity-50"
-                  style={{ background: color }}>
-                  {buying === course.id ? 'Processing...' : `Enroll Now — ${fmt(course.price)}`}
-                </button>
-              )}
+                {isPending ? (
+                  <PayNowFromCard
+                    enrollment={{ ...enr, course_title: course.title, fee_paid: course.price }}
+                    accent={color}
+                    onSuccess={() => setEnrollments(prev => ({ ...prev, [course.id]: { ...prev[course.id], payment_status: 'paid' } }))}
+                    label="🔓 Complete Payment to Unlock"
+                  />
+                ) : isPaid ? (
+                  <div className="space-y-2">
+                    <div className="w-full py-2.5 rounded-2xl text-sm text-center font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      ✅ Purchased — learning unlocked
+                    </div>
+                    <button onClick={() => handlePurchase(course)} disabled={buying === course.id}
+                      className="w-full py-2 rounded-xl text-xs font-semibold border border-slate-200 text-slate-500 hover:bg-slate-50 transition disabled:opacity-50">
+                      {buying === course.id ? 'Processing...' : `🔄 Purchase Again`}
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => handlePurchase(course)} disabled={buying === course.id}
+                    className="w-full py-3 text-white font-black rounded-2xl text-sm transition hover:opacity-90 disabled:opacity-50 shadow-sm"
+                    style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)` }}>
+                    {buying === course.id ? '⏳ Processing...' : `🚀 Enroll Now — ${fmt(course.price)}`}
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}
       </div>
 
       {visible.length === 0 && (
-        <div className="card text-center py-12 text-slate-400">No courses available in this category.</div>
+        <div className="rounded-3xl border-2 border-dashed border-slate-200 text-center py-14 text-slate-400">
+          <div className="text-4xl mb-2">🔍</div>
+          <p className="font-semibold">No courses in this category yet</p>
+        </div>
       )}
     </div>
   );
@@ -581,7 +579,7 @@ function motivation(pct) {
 function Dashboard({ enrollments, accent, user, onNavigate }) {
   const [myBatches, setMyBatches] = useState([]);
   const paidCount   = enrollments.filter(e => e.payment_status === 'paid').length;
-  const totalItems  = enrollments.length + myBatches.length;
+  const pendingCount = enrollments.filter(e => e.payment_status !== 'paid').length;
   const avgProgress = enrollments.length
     ? Math.round(enrollments.reduce((a, e) => a + Number(e.progress_percent), 0) / enrollments.length)
     : 0;
@@ -590,61 +588,85 @@ function Dashboard({ enrollments, accent, user, onNavigate }) {
     api.get('/student/my-batches').then(setMyBatches).catch(() => {});
   }, []);
 
-  // Collect all categories student is enrolled in
   const myCategories = [...new Set(enrollments.map(e => e.category).filter(Boolean))];
   const suggestions  = [...new Set(myCategories.flatMap(c => SUGGEST[c] || []))].filter(s => !myCategories.includes(s)).slice(0, 3);
 
   return (
     <div className="space-y-6">
-      {/* Hero banner */}
-      <div className="rounded-2xl p-6 text-white" style={{ background: `linear-gradient(135deg,${accent},${accent}cc)` }}>
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center text-xl font-black">{user?.agency_logo || 'TP'}</div>
-          <div>
-            <div className="text-lg font-black">Welcome back, {user?.name?.split(' ')[0]}! 👋</div>
-            <div className="text-white/70 text-sm">{user?.agency_name}</div>
+      {/* ── Hero Banner ─────────────────────────────────── */}
+      <div className="relative rounded-3xl overflow-hidden text-white" style={{ background: `linear-gradient(135deg, ${accent} 0%, ${accent}dd 60%, ${accent}99 100%)` }}>
+        {/* decorative blobs */}
+        <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full opacity-20" style={{ background: 'white' }} />
+        <div className="absolute -bottom-10 -left-6 w-32 h-32 rounded-full opacity-10" style={{ background: 'white' }} />
+        <div className="relative p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-14 h-14 rounded-2xl bg-white/25 flex items-center justify-center text-2xl font-black shadow-lg backdrop-blur-sm flex-shrink-0">
+              {user?.agency_logo || '🎓'}
+            </div>
+            <div>
+              <div className="text-xl font-black leading-tight">Hey {user?.name?.split(' ')[0]} 👋</div>
+              <div className="text-white/75 text-sm font-medium">{user?.agency_name} · Student Portal</div>
+            </div>
           </div>
-        </div>
-        <div className="grid grid-cols-3 gap-3">
-          {[
-            [enrollments.length, 'Enrolled'],
-            [myBatches.length,   'Batches Booked'],
-            [avgProgress + '%',  'Avg Progress'],
-          ].map(([v, l]) => (
-            <div key={l} className="bg-white/15 rounded-xl p-3 text-center">
-              <div className="text-2xl font-black">{v}</div>
-              <div className="text-xs text-white/70 mt-0.5">{l}</div>
-            </div>
-          ))}
-        </div>
-        {/* Overall progress bar */}
-        {enrollments.length > 0 && (
-          <div className="mt-4">
-            <div className="flex justify-between text-xs text-white/70 mb-1">
-              <span>Overall learning progress</span><span>{avgProgress}%</span>
-            </div>
-            <div className="h-2.5 bg-white/20 rounded-full overflow-hidden">
-              <div className="h-full bg-white rounded-full transition-all duration-700" style={{ width: `${avgProgress}%` }} />
-            </div>
-            {avgProgress < 100 && (
-              <p className="text-xs text-white/60 mt-1.5">{motivation(avgProgress).icon} {motivation(avgProgress).text}</p>
-            )}
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            {[
+              { v: enrollments.length, l: 'Courses', icon: '📚' },
+              { v: myBatches.length,   l: 'Batches', icon: '📅' },
+              { v: avgProgress + '%',  l: 'Progress', icon: '📈' },
+            ].map(({ v, l, icon }) => (
+              <div key={l} className="bg-white/20 backdrop-blur-sm rounded-2xl p-3 text-center">
+                <div className="text-lg mb-0.5">{icon}</div>
+                <div className="text-xl font-black leading-none">{v}</div>
+                <div className="text-[11px] text-white/70 mt-0.5 font-medium">{l}</div>
+              </div>
+            ))}
           </div>
-        )}
+          {enrollments.length > 0 && (
+            <div>
+              <div className="flex justify-between text-xs text-white/70 mb-1.5 font-semibold">
+                <span>Overall Progress</span><span>{avgProgress}%</span>
+              </div>
+              <div className="h-3 bg-white/20 rounded-full overflow-hidden">
+                <div className="h-full rounded-full transition-all duration-700 bg-white" style={{ width: `${avgProgress}%` }} />
+              </div>
+              <p className="text-xs text-white/65 mt-2">{motivation(avgProgress).icon} {motivation(avgProgress).text}</p>
+            </div>
+          )}
+          {/* Pending payment alert */}
+          {pendingCount > 0 && (
+            <div className="mt-4 bg-white/15 border border-white/30 rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold">⚠️ {pendingCount} course{pendingCount > 1 ? 's' : ''} awaiting payment</div>
+              <button onClick={() => onNavigate('payments')}
+                className="text-xs font-black bg-white/90 px-3 py-1.5 rounded-xl hover:bg-white transition flex-shrink-0"
+                style={{ color: accent }}>Pay Now →</button>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Enrolled Courses */}
+      {/* ── Enrolled Courses ────────────────────────────── */}
       <div>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-black text-slate-700 uppercase tracking-wide">📚 My Courses ({enrollments.length})</h3>
-          <button onClick={() => onNavigate('catalog')} className="text-xs font-bold hover:underline" style={{ color: accent }}>+ Add Course</button>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-black text-slate-900 text-base">My Courses</h3>
+            <p className="text-xs text-slate-400">{paidCount} active · {pendingCount} pending payment</p>
+          </div>
+          <button onClick={() => onNavigate('catalog')}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black text-white shadow-sm transition hover:opacity-90"
+            style={{ background: accent }}>
+            + Browse More
+          </button>
         </div>
         {enrollments.length === 0 ? (
-          <div className="card text-center py-10">
-            <p className="text-4xl mb-2">📚</p>
-            <p className="text-slate-500 font-semibold">No courses enrolled yet</p>
-            <p className="text-sm text-slate-400 mt-1 mb-4">Browse the catalog and enroll to start learning.</p>
-            <button onClick={() => onNavigate('catalog')} className="px-5 py-2 rounded-xl text-white text-sm font-bold" style={{ background: accent }}>Browse Courses →</button>
+          <div className="rounded-3xl border-2 border-dashed border-slate-200 text-center py-14 px-6">
+            <div className="text-5xl mb-3">🎓</div>
+            <p className="text-slate-700 font-black text-lg">Start your learning journey!</p>
+            <p className="text-sm text-slate-400 mt-1 mb-5">Pick a course and unlock your potential.</p>
+            <button onClick={() => onNavigate('catalog')}
+              className="px-6 py-2.5 rounded-2xl text-white text-sm font-black shadow-lg hover:opacity-90 transition"
+              style={{ background: accent }}>
+              🚀 Explore Courses
+            </button>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -654,57 +676,63 @@ function Dashboard({ enrollments, accent, user, onNavigate }) {
               const mot   = motivation(pct);
               const isPaid = e.payment_status === 'paid';
               return (
-                <div key={e.id} className="card relative overflow-hidden">
-                  <div className="absolute top-0 left-0 right-0 h-1.5" style={{ background: color }} />
-                  <div className="flex items-start gap-3 mt-2 mb-3">
-                    <div className="w-11 h-11 rounded-xl flex items-center justify-center text-2xl flex-shrink-0" style={{ background: color + '18' }}>
-                      {catIcons[e.category] || '📚'}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-bold text-slate-900 truncate">{e.course_title}</div>
-                      <div className="text-xs text-slate-400">{e.duration_weeks}w · {e.category?.replace('_',' ')}</div>
-                    </div>
-                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                      <span className="badge badge-blue text-[10px]">✓ Enrolled</span>
-                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${isPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                        {isPaid ? '✅ Paid' : '⏳ Pay Pending'}
+                <div key={e.id} className="rounded-2xl overflow-hidden shadow-sm border border-slate-100 bg-white transition-all hover:shadow-md">
+                  {/* Coloured header strip */}
+                  <div className="h-2 w-full" style={{ background: `linear-gradient(90deg, ${color}, ${color}88)` }} />
+                  <div className="p-4">
+                    <div className="flex items-start gap-3 mb-3">
+                      <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl flex-shrink-0 shadow-sm" style={{ background: color + '15' }}>
+                        {catIcons[e.category] || '📚'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-black text-slate-900 truncate text-sm">{e.course_title}</div>
+                        <div className="text-xs text-slate-400 mt-0.5">{e.duration_weeks}w · {e.category?.replace('_',' ')}</div>
+                      </div>
+                      <span className={`text-[10px] font-black px-2.5 py-1 rounded-full flex-shrink-0 ${isPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-600'}`}>
+                        {isPaid ? '✅ Active' : '🔒 Locked'}
                       </span>
                     </div>
-                  </div>
 
-                  {/* Progress bar */}
-                  <div className="mb-2">
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-slate-500">Progress</span>
-                      <span className="font-black" style={{ color }}>{pct}%</span>
-                    </div>
-                    <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-700 relative"
-                        style={{ width: `${pct}%`, background: `linear-gradient(90deg,${color}bb,${color})` }}>
-                        {pct > 10 && <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-white text-[9px] font-black">{pct}%</span>}
+                    {isPaid ? (
+                      <>
+                        <div className="mb-3">
+                          <div className="flex justify-between text-xs mb-1.5 font-semibold">
+                            <span className="text-slate-500">Progress</span>
+                            <span style={{ color }}>{pct}%</span>
+                          </div>
+                          <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                            <div className="h-full rounded-full transition-all duration-700"
+                              style={{ width: `${pct}%`, background: `linear-gradient(90deg,${color}99,${color})` }} />
+                          </div>
+                        </div>
+                        <p className="text-xs mb-3 flex items-center gap-1.5" style={{ color: mot.color }}>
+                          <span>{mot.icon}</span><span className="font-medium">{mot.text}</span>
+                        </p>
+                        {COUNTRY_TIP[e.category] && pct < 30 && (
+                          <p className="text-xs text-slate-400 mb-3 bg-slate-50 px-3 py-2 rounded-xl border border-slate-100">
+                            🌍 {COUNTRY_TIP[e.category]}
+                          </p>
+                        )}
+                        <StartLearningBtn enrollmentId={e.id} accent={color} />
+                      </>
+                    ) : (
+                      <div>
+                        <div className="flex items-center gap-2 mb-3 bg-amber-50 rounded-xl px-3 py-2.5 border border-amber-100">
+                          <span className="text-xl">🔒</span>
+                          <div>
+                            <p className="text-xs font-black text-amber-800">Course Locked</p>
+                            <p className="text-[11px] text-amber-600">Complete payment to start learning</p>
+                          </div>
+                        </div>
+                        <PayNowFromCard
+                          enrollment={e}
+                          accent={color}
+                          label="🔓 Complete Payment to Unlock"
+                          onSuccess={() => window.location.reload()}
+                        />
                       </div>
-                    </div>
+                    )}
                   </div>
-
-                  {/* Motivational message */}
-                  {isPaid && (
-                    <p className="text-xs mb-3 flex items-center gap-1.5 font-medium" style={{ color: mot.color }}>
-                      <span>{mot.icon}</span><span>{mot.text}</span>
-                    </p>
-                  )}
-
-                  {/* Country tip */}
-                  {isPaid && COUNTRY_TIP[e.category] && pct < 30 && (
-                    <p className="text-xs text-slate-400 mb-3 bg-slate-50 px-3 py-2 rounded-lg">
-                      🌍 {COUNTRY_TIP[e.category]}
-                    </p>
-                  )}
-
-                  {isPaid ? (
-                    <StartLearningBtn enrollmentId={e.id} accent={color} />
-                  ) : (
-                    <PayNowFromCard enrollment={e} accent={color} onSuccess={() => window.location.reload()} />
-                  )}
                 </div>
               );
             })}
@@ -821,9 +849,9 @@ function PayNowFromCard({ enrollment, accent, onSuccess, label }) {
   return (
     <>
       <button onClick={() => setOpen(true)}
-        className="w-full py-2.5 rounded-xl text-sm font-black text-white transition hover:opacity-90"
-        style={{ background: '#f59e0b' }}>
-        💳 {label || 'Pay Now'}
+        className="w-full py-3 rounded-2xl text-sm font-black text-white transition hover:opacity-90 shadow-sm"
+        style={{ background: 'linear-gradient(135deg, #f59e0b, #ef4444)' }}>
+        {label || '💳 Pay Now'}
       </button>
       {open && (
         <PayNowModal
@@ -1165,16 +1193,20 @@ export default function StudentDashboard() {
       bgColor={accent}
       onLiveClasses={() => setSection('liveclasses')}
       sidebar={{
+        mobileTitle: agencyName,
         logo: (
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              {agencyLogoUrl
-                ? <img src={agencyLogoUrl} alt="logo" className="w-8 h-8 rounded-lg object-contain bg-white/20 p-0.5" />
-                : <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center font-black text-white text-sm">{agencyLogo}</div>
-              }
-              <div className="text-white font-bold text-sm">{agencyName}</div>
-            </div>
-            <div className="text-xs text-white/50">Student Portal</div>
+          <div className="flex flex-col items-center text-center py-2">
+            {agencyLogoUrl
+              ? <img src={agencyLogoUrl} alt="logo"
+                  className="rounded-2xl object-contain bg-white/15 p-1.5 mb-2 shadow-lg"
+                  style={{ width: 72, height: 72 }} />
+              : <div className="rounded-2xl bg-white/25 flex items-center justify-center font-black text-white shadow-lg mb-2"
+                  style={{ width: 72, height: 72, fontSize: 28 }}>
+                  {agencyLogo?.slice(0,1) || '🎓'}
+                </div>
+            }
+            <div className="text-white font-black text-sm leading-tight">{agencyName}</div>
+            <div className="text-xs text-white/50 mt-0.5">Student Portal</div>
           </div>
         ),
         items: (
