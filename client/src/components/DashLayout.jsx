@@ -4,32 +4,49 @@ import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
 import { LogOut, Menu, X } from 'lucide-react';
 
-// Polls for live classes every 60s and shows a pulsing header badge
+// Polls for live classes every 30s and shows a bold green pulsing header badge
 function LiveClassesBadge({ onNavigate }) {
   const [liveCount, setLiveCount] = useState(0);
+  const [liveClasses, setLiveClasses] = useState([]);
 
   useEffect(() => {
     const check = () => {
       api.get('/live-classes/upcoming').then(rows => {
-        setLiveCount(rows.filter(r => r.status === 'live').length);
+        const live = rows.filter(r => r.status === 'live');
+        setLiveCount(live.length);
+        setLiveClasses(live);
       }).catch(() => {});
     };
     check();
-    const t = setInterval(check, 60000);
+    const t = setInterval(check, 30000);
     return () => clearInterval(t);
   }, []);
 
+  if (liveCount > 0) {
+    return (
+      <button
+        onClick={onNavigate}
+        className="relative flex items-center gap-2 px-4 py-1.5 rounded-xl text-sm font-black text-white overflow-hidden hover:scale-105 active:scale-95 transition-transform"
+        style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', boxShadow: '0 0 18px rgba(22,163,74,0.55)' }}
+      >
+        {/* Radial pulse glow */}
+        <span className="absolute inset-0 rounded-xl animate-ping opacity-30" style={{ background: '#22c55e' }} />
+        {/* Dot */}
+        <span className="relative flex-shrink-0 w-3 h-3">
+          <span className="absolute inset-0 rounded-full bg-white opacity-75 animate-ping" />
+          <span className="relative block w-3 h-3 rounded-full bg-white" />
+        </span>
+        <span className="relative tracking-wide uppercase">🟢 {liveCount} LIVE NOW</span>
+      </button>
+    );
+  }
   return (
     <button
       onClick={onNavigate}
-      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-bold transition-all
-        ${liveCount > 0
-          ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-200'
-          : 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'
-        }`}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-semibold text-slate-500 border border-slate-200 hover:bg-slate-50 transition-colors"
     >
-      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${liveCount > 0 ? 'bg-white animate-ping' : 'bg-red-400'}`} />
-      {liveCount > 0 ? `🔴 ${liveCount} Live Now` : '📺 Live Classes'}
+      <span className="w-2 h-2 rounded-full bg-slate-300 flex-shrink-0" />
+      📺 Live Classes
     </button>
   );
 }
@@ -159,31 +176,49 @@ function darkenColor(hex, amount) {
   } catch { return hex; }
 }
 
-// Sidebar live classes nav item with pulse
+// Sidebar live classes nav item with green pulse when live
 function LiveNavItem({ onNavigate, bgColor, sidebarTheme }) {
   const [liveCount, setLiveCount] = useState(0);
   useEffect(() => {
-    api.get('/live-classes/upcoming').then(rows => {
-      setLiveCount(rows.filter(r => r.status === 'live').length);
-    }).catch(() => {});
+    const check = () => {
+      api.get('/live-classes/upcoming').then(rows => {
+        setLiveCount(rows.filter(r => r.status === 'live').length);
+      }).catch(() => {});
+    };
+    check();
+    const t = setInterval(check, 30000);
+    return () => clearInterval(t);
   }, []);
 
   const isLight = sidebarTheme === 'light';
+
+  if (liveCount > 0) {
+    return (
+      <button
+        onClick={onNavigate}
+        className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-black text-white relative overflow-hidden transition-transform hover:scale-[1.02] active:scale-95"
+        style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', boxShadow: '0 0 20px rgba(22,163,74,0.6)' }}
+      >
+        <span className="absolute inset-0 rounded-xl animate-ping opacity-25" style={{ background: '#22c55e' }} />
+        <span className="relative flex-shrink-0 w-3 h-3">
+          <span className="absolute inset-0 rounded-full bg-white opacity-75 animate-ping" />
+          <span className="relative block w-3 h-3 rounded-full bg-white" />
+        </span>
+        <span className="relative uppercase tracking-wide">🟢 {liveCount} LIVE NOW</span>
+      </button>
+    );
+  }
   return (
     <button
       onClick={onNavigate}
-      className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold transition-all relative overflow-hidden"
+      className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold transition-all"
       style={{
-        background: liveCount > 0 ? 'rgba(239,68,68,0.9)' : isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.12)',
-        color: liveCount > 0 ? 'white' : isLight ? '#475569' : 'white',
-        boxShadow: liveCount > 0 ? '0 0 16px rgba(239,68,68,0.5)' : 'none',
+        background: isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.12)',
+        color: isLight ? '#475569' : 'white',
       }}
     >
-      {liveCount > 0 && (
-        <span className="absolute inset-0 rounded-xl animate-ping opacity-30" style={{ background: '#ef4444' }} />
-      )}
-      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${liveCount > 0 ? 'bg-white animate-pulse' : isLight ? 'bg-slate-400' : 'bg-white/50'}`} />
-      <span className="relative">{liveCount > 0 ? `🔴 ${liveCount} Live Now` : '📺 Live Classes'}</span>
+      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isLight ? 'bg-slate-400' : 'bg-white/50'}`} />
+      <span>📺 Live Classes</span>
     </button>
   );
 }
