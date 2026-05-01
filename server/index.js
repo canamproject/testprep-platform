@@ -1302,10 +1302,32 @@ app.get('/api/live-classes/upcoming', authMiddleware(), async (req, res) => {
   res.json(rows);
 });
 
+// ── Public endpoint — no auth needed, for guest join ──────────
+app.get('/api/live-classes/:id/public', async (req, res) => {
+  try {
+    const [[lc]] = await getPool().query(
+      `SELECT lc.id, lc.title, lc.description, lc.scheduled_at, lc.duration_minutes,
+              lc.class_mode, lc.status, lc.platform, lc.zoom_join_url, lc.zoom_password,
+              lc.jitsi_room_name, lc.jitsi_meeting_url, lc.timezone,
+              b.name as batch_name, c.title as course_title, c.price as course_price,
+              a.name as agency_name, a.brand_color, a.logo_url, a.logo_initials
+       FROM live_classes lc
+       JOIN batches b ON lc.batch_id = b.id
+       JOIN courses c ON b.course_id = c.id
+       JOIN agencies a ON lc.agency_id = a.id
+       WHERE lc.id = ?`, [req.params.id]
+    );
+    if (!lc) return res.status(404).json({ error: 'Class not found' });
+    if (!['scheduled','live'].includes(lc.status)) return res.status(403).json({ error: 'Class is not currently active' });
+    res.json(lc);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/live-classes', authMiddleware(['partner_admin', 'super_admin']), async (req, res) => {
   const {
     batch_id, title, description, lesson_id, scheduled_at,
-    duration_minutes, class_mode, auto_record, faculty_id
+    duration_minutes, class_mode, auto_record, faculty_id,
+    timezone
   } = req.body;
 
   try {
@@ -1337,7 +1359,7 @@ app.post('/api/live-classes', authMiddleware(['partner_admin', 'super_admin']), 
     if (activePlatform === 'zoom' && platformCfg?.active_zoom_config_id) {
       const [[zoomCfg]] = await getPool().query('SELECT * FROM zoom_configs WHERE id=?', [platformCfg.active_zoom_config_id]);
       if (!zoomCfg) throw new Error('Active Zoom account not found. Please configure Zoom in Live Platform Settings.');
-      const zm = await createZoomMeeting(zoomCfg, { topic: autoTitle, start_time: scheduled_at, duration_minutes: duration_minutes || 60 });
+      const zm = await createZoomMeeting(zoomCfg, { topic: autoTitle, start_time: scheduled_at, duration_minutes: duration_minutes || 60, timezone: timezone || 'Asia/Kolkata' });
       roomName    = `zoom-${zm.id}`;
       meetingUrl  = zm.join_url;
       zoomMeetingId = String(zm.id);
@@ -1349,17 +1371,18 @@ app.post('/api/live-classes', authMiddleware(['partner_admin', 'super_admin']), 
       meetingUrl = `https://8x8.vc/${roomName}`;
     }
 
+    const tz = timezone || 'Asia/Kolkata';
     const [result] = await getPool().query(
       `INSERT INTO live_classes (batch_id, agency_id, title, description, lesson_id,
         scheduled_at, duration_minutes, jitsi_room_name, jitsi_meeting_url,
         class_mode, auto_record, created_by, faculty_id, status,
-        platform, zoom_meeting_id, zoom_join_url, zoom_password, zoom_start_url)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        platform, zoom_meeting_id, zoom_join_url, zoom_password, zoom_start_url, timezone)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [batch_id, batch.agency_id, autoTitle, description, lesson_id,
        scheduled_at, duration_minutes || 60, roomName, meetingUrl,
        class_mode || 'interactive', auto_record || 0, req.user.id,
        faculty_id || null, 'scheduled',
-       activePlatform, zoomMeetingId, zoomJoinUrl, zoomPassword, zoomStartUrl]
+       activePlatform, zoomMeetingId, zoomJoinUrl, zoomPassword, zoomStartUrl, tz]
     );
 
     res.json({
@@ -1368,6 +1391,7 @@ app.post('/api/live-classes', authMiddleware(['partner_admin', 'super_admin']), 
       title: autoTitle,
       platform: activePlatform,
       meeting_url: meetingUrl,
+      timezone: tz,
       jitsi_room_name: roomName
     });
   } catch (e) {
@@ -2082,9 +2106,10 @@ async function getZoomToken(cfg) {
   return d.access_token;
 }
 
-async function createZoomMeeting(cfg, { topic, start_time, duration_minutes }) {
+async function createZoomMeeting(cfg, { topic, start_time, duration_minutes, timezone }) {
   const token = await getZoomToken(cfg);
   const pwd   = Math.random().toString(36).slice(2, 8).toUpperCase();
+  const tz    = timezone || 'Asia/Kolkata';
   const r = await fetch('https://api.zoom.us/v2/users/me/meetings', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -2093,13 +2118,14 @@ async function createZoomMeeting(cfg, { topic, start_time, duration_minutes }) {
       type: 2,
       start_time: start_time ? new Date(start_time).toISOString() : new Date().toISOString(),
       duration: duration_minutes || 60,
+      timezone: tz,
       password: pwd,
       settings: { host_video: true, participant_video: true, join_before_host: false, waiting_room: true, auto_recording: 'none' }
     })
   });
   const d = await r.json();
   if (!d.id) throw new Error(d.message || 'Failed to create Zoom meeting');
-  return d; // { id, join_url, password, start_url, ... }
+  return d;
 }
 
 // ── Live Platform Config ─────────────────────────────────────
@@ -2486,6 +2512,7 @@ async function runMigrations() {
     await getPool().query(`ALTER TABLE live_classes ADD COLUMN zoom_join_url TEXT`).catch(() => {});
     await getPool().query(`ALTER TABLE live_classes ADD COLUMN zoom_password VARCHAR(50)`).catch(() => {});
     await getPool().query(`ALTER TABLE live_classes ADD COLUMN zoom_start_url TEXT`).catch(() => {});
+    await getPool().query(`ALTER TABLE live_classes ADD COLUMN timezone VARCHAR(50) DEFAULT 'Asia/Kolkata'`).catch(() => {});
     await getPool().query(`
       CREATE TABLE IF NOT EXISTS agency_edit_history (
         id INT AUTO_INCREMENT PRIMARY KEY,
