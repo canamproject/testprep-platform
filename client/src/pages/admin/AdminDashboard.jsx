@@ -1264,6 +1264,7 @@ function BatchesAdmin() {
 
 // ── LIVE CLASSES ──────────────────────────────────────────────
 function LiveClassesAdmin() {
+  const [tab, setTab] = useState('classes'); // 'classes' | 'platform'
   const [classes, setClasses] = useState([]);
   const [batches, setBatches] = useState([]);
   const [facultyList, setFacultyList] = useState([]);
@@ -1272,11 +1273,13 @@ function LiveClassesAdmin() {
   const EMPTY_FORM = { batch_id: '', title: '', description: '', scheduled_at: '', duration_minutes: 60, class_mode: 'interactive', auto_record: false, faculty_id: '' };
   const [form, setForm] = useState(EMPTY_FORM);
   const [msg, setMsg] = useState({ text: '', ok: false });
+  const [activePlatform, setActivePlatform] = useState('jitsi');
 
   useEffect(() => {
     loadClasses();
     api.get('/admin/batches').then(setBatches);
     api.get('/admin/faculty').then(setFacultyList).catch(() => {});
+    api.get('/admin/live-platform-config').then(d => setActivePlatform(d.platform || 'jitsi')).catch(() => {});
   }, []);
 
   const loadClasses = () => api.get('/live-classes').then(setClasses);
@@ -1345,6 +1348,22 @@ function LiveClassesAdmin() {
 
   return (
     <div>
+      {/* Tab strip */}
+      <div className="flex items-center gap-1 mb-6 border-b border-slate-200 pb-1">
+        {[
+          { id: 'classes',  label: '📅 Schedule & Classes' },
+          { id: 'platform', label: `🎥 Platform Settings${activePlatform === 'zoom' ? ' · Zoom 🔵' : ' · Jitsi 🟢'}` },
+        ].map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`px-4 py-2 text-sm font-bold rounded-t-lg transition ${tab === t.id ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'platform' && <LivePlatformSettings />}
+      {tab !== 'platform' && <>
+
       {/* Edit Class Modal */}
       {editClass && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(15,23,42,0.6)' }}>
@@ -1396,7 +1415,15 @@ function LiveClassesAdmin() {
       )}
 
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-black text-slate-900">Live Classes <span className="text-base font-normal text-slate-400 ml-2">{classes.length} total</span></h2>
+        <div>
+          <h2 className="text-xl font-black text-slate-900">Live Classes <span className="text-base font-normal text-slate-400 ml-2">{classes.length} total</span></h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Active platform: <span className={`font-bold ${activePlatform === 'zoom' ? 'text-blue-600' : 'text-emerald-600'}`}>
+              {activePlatform === 'zoom' ? '🔵 Zoom' : '🟢 Jitsi Meet'}
+            </span>
+            <button onClick={() => setTab('platform')} className="ml-2 text-blue-500 hover:underline text-xs">Change →</button>
+          </p>
+        </div>
         <button className="btn-primary" onClick={() => setShowForm(!showForm)}>+ Schedule Class</button>
       </div>
 
@@ -1467,7 +1494,7 @@ function LiveClassesAdmin() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Class</th><th>Batch</th><th>Faculty</th><th>Scheduled</th><th>Mode</th><th>Status</th><th>Actions</th></tr>
+              <tr><th>Class</th><th>Batch</th><th>Faculty</th><th>Scheduled</th><th>Platform</th><th>Status</th><th>Actions</th></tr>
             </thead>
             <tbody>
               {classes.map(c => (
@@ -1486,10 +1513,18 @@ function LiveClassesAdmin() {
                     <div className="text-sm">{fmtDate(c.scheduled_at)}</div>
                     <div className="text-xs text-slate-400">{fmtTime(c.scheduled_at)}</div>
                   </td>
-                  <td><span className="badge badge-blue">{c.class_mode}</span></td>
+                  <td>
+                    {c.platform === 'zoom'
+                      ? <div>
+                          <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">🔵 Zoom</span>
+                          {c.zoom_password && <div className="text-[10px] text-slate-400 mt-0.5">PWD: {c.zoom_password}</div>}
+                        </div>
+                      : <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">🟢 Jitsi</span>
+                    }
+                  </td>
                   <td>
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusColor(c.status)}`}>
-                      {c.status === 'pending_approval' ? '⏳ Pending Approval' : c.status === 'live' ? '🔴 Live' : c.status}
+                      {c.status === 'pending_approval' ? '⏳ Pending' : c.status === 'live' ? '🔴 Live' : c.status}
                     </span>
                   </td>
                   <td>
@@ -1505,13 +1540,18 @@ function LiveClassesAdmin() {
                         </button>
                       )}
                       {(c.status === 'scheduled' || c.status === 'live') && (
-                        <button className="btn-primary text-xs" onClick={() => window.open(`/live-class/${c.id}`, '_blank')}>
-                          {c.status === 'live' ? '🔴 Join Live' : 'Start Class'}
-                        </button>
+                        c.platform === 'zoom' && c.zoom_start_url
+                          ? <a href={c.zoom_start_url} target="_blank" rel="noreferrer"
+                              className="btn-primary text-xs no-underline inline-block">
+                              {c.status === 'live' ? '🔴 Join Zoom' : '🔵 Start Zoom'}
+                            </a>
+                          : <button className="btn-primary text-xs" onClick={() => window.open(`/live-class/${c.id}`, '_blank')}>
+                              {c.status === 'live' ? '🔴 Join Live' : 'Start Class'}
+                            </button>
                       )}
                       {c.status === 'live' && (
                         <button className="text-xs px-3 py-1 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 transition" onClick={() => handleEndClass(c)}>
-                          ⏹ End Class
+                          ⏹ End
                         </button>
                       )}
                     </div>
@@ -1522,6 +1562,284 @@ function LiveClassesAdmin() {
           </table>
         </div>
       </div>
+      </>}
+    </div>
+  );
+}
+
+// ── LIVE PLATFORM SETTINGS ────────────────────────────────────
+function LivePlatformSettings() {
+  const [cfg, setCfg] = useState(null);
+  const [platform, setPlatform] = useState('jitsi');
+  const [activeZoomId, setActiveZoomId] = useState(null);
+  const [zoomList, setZoomList] = useState([]);
+  const [msg, setMsg] = useState({ text: '', ok: true });
+  const [showAddZoom, setShowAddZoom] = useState(false);
+  const [editZoom, setEditZoom] = useState(null);
+  const [testing, setTesting] = useState(null);
+  const [testResult, setTestResult] = useState({});
+  const [saving, setSaving] = useState(false);
+  const ZOOM_EMPTY = { label: '', account_email: 'canamproject23@gmail.com', account_id: '', client_id: '', client_secret: '', is_paid: false };
+  const [zoomForm, setZoomForm] = useState(ZOOM_EMPTY);
+
+  const load = () => api.get('/admin/live-platform-config').then(d => {
+    setCfg(d);
+    setPlatform(d.platform || 'jitsi');
+    setActiveZoomId(d.active_zoom_config_id || null);
+    setZoomList(d.zoom_configs || []);
+  }).catch(() => {});
+
+  useEffect(() => { load(); }, []);
+
+  const savePlatform = async (p, zid) => {
+    setSaving(true);
+    try {
+      await api.put('/admin/live-platform-config', { platform: p, active_zoom_config_id: zid });
+      setMsg({ text: `✅ Saved — live classes will now use ${p === 'zoom' ? 'Zoom' : 'Jitsi'}`, ok: true });
+      load();
+    } catch (e) { setMsg({ text: '❌ ' + e.message, ok: false }); }
+    finally { setSaving(false); }
+  };
+
+  const handleAddZoom = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post('/admin/zoom-configs', zoomForm);
+      setMsg({ text: '✅ Zoom account added', ok: true });
+      setShowAddZoom(false);
+      setZoomForm(ZOOM_EMPTY);
+      load();
+    } catch (e) { setMsg({ text: '❌ ' + e.message, ok: false }); }
+  };
+
+  const handleEditZoom = async (e) => {
+    e.preventDefault();
+    try {
+      await api.put(`/admin/zoom-configs/${editZoom.id}`, editZoom);
+      setMsg({ text: '✅ Zoom account updated', ok: true });
+      setEditZoom(null);
+      load();
+    } catch (e) { setMsg({ text: '❌ ' + e.message, ok: false }); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm('Remove this Zoom account?')) return;
+    await api.delete(`/admin/zoom-configs/${id}`);
+    setMsg({ text: '✅ Removed', ok: true });
+    load();
+  };
+
+  const handleActivate = async (id) => {
+    try {
+      await api.put(`/admin/zoom-configs/${id}/activate`, {});
+      setMsg({ text: '✅ Zoom account activated — platform switched to Zoom', ok: true });
+      load();
+    } catch (e) { setMsg({ text: '❌ ' + e.message, ok: false }); }
+  };
+
+  const handleTest = async (id) => {
+    setTesting(id);
+    setTestResult(prev => ({ ...prev, [id]: null }));
+    try {
+      const r = await api.post(`/admin/zoom-configs/${id}/test`, {});
+      setTestResult(prev => ({ ...prev, [id]: { ok: true, msg: `✅ Connected! ${r.zoom_user} · ${r.plan}` } }));
+    } catch (e) {
+      setTestResult(prev => ({ ...prev, [id]: { ok: false, msg: '❌ ' + e.message } }));
+    } finally { setTesting(null); }
+  };
+
+  const ZoomForm = ({ data, setData, onSubmit, onCancel, title }) => (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="font-black text-slate-900">{title}</h3>
+          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600 text-xl">✕</button>
+        </div>
+
+        {/* Setup guide */}
+        <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 mb-5 text-xs text-blue-800">
+          <p className="font-black mb-1">📋 How to get Zoom API credentials (free):</p>
+          <ol className="list-decimal pl-4 space-y-0.5">
+            <li>Go to <a href="https://marketplace.zoom.us" target="_blank" rel="noreferrer" className="underline font-semibold">marketplace.zoom.us</a> → Sign in with <strong>canamproject23@gmail.com</strong></li>
+            <li>Click <strong>Develop → Build App</strong> → Choose <strong>"Server-to-Server OAuth"</strong></li>
+            <li>Name your app (e.g. "TestPrep Live") → <strong>Create</strong></li>
+            <li>Copy <strong>Account ID</strong>, <strong>Client ID</strong>, <strong>Client Secret</strong> from the credentials tab</li>
+            <li>Under <em>Scopes</em>, add: <code>meeting:write:admin</code> and <code>user:read:admin</code></li>
+            <li>Click <strong>Activate</strong> your app</li>
+          </ol>
+          <p className="mt-2 text-amber-700 font-semibold">⚠️ Free Zoom: 40-min limit for 3+ participants. Upgrade to Pro for unlimited.</p>
+        </div>
+
+        <form onSubmit={onSubmit} className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Account Label *</label>
+              <input className="input" placeholder="e.g. Main Account (Free)" required value={data.label} onChange={e => setData({ ...data, label: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Zoom Email</label>
+              <input className="input" type="email" placeholder="canamproject23@gmail.com" value={data.account_email} onChange={e => setData({ ...data, account_email: e.target.value })} />
+            </div>
+          </div>
+          <div>
+            <label className="label">Account ID *</label>
+            <input className="input font-mono text-xs" placeholder="xxxxxx..." required value={data.account_id} onChange={e => setData({ ...data, account_id: e.target.value })} />
+          </div>
+          <div>
+            <label className="label">Client ID *</label>
+            <input className="input font-mono text-xs" placeholder="xxxxxx..." required value={data.client_id} onChange={e => setData({ ...data, client_id: e.target.value })} />
+          </div>
+          <div>
+            <label className="label">Client Secret *</label>
+            <input className="input font-mono text-xs" type="password" placeholder={data.id ? '(leave blank to keep existing)' : 'xxxxxx...'} value={data.client_secret} onChange={e => setData({ ...data, client_secret: e.target.value })} />
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={data.is_paid} onChange={e => setData({ ...data, is_paid: e.target.checked })} className="w-4 h-4 accent-blue-600" />
+            <span className="text-sm font-semibold text-slate-700">This is a <span className="text-blue-600">Pro / Paid</span> Zoom account (no 40-min limit)</span>
+          </label>
+          <div className="flex gap-3 pt-2">
+            <button type="submit" className="btn-primary flex-1">Save Zoom Account</button>
+            <button type="button" className="btn-ghost" onClick={onCancel}>Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-black text-slate-900 text-lg">🎥 Live Class Platform</h3>
+          <p className="text-xs text-slate-400 mt-0.5">Choose how live classes are hosted across all partners</p>
+        </div>
+      </div>
+
+      {msg.text && (
+        <div className={`text-sm px-4 py-2.5 rounded-xl font-semibold ${msg.ok ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-red-50 text-red-600 border border-red-100'}`}>
+          {msg.text}
+        </div>
+      )}
+
+      {/* Platform Selector */}
+      <div className="grid grid-cols-2 gap-4">
+        {[
+          { id: 'jitsi', label: 'Jitsi Meet', icon: '🟢', desc: 'Free, open-source, no account needed. Meetings via 8×8.vc. No time limits.', badge: 'Free · No setup', badgeColor: 'bg-emerald-100 text-emerald-700' },
+          { id: 'zoom',  label: 'Zoom',       icon: '🔵', desc: 'Professional video meetings via Zoom API. Free plan: 40-min limit for groups. Pro: unlimited.', badge: zoomList.some(z => z.is_paid) ? 'Pro Account Ready' : 'Free / Pro', badgeColor: zoomList.some(z => z.is_paid) ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700' },
+        ].map(p => (
+          <button key={p.id} onClick={() => { setPlatform(p.id); if (p.id === 'jitsi') savePlatform('jitsi', null); }}
+            className={`p-5 rounded-2xl border-2 text-left transition-all ${platform === p.id ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300 bg-white'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-2xl">{p.icon}</span>
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${p.badgeColor}`}>{p.badge}</span>
+            </div>
+            <div className="font-black text-slate-900 mb-1">{p.label}</div>
+            <div className="text-xs text-slate-500">{p.desc}</div>
+            {platform === p.id && (
+              <div className="mt-2 text-xs font-black text-blue-600">✓ Currently Active</div>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Zoom Accounts Section */}
+      {platform === 'zoom' && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h4 className="font-black text-slate-900">Zoom Accounts</h4>
+              <p className="text-xs text-slate-400">Add multiple Zoom accounts (switch anytime)</p>
+            </div>
+            <button onClick={() => setShowAddZoom(true)} className="btn-primary text-sm">+ Add Zoom Account</button>
+          </div>
+
+          {zoomList.length === 0 ? (
+            <div className="text-center py-8">
+              <div className="text-4xl mb-2">🔵</div>
+              <p className="font-semibold text-slate-600">No Zoom accounts configured</p>
+              <p className="text-sm text-slate-400 mt-1 mb-4">Add your Zoom Server-to-Server OAuth credentials to get started.</p>
+              <button onClick={() => setShowAddZoom(true)} className="btn-primary">+ Add Zoom Account</button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {zoomList.map(z => (
+                <div key={z.id} className={`rounded-xl border-2 p-4 transition ${z.is_active ? 'border-blue-400 bg-blue-50' : 'border-slate-200 bg-white'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-slate-900">{z.label}</span>
+                        {z.is_active && <span className="text-[10px] font-black bg-blue-500 text-white px-2 py-0.5 rounded-full">✓ ACTIVE</span>}
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${z.is_paid ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-600'}`}>
+                          {z.is_paid ? '💎 Pro/Paid' : '🆓 Free Plan'}
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-400 mt-0.5">{z.account_email}</div>
+                      {testResult[z.id] && (
+                        <div className={`text-xs mt-1.5 font-semibold ${testResult[z.id].ok ? 'text-emerald-600' : 'text-red-500'}`}>
+                          {testResult[z.id].msg}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex gap-1.5 flex-wrap justify-end">
+                      <button onClick={() => handleTest(z.id)} disabled={testing === z.id}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition disabled:opacity-50 font-semibold">
+                        {testing === z.id ? '⏳ Testing...' : '🔌 Test'}
+                      </button>
+                      {!z.is_active && (
+                        <button onClick={() => handleActivate(z.id)}
+                          className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 transition">
+                          Activate
+                        </button>
+                      )}
+                      <button onClick={() => setEditZoom({ ...z, client_secret: '' })}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition">
+                        ✏️
+                      </button>
+                      <button onClick={() => handleDelete(z.id)}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition">
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                  {z.is_active && (
+                    <div className="mt-3 pt-3 border-t border-blue-200 flex items-center justify-between">
+                      <p className="text-xs text-blue-700 font-semibold">This account creates all new Zoom meetings</p>
+                      <button onClick={() => savePlatform('zoom', z.id)} disabled={saving}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white font-black hover:bg-blue-700 disabled:opacity-50">
+                        {saving ? 'Saving...' : '💾 Save & Go Live'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!zoomList.some(z => z.is_paid) && (
+            <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+              <p className="font-black mb-1">⚠️ Free Zoom Plan Limitations</p>
+              <ul className="list-disc pl-4 space-y-0.5">
+                <li>Group meetings limited to <strong>40 minutes</strong></li>
+                <li>Max <strong>100 participants</strong> per meeting</li>
+                <li>Upgrade to <strong>Zoom Pro ($14.99/mo)</strong> for unlimited time</li>
+              </ul>
+              <p className="mt-2">To upgrade: log into <a href="https://zoom.us/billing" target="_blank" rel="noreferrer" className="underline font-bold">zoom.us/billing</a> with your Zoom account</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Add/Edit Zoom modals */}
+      {showAddZoom && (
+        <ZoomForm data={zoomForm} setData={setZoomForm} onSubmit={handleAddZoom}
+          onCancel={() => { setShowAddZoom(false); setZoomForm(ZOOM_EMPTY); }}
+          title="Add Zoom Account" />
+      )}
+      {editZoom && (
+        <ZoomForm data={editZoom} setData={setEditZoom} onSubmit={handleEditZoom}
+          onCancel={() => setEditZoom(null)}
+          title="Edit Zoom Account" />
+      )}
     </div>
   );
 }
