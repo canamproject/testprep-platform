@@ -63,9 +63,9 @@ export default function LiveClassRoom() {
           window.open(data.zoom_join_url, '_blank');
           setZoomLaunched(true);
         }
-        // Demo countdown
+        // Demo countdown — 5 min for Zoom, kicks user via API when expired
         if (data.is_demo && data.demo_minutes) {
-          startDemoTimer(data.demo_minutes);
+          startDemoTimer(data.demo_minutes, false, true);
         }
       } else {
         // ── Jitsi platform ─────────────────────────────────────────
@@ -89,7 +89,7 @@ export default function LiveClassRoom() {
     }
   };
 
-  const startDemoTimer = (minutes, disposeJitsiOnExpiry = false) => {
+  const startDemoTimer = (minutes, disposeJitsiOnExpiry = false, isZoom = false) => {
     const totalSeconds = minutes * 60;
     setDemoSecondsLeft(totalSeconds);
     demoTimerRef.current = setInterval(() => {
@@ -100,6 +100,10 @@ export default function LiveClassRoom() {
           if (disposeJitsiOnExpiry && window.jitsiApi) {
             window.jitsiApi.dispose();
             window.jitsiApi = null;
+          }
+          // For Zoom: call server to kick demo user & send in-meeting chat notification
+          if (isZoom) {
+            api.post(`/live-classes/${id}/kick-demo`, {}).catch(() => {});
           }
           return 0;
         }
@@ -394,35 +398,43 @@ export default function LiveClassRoom() {
         {/* ── One-time demo notice modal ─────────────────────── */}
         {showDemoNotice && (
           <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
-            style={{ background: 'rgba(15,23,42,0.85)', backdropFilter: 'blur(6px)' }}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-7 text-center">
-              <div className="text-4xl mb-3">🎁</div>
-              <h3 className="text-lg font-black text-slate-900 mb-2">FREE 5-Minute Demo</h3>
-              <p className="text-slate-600 text-sm mb-1">
-                You are joining <strong>{classInfo.title}</strong> as a <strong>free demo</strong>.
-              </p>
-              <p className="text-slate-500 text-sm mb-4">
-                Zoom has opened in a new tab. You can attend for <strong>5 minutes free</strong>.
-                After that, you'll need to enroll to continue.
-              </p>
-              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-5 text-left">
-                <p className="text-xs font-black text-amber-700 uppercase tracking-wide mb-1">Course</p>
-                <p className="font-bold text-slate-800">{classInfo.course_title}</p>
-                <p className="text-lg font-black text-amber-600 mt-0.5">
-                  ₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}
-                </p>
+            style={{ background: 'rgba(15,23,42,0.90)', backdropFilter: 'blur(8px)' }}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+              {/* Red urgency header */}
+              <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-4 text-center">
+                <div className="text-4xl mb-1">🎁</div>
+                <h3 className="text-xl font-black text-white">FREE 5-Minute Demo</h3>
+                <p className="text-amber-100 text-xs mt-1">You are NOT enrolled in this course</p>
               </div>
-              <button
-                className="w-full py-3 rounded-xl font-black text-white mb-2 transition hover:opacity-90"
-                style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
-                onClick={() => { setShowDemoNotice(false); handleLeave(); navigate('/student', { state: { tab: 'catalog' } }); }}>
-                🎓 Enroll Now — ₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}
-              </button>
-              <button
-                onClick={() => setShowDemoNotice(false)}
-                className="w-full py-2 text-slate-500 text-sm hover:text-slate-700 transition">
-                Continue with 5-min demo →
-              </button>
+              <div className="p-6">
+                <p className="text-slate-700 text-sm mb-3">
+                  Zoom has opened. You can attend <strong>5 minutes for free</strong>.
+                  After that you will be <strong className="text-red-600">automatically removed</strong> from the Zoom meeting and need to enroll to re-join.
+                </p>
+                {/* Timer preview */}
+                <div className="flex items-center justify-center gap-3 bg-slate-900 rounded-xl py-3 mb-4">
+                  <span className="text-white text-sm font-bold">⏱ Free demo time:</span>
+                  <span className="text-amber-400 text-2xl font-black">5:00</span>
+                </div>
+                <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4 text-left">
+                  <p className="text-xs text-amber-700 font-bold uppercase tracking-wide mb-1">Enroll to get full access</p>
+                  <p className="font-bold text-slate-800">{classInfo.course_title}</p>
+                  <p className="text-2xl font-black text-amber-600 mt-0.5">
+                    ₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}
+                  </p>
+                </div>
+                <button
+                  className="w-full py-3 rounded-xl font-black text-white mb-2 transition hover:opacity-90 shadow-lg"
+                  style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
+                  onClick={() => { setShowDemoNotice(false); handleLeave(); navigate('/student', { state: { tab: 'catalog' } }); }}>
+                  🎓 Enroll Now — ₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}
+                </button>
+                <button
+                  onClick={() => setShowDemoNotice(false)}
+                  className="w-full py-2 text-slate-400 text-sm hover:text-slate-600 transition">
+                  I understand — start 5-min demo →
+                </button>
+              </div>
             </div>
           </div>
         )}

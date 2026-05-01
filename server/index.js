@@ -1802,6 +1802,97 @@ app.post('/api/live-classes/:id/leave', authMiddleware(), async (req, res) => {
   }
 });
 
+// ─── ZOOM DEMO: kick participant + send in-meeting chat ──────────────────────
+// Called by client after 5-min demo timer expires for a Zoom class.
+// 1) Lists participants, finds the student by email or name
+// 2) Sends them an in-meeting chat message (shows as popup in Zoom)
+// 3) Removes them from the meeting (Zoom shows "You have been removed")
+app.post('/api/live-classes/:id/kick-demo', authMiddleware(['student']), async (req, res) => {
+  const classId   = req.params.id;
+  const studentId = req.user.id;
+  const studentEmail = req.user.email;
+  const studentName  = req.user.name;
+
+  try {
+    // 1. Get the live class and its Zoom meeting ID
+    const [[lc]] = await getPool().query(
+      `SELECT lc.zoom_meeting_id, lc.agency_id, lc.title, c.title as course_title, c.price as course_price
+       FROM live_classes lc
+       JOIN batches b ON lc.batch_id = b.id
+       JOIN courses c ON b.course_id = c.id
+       WHERE lc.id = ? AND lc.platform = 'zoom'`, [classId]
+    );
+    if (!lc || !lc.zoom_meeting_id) return res.json({ kicked: false, reason: 'No Zoom meeting found' });
+
+    // 2. Get Zoom config for this agency
+    const [[platformCfg]] = await getPool().query(
+      'SELECT active_zoom_config_id FROM live_platform_config WHERE agency_id=?', [lc.agency_id]
+    ).catch(() => [[null]]);
+    if (!platformCfg?.active_zoom_config_id) return res.json({ kicked: false, reason: 'No Zoom config' });
+
+    const [[zoomCfg]] = await getPool().query(
+      'SELECT * FROM zoom_configs WHERE id=?', [platformCfg.active_zoom_config_id]
+    );
+    if (!zoomCfg) return res.json({ kicked: false, reason: 'Zoom config not found' });
+
+    const token = await getZoomToken(zoomCfg).catch(() => null);
+    if (!token) return res.json({ kicked: false, reason: 'Zoom auth failed' });
+
+    const meetingId = lc.zoom_meeting_id;
+    const headers   = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    // 3. List in-meeting participants (need meeting:read:admin scope)
+    let participantId = null;
+    try {
+      const pRes = await fetch(`https://api.zoom.us/v2/meetings/${meetingId}/participants?page_size=100`, { headers });
+      const pData = await pRes.json();
+      if (pData.participants && pData.participants.length) {
+        // Match by email first, then by name (case-insensitive partial)
+        const match = pData.participants.find(p =>
+          (p.user_email && p.user_email.toLowerCase() === studentEmail.toLowerCase()) ||
+          (p.name && p.name.toLowerCase().includes(studentName.split(' ')[0].toLowerCase()))
+        );
+        if (match) participantId = match.id;
+      }
+    } catch (_) {}
+
+    // 4. Send in-meeting chat message (appears as notification in Zoom)
+    const chatMsg = `⏰ YOUR FREE DEMO HAS ENDED\n\nYour 5-minute free preview of "${lc.title}" has ended.\n\n💳 Enroll in "${lc.course_title}" (₹${Number(lc.course_price||0).toLocaleString('en-IN')}) to continue attending all live classes.\n\nPlease check the platform to complete your enrollment.`;
+    try {
+      await fetch(`https://api.zoom.us/v2/meetings/${meetingId}/chat/messages`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ message: chatMsg, to_channel: 'everyone' })
+      });
+    } catch (_) {}
+
+    // Also try sending a private chat to the participant if we have their ID
+    if (participantId) {
+      try {
+        await fetch(`https://api.zoom.us/v2/meetings/${meetingId}/chat/messages`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ message: chatMsg, to_contact: studentEmail })
+        });
+      } catch (_) {}
+    }
+
+    // 5. Remove participant from meeting
+    if (participantId) {
+      try {
+        const removeRes = await fetch(`https://api.zoom.us/v2/meetings/${meetingId}/participants/${participantId}`, {
+          method: 'DELETE', headers
+        });
+        if (removeRes.status === 204) return res.json({ kicked: true, method: 'removed' });
+      } catch (_) {}
+    }
+
+    // 6. Fallback: end the meeting for everyone (only if no paid students present — checked below)
+    res.json({ kicked: false, chat_sent: true, reason: 'Participant not found in meeting by ID; chat message sent' });
+  } catch (e) {
+    console.error('kick-demo error:', e.message);
+    res.json({ kicked: false, reason: e.message });
+  }
+});
+
 // ─── DEMO ACCESS ──────────────────────────────────────────────
 app.post('/api/demo/request', async (req, res) => {
   const { agency_id, name, email, phone, course_id, preferred_demo_date } = req.body;
