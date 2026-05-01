@@ -15,6 +15,7 @@ export default function LiveClassRoom() {
   const [showPaywall, setShowPaywall] = useState(false);
   const [showReminderBanner, setShowReminderBanner] = useState(false);
   const [reminderCount, setReminderCount] = useState(0);
+  const [zoomLaunched, setZoomLaunched] = useState(false);
   const jitsiRef = useRef(null);
   const timerRef = useRef(null);
   const demoTimerRef = useRef(null);
@@ -73,7 +74,15 @@ export default function LiveClassRoom() {
         }, 1000);
       }
 
-      loadJitsi(data);
+      if (data.platform === 'zoom') {
+        // Zoom: open join URL in new tab and show attendance overlay
+        if (data.zoom_join_url) {
+          window.open(data.zoom_join_url, '_blank');
+          setZoomLaunched(true);
+        }
+      } else {
+        loadJitsi(data);
+      }
     } catch (e) {
       setError(e.message || 'Failed to join class');
     } finally {
@@ -203,6 +212,101 @@ export default function LiveClassRoom() {
         <div className="text-center">
           <p className="text-red-400 mb-4">{error}</p>
           <button onClick={() => navigate(-1)} className="btn-primary">Go Back</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Zoom Platform UI ───────────────────────────────────────
+  if (classInfo?.platform === 'zoom') {
+    const tzLabel = classInfo.timezone === 'Asia/Kolkata' || !classInfo.timezone ? 'IST'
+      : classInfo.timezone.split('/')[1]?.replace('_', ' ') || classInfo.timezone;
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center px-4 py-8">
+        {/* Header */}
+        <div className="w-full max-w-lg">
+          <button onClick={() => { handleLeave(); navigate(-1); }}
+            className="flex items-center gap-2 text-slate-400 hover:text-white text-sm mb-6 transition-colors">
+            ← Back
+          </button>
+        </div>
+
+        {/* Zoom card */}
+        <div className="bg-slate-800 rounded-2xl shadow-2xl w-full max-w-lg p-8 text-center border border-slate-700">
+          <div className="text-5xl mb-4">🔵</div>
+          <h1 className="text-2xl font-black text-white mb-1">{classInfo.title}</h1>
+          <p className="text-slate-400 text-sm mb-5">{classInfo.description}</p>
+
+          {/* Class info */}
+          <div className="flex flex-wrap justify-center gap-3 text-sm text-slate-300 mb-6">
+            <span className="bg-slate-700 px-3 py-1 rounded-full">
+              📅 {new Date(classInfo.scheduled_at?.slice(0,19)).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+            </span>
+            <span className="bg-slate-700 px-3 py-1 rounded-full">
+              🕐 {new Date(classInfo.scheduled_at?.slice(0,19)).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true})} <span className="text-blue-400 font-bold">{tzLabel}</span>
+            </span>
+            <span className="bg-slate-700 px-3 py-1 rounded-full">⏱️ {classInfo.duration_minutes} min</span>
+          </div>
+
+          {classInfo.zoom_password && (
+            <div className="bg-slate-700/60 rounded-xl px-4 py-3 mb-5 text-left">
+              <p className="text-xs text-slate-400 mb-1">Zoom Meeting Password</p>
+              <p className="font-mono font-bold text-white text-lg tracking-widest">{classInfo.zoom_password}</p>
+            </div>
+          )}
+
+          {/* Attendance info */}
+          <div className="bg-slate-700/40 rounded-xl px-4 py-3 mb-6 text-sm text-slate-300">
+            ⏱️ Time in class: <strong className="text-white">{Math.floor(attendance.duration/60)}m {attendance.duration%60}s</strong>
+          </div>
+
+          {zoomLaunched ? (
+            <>
+              <div className="bg-green-900/30 border border-green-700/50 rounded-xl px-4 py-3 mb-5 text-green-300 text-sm">
+                ✅ Zoom has been launched in a new tab. Return here when done.
+              </div>
+              <button
+                className="w-full py-3 rounded-xl font-bold text-white mb-3 transition-transform hover:scale-[1.02]"
+                style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}
+                onClick={() => window.open(classInfo.zoom_join_url, '_blank')}
+              >
+                🔵 Rejoin Zoom Meeting
+              </button>
+            </>
+          ) : (
+            <button
+              className="w-full py-3 rounded-xl font-bold text-white mb-3 transition-transform hover:scale-[1.02]"
+              style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}
+              onClick={() => { window.open(classInfo.zoom_join_url, '_blank'); setZoomLaunched(true); }}
+            >
+              🔵 Open Zoom Meeting
+            </button>
+          )}
+
+          {/* Demo paywall for Zoom */}
+          {classInfo.is_demo && (
+            <div className="bg-amber-900/30 border border-amber-700/50 rounded-xl p-4 text-left">
+              <p className="font-bold text-amber-300 text-sm mb-1">🎁 You're watching a free preview</p>
+              <p className="text-amber-200/70 text-xs mb-3">
+                Purchase <strong>{classInfo.course_title}</strong> to get full access to all live classes.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  className="flex-1 py-2 rounded-lg font-bold text-sm text-white"
+                  style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
+                  onClick={() => { handleLeave(); navigate('/student', { state: { tab: 'catalog' } }); }}
+                >
+                  Buy ₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}
+                </button>
+                <button
+                  className="px-4 py-2 rounded-lg border border-amber-700/50 text-amber-300 text-sm hover:bg-amber-900/30 transition"
+                  onClick={() => { handleLeave(); navigate(-1); }}
+                >
+                  Maybe Later
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );

@@ -9,6 +9,7 @@ import PartnerDashboard from './pages/partner/PartnerDashboard';
 import StudentDashboard from './pages/student/StudentDashboard';
 import FacultyDashboard from './pages/faculty/FacultyDashboard';
 import LiveClassRoom from './pages/LiveClassRoom';
+import PublicLiveClass from './pages/PublicLiveClass';
 
 function studentHome(user) {
   const slug = user?.slug || user?.agency_slug;
@@ -75,6 +76,8 @@ export default function App() {
           <Route path="/live-class/:id" element={
             <RequireAuth><LiveClassRoom /></RequireAuth>
           } />
+          {/* Public guest join — no auth required */}
+          <Route path="/join/:id" element={<PublicLiveClass />} />
 
           {/* Legacy /agent/:slug routes — kept for backward compat */}
           <Route path="/agent/:slug" element={<TenantEntry />} />

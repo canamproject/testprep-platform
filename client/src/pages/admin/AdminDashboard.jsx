@@ -1270,7 +1270,21 @@ function LiveClassesAdmin() {
   const [facultyList, setFacultyList] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editClass, setEditClass] = useState(null); // class being edited
-  const EMPTY_FORM = { batch_id: '', title: '', description: '', scheduled_at: '', duration_minutes: 60, class_mode: 'interactive', auto_record: false, faculty_id: '' };
+  const TIMEZONES = [
+    { value: 'Asia/Kolkata',      label: '🇮🇳 India (IST, UTC+5:30)' },
+    { value: 'America/New_York',  label: '🇺🇸 New York (EST/EDT)' },
+    { value: 'America/Los_Angeles', label: '🇺🇸 Los Angeles (PST/PDT)' },
+    { value: 'America/Chicago',   label: '🇺🇸 Chicago (CST/CDT)' },
+    { value: 'Europe/London',     label: '🇬🇧 London (GMT/BST)' },
+    { value: 'Europe/Paris',      label: '🇫🇷 Paris (CET/CEST)' },
+    { value: 'Asia/Dubai',        label: '🇦🇪 Dubai (GST, UTC+4)' },
+    { value: 'Asia/Singapore',    label: '🇸🇬 Singapore (SGT, UTC+8)' },
+    { value: 'Asia/Tokyo',        label: '🇯🇵 Tokyo (JST, UTC+9)' },
+    { value: 'Australia/Sydney',  label: '🇦🇺 Sydney (AEDT/AEST)' },
+    { value: 'Pacific/Auckland',  label: '🇳🇿 Auckland (NZDT/NZST)' },
+    { value: 'UTC',               label: '🌐 UTC (Universal)' },
+  ];
+  const EMPTY_FORM = { batch_id: '', title: '', description: '', scheduled_at: '', duration_minutes: 60, class_mode: 'interactive', auto_record: false, faculty_id: '', timezone: 'Asia/Kolkata' };
   const [form, setForm] = useState(EMPTY_FORM);
   const [msg, setMsg] = useState({ text: '', ok: false });
   const [activePlatform, setActivePlatform] = useState('jitsi');
@@ -1465,6 +1479,12 @@ function LiveClassesAdmin() {
               <input type="number" className="input" value={form.duration_minutes} onChange={e => setForm({ ...form, duration_minutes: parseInt(e.target.value) })} />
             </div>
             <div>
+              <label className="label">Timezone</label>
+              <select className="input" value={form.timezone} onChange={e => setForm({ ...form, timezone: e.target.value })}>
+                {TIMEZONES.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
+              </select>
+            </div>
+            <div>
               <label className="label">Class Mode</label>
               <select className="input" value={form.class_mode} onChange={e => setForm({ ...form, class_mode: e.target.value })}>
                 <option value="interactive">Interactive (2-way video)</option>
@@ -1512,6 +1532,12 @@ function LiveClassesAdmin() {
                   <td>
                     <div className="text-sm">{fmtDate(c.scheduled_at)}</div>
                     <div className="text-xs text-slate-400">{fmtTime(c.scheduled_at)}</div>
+                    {c.timezone && c.timezone !== 'Asia/Kolkata' && (
+                      <div className="text-[10px] text-blue-500 font-medium">{c.timezone.split('/')[1]?.replace('_',' ')}</div>
+                    )}
+                    {(!c.timezone || c.timezone === 'Asia/Kolkata') && (
+                      <div className="text-[10px] text-slate-400">IST</div>
+                    )}
                   </td>
                   <td>
                     {c.platform === 'zoom'

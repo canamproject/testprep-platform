@@ -489,19 +489,29 @@ function StudentLiveClasses({ accent }) {
             const isDemo = !c.is_enrolled;
             return (
               <div key={c.id} className="card relative overflow-hidden">
-                <div className={`absolute top-0 left-0 right-0 h-1 ${live ? 'bg-red-500 animate-pulse' : isDemo ? 'bg-amber-400' : 'bg-slate-200'}`} />
+                <div className={`absolute top-0 left-0 right-0 h-1.5 ${live ? 'bg-green-500 animate-pulse' : isDemo ? 'bg-amber-400' : 'bg-slate-200'}`} />
                 <div className="flex items-start justify-between mt-2">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2 flex-wrap">
                       <h3 className="font-bold text-slate-900">{c.title}</h3>
-                      {live && <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full animate-pulse">LIVE NOW</span>}
+                      {live && (
+                        <span className="flex items-center gap-1 font-black text-white text-xs px-2.5 py-1 rounded-full"
+                          style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', boxShadow: '0 0 10px rgba(22,163,74,0.5)' }}>
+                          <span className="w-2 h-2 rounded-full bg-white animate-ping inline-block" />
+                          🟢 LIVE NOW
+                        </span>
+                      )}
                       {isDemo && <span className="bg-amber-500 text-white text-xs px-2 py-0.5 rounded-full">15-MIN PREVIEW</span>}
                       {!isDemo && <span className="bg-green-500 text-white text-xs px-2 py-0.5 rounded-full">Enrolled</span>}
                     </div>
                     <p className="text-sm text-slate-500 mb-3">{c.description}</p>
                     <div className="flex flex-wrap gap-4 text-sm text-slate-600">
                       <span>📅 {parseDT(c.scheduled_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</span>
-                      <span>🕐 {parseDT(c.scheduled_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true})}</span>
+                      <span>🕐 {parseDT(c.scheduled_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true})}
+                        <span className="ml-1 text-xs font-medium text-blue-500">
+                          {c.timezone === 'Asia/Kolkata' || !c.timezone ? 'IST' : c.timezone.split('/')[1]?.replace('_',' ')}
+                        </span>
+                      </span>
                       <span>⏱️ {c.duration_minutes} min</span>
                       {c.agency_name && <span>🏫 {c.agency_name}</span>}
                       {c.batch_name && <span>🎓 {c.batch_name}</span>}
