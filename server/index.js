@@ -1660,12 +1660,25 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
     res.json({
       class_id: classId,
       title: liveClass.title,
+      description: liveClass.description || '',
+      scheduled_at: liveClass.scheduled_at,
+      timezone: liveClass.timezone || 'Asia/Kolkata',
+      // ── Platform routing — ALWAYS include so client picks the right UI ──
+      platform: liveClass.platform || 'jitsi',
+      zoom_join_url: liveClass.zoom_join_url || null,
+      zoom_password: liveClass.zoom_password || null,
+      zoom_meeting_id: liveClass.zoom_meeting_id || null,
+      // ── Jitsi fields ────────────────────────────────────────────────────
       jitsi_room_name: liveClass.jitsi_room_name,
       jitsi_meeting_url: meetingUrl,
+      jaas_app_id: JAAS_APP_ID || null,
+      jaas_token: jaasToken,
+      // ── Access control ──────────────────────────────────────────────────
       is_moderator: isModerator,
       is_demo: isDemo,
       demo_minutes: isDemo ? 15 : null,
       coupon_info: res._couponInfo || null,
+      // ── Course info ─────────────────────────────────────────────────────
       course_id: liveClass.course_id,
       course_title: liveClass.course_title,
       course_price: Number(liveClass.course_price),
@@ -1675,8 +1688,6 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
       allow_chat: isDemo ? false : liveClass.allow_chat,
       allow_video: isModerator ? true : (isDemo ? false : liveClass.allow_student_video),
       allow_audio: isModerator ? true : (isDemo ? false : liveClass.allow_student_audio),
-      jaas_app_id: JAAS_APP_ID || null,
-      jaas_token: jaasToken
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

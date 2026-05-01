@@ -75,10 +75,26 @@ export default function LiveClassRoom() {
       }
 
       if (data.platform === 'zoom') {
-        // Zoom: open join URL in new tab and show attendance overlay
-        if (data.zoom_join_url) {
+        // Zoom: only open the URL if student is enrolled (not demo)
+        // Demo users see the paywall directly — they should not get Zoom access
+        if (!data.is_demo && data.zoom_join_url) {
           window.open(data.zoom_join_url, '_blank');
           setZoomLaunched(true);
+        }
+        // Demo countdown for Zoom — same 15-min rule as Jitsi
+        if (data.is_demo && data.demo_minutes) {
+          const totalSeconds = data.demo_minutes * 60;
+          setDemoSecondsLeft(totalSeconds);
+          demoTimerRef.current = setInterval(() => {
+            setDemoSecondsLeft(prev => {
+              if (prev <= 1) {
+                clearInterval(demoTimerRef.current);
+                setShowPaywall(true);
+                return 0;
+              }
+              return prev - 1;
+            });
+          }, 1000);
         }
       } else {
         loadJitsi(data);
@@ -221,93 +237,205 @@ export default function LiveClassRoom() {
   if (classInfo?.platform === 'zoom') {
     const tzLabel = classInfo.timezone === 'Asia/Kolkata' || !classInfo.timezone ? 'IST'
       : classInfo.timezone.split('/')[1]?.replace('_', ' ') || classInfo.timezone;
+
+    // ── Paywall overlay (demo expired or not enrolled) ────────
+    const zoomPaywall = showPaywall || (classInfo.is_demo && demoSecondsLeft === 0);
+
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center px-4 py-8">
-        {/* Header */}
-        <div className="w-full max-w-lg">
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center px-4 py-8 relative">
+
+        {/* Back button */}
+        <div className="w-full max-w-lg mb-4">
           <button onClick={() => { handleLeave(); navigate(-1); }}
-            className="flex items-center gap-2 text-slate-400 hover:text-white text-sm mb-6 transition-colors">
-            ← Back
+            className="flex items-center gap-2 text-slate-400 hover:text-white text-sm transition-colors">
+            ← Back to Classes
           </button>
         </div>
 
-        {/* Zoom card */}
-        <div className="bg-slate-800 rounded-2xl shadow-2xl w-full max-w-lg p-8 text-center border border-slate-700">
-          <div className="text-5xl mb-4">🔵</div>
-          <h1 className="text-2xl font-black text-white mb-1">{classInfo.title}</h1>
-          <p className="text-slate-400 text-sm mb-5">{classInfo.description}</p>
+        {/* Main Zoom card */}
+        <div className="bg-slate-800 rounded-2xl shadow-2xl w-full max-w-lg border border-slate-700 overflow-hidden">
 
-          {/* Class info */}
-          <div className="flex flex-wrap justify-center gap-3 text-sm text-slate-300 mb-6">
-            <span className="bg-slate-700 px-3 py-1 rounded-full">
-              📅 {new Date(classInfo.scheduled_at?.slice(0,19)).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
-            </span>
-            <span className="bg-slate-700 px-3 py-1 rounded-full">
-              🕐 {new Date(classInfo.scheduled_at?.slice(0,19)).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true})} <span className="text-blue-400 font-bold">{tzLabel}</span>
-            </span>
-            <span className="bg-slate-700 px-3 py-1 rounded-full">⏱️ {classInfo.duration_minutes} min</span>
-          </div>
-
-          {classInfo.zoom_password && (
-            <div className="bg-slate-700/60 rounded-xl px-4 py-3 mb-5 text-left">
-              <p className="text-xs text-slate-400 mb-1">Zoom Meeting Password</p>
-              <p className="font-mono font-bold text-white text-lg tracking-widest">{classInfo.zoom_password}</p>
+          {/* Top banner — platform badge */}
+          <div className="flex items-center justify-between px-6 py-3 border-b border-slate-700"
+            style={{ background: 'linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%)' }}>
+            <div className="flex items-center gap-2 text-white font-bold text-sm">
+              🔵 Zoom Live Class
             </div>
-          )}
-
-          {/* Attendance info */}
-          <div className="bg-slate-700/40 rounded-xl px-4 py-3 mb-6 text-sm text-slate-300">
-            ⏱️ Time in class: <strong className="text-white">{Math.floor(attendance.duration/60)}m {attendance.duration%60}s</strong>
+            {classInfo.is_demo && demoSecondsLeft !== null && !zoomPaywall && (
+              <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black ${demoSecondsLeft <= 60 ? 'bg-red-500 animate-pulse' : 'bg-amber-500'}`}>
+                ⏱ Preview: {formatDemoTime(demoSecondsLeft)}
+              </div>
+            )}
+            {!classInfo.is_demo && (
+              <span className="bg-green-500/30 border border-green-500/50 text-green-300 text-xs font-bold px-3 py-1 rounded-full">
+                ✅ Enrolled
+              </span>
+            )}
           </div>
 
-          {zoomLaunched ? (
-            <>
-              <div className="bg-green-900/30 border border-green-700/50 rounded-xl px-4 py-3 mb-5 text-green-300 text-sm">
-                ✅ Zoom has been launched in a new tab. Return here when done.
+          <div className="p-6">
+            <h1 className="text-xl font-black text-white mb-1">{classInfo.title}</h1>
+            {classInfo.description && <p className="text-slate-400 text-sm mb-4">{classInfo.description}</p>}
+
+            {/* Class info pills */}
+            <div className="flex flex-wrap gap-2 text-sm text-slate-300 mb-5">
+              {classInfo.scheduled_at && (
+                <>
+                  <span className="bg-slate-700 px-3 py-1 rounded-full text-xs">
+                    📅 {new Date(classInfo.scheduled_at?.slice(0,19)).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                  </span>
+                  <span className="bg-slate-700 px-3 py-1 rounded-full text-xs">
+                    🕐 {new Date(classInfo.scheduled_at?.slice(0,19)).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true})}
+                    <span className="text-blue-400 font-bold ml-1">{tzLabel}</span>
+                  </span>
+                </>
+              )}
+              <span className="bg-slate-700 px-3 py-1 rounded-full text-xs">⏱️ {classInfo.duration_minutes} min</span>
+            </div>
+
+            {/* Password box (enrolled students only) */}
+            {!classInfo.is_demo && classInfo.zoom_password && (
+              <div className="bg-slate-700/60 rounded-xl px-4 py-3 mb-5">
+                <p className="text-xs text-slate-400 mb-1">Meeting Password</p>
+                <p className="font-mono font-black text-white text-xl tracking-widest select-all">{classInfo.zoom_password}</p>
+                <p className="text-xs text-slate-500 mt-1">Copy this before joining Zoom</p>
+              </div>
+            )}
+
+            {/* Attendance timer (enrolled only) */}
+            {!classInfo.is_demo && (
+              <div className="bg-slate-700/40 rounded-xl px-4 py-3 mb-5 flex items-center justify-between text-sm">
+                <span className="text-slate-400">Time in class</span>
+                <strong className="text-white">{Math.floor(attendance.duration/60)}m {attendance.duration%60}s</strong>
+              </div>
+            )}
+
+            {/* ── NOT ENROLLED / DEMO SECTION ── */}
+            {classInfo.is_demo && !zoomPaywall && (
+              <div className="mb-5 rounded-xl border-2 border-amber-500/50 bg-amber-900/20 p-4">
+                <div className="flex items-start gap-3 mb-3">
+                  <span className="text-2xl flex-shrink-0">🔒</span>
+                  <div>
+                    <p className="font-black text-amber-300 text-sm">You are not enrolled in this class</p>
+                    <p className="text-amber-200/70 text-xs mt-0.5">
+                      This is a Zoom live class. Only paid students can join.
+                      Enroll in <strong className="text-amber-200">{classInfo.course_title}</strong> to get access.
+                    </p>
+                  </div>
+                </div>
+                {demoSecondsLeft !== null && (
+                  <div className="flex items-center gap-2 bg-slate-900/40 rounded-lg px-3 py-2 mb-3">
+                    <span className="text-amber-400 text-xs font-bold">Preview access expires in:</span>
+                    <span className={`font-black text-sm ${demoSecondsLeft <= 60 ? 'text-red-400 animate-pulse' : 'text-white'}`}>
+                      {formatDemoTime(demoSecondsLeft)}
+                    </span>
+                  </div>
+                )}
+                <button
+                  className="w-full py-2.5 rounded-xl font-black text-sm text-white transition hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
+                  onClick={() => { handleLeave(); navigate('/student', { state: { tab: 'catalog' } }); }}>
+                  🎓 Enroll Now — ₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}
+                </button>
+              </div>
+            )}
+
+            {/* ── ENROLLED: Join / Rejoin buttons ── */}
+            {!classInfo.is_demo && !zoomPaywall && (
+              <>
+                {zoomLaunched ? (
+                  <div className="mb-4">
+                    <div className="bg-green-900/30 border border-green-700/50 rounded-xl px-4 py-3 mb-3 text-green-300 text-sm text-center">
+                      ✅ Zoom launched in a new tab — return here when done.
+                    </div>
+                    <button
+                      className="w-full py-3 rounded-xl font-black text-white transition-transform hover:scale-[1.02] active:scale-[0.98]"
+                      style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}
+                      onClick={() => window.open(classInfo.zoom_join_url, '_blank')}>
+                      🔵 Rejoin Zoom Meeting
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="w-full py-3 rounded-xl font-black text-white mb-4 transition-transform hover:scale-[1.02] active:scale-[0.98]"
+                    style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}
+                    onClick={() => { window.open(classInfo.zoom_join_url, '_blank'); setZoomLaunched(true); }}>
+                    🔵 Open Zoom Meeting
+                  </button>
+                )}
+              </>
+            )}
+
+            {/* Leave button */}
+            <button
+              onClick={() => { handleLeave(); navigate(-1); }}
+              className="w-full py-2 rounded-xl text-slate-400 text-sm hover:text-white hover:bg-slate-700 transition-colors">
+              ← Leave Class
+            </button>
+          </div>
+        </div>
+
+        {/* ── 3-min payment reminder banner (demo, dismissible) ── */}
+        {classInfo.is_demo && showReminderBanner && !zoomPaywall && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 w-full max-w-md px-4">
+            <div className="bg-amber-500 text-white rounded-2xl shadow-2xl px-5 py-4 flex items-start gap-3">
+              <span className="text-2xl flex-shrink-0">💳</span>
+              <div className="flex-1">
+                <p className="font-bold text-sm">You're not enrolled in this class</p>
+                <p className="text-xs text-amber-100 mt-0.5">
+                  Purchase <strong>{classInfo.course_title}</strong> for full Zoom class access.
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    className="bg-white text-amber-600 font-bold text-xs px-3 py-1.5 rounded-lg hover:bg-amber-50 transition"
+                    onClick={() => { handleLeave(); navigate('/student', { state: { tab: 'catalog' } }); }}>
+                    Enroll ₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}
+                  </button>
+                  <button
+                    className="text-amber-100 text-xs px-3 py-1.5 rounded-lg hover:bg-amber-600 transition"
+                    onClick={() => setShowReminderBanner(false)}>
+                    Dismiss ✕
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Full paywall when demo expires (Zoom) ── */}
+        {zoomPaywall && (
+          <div className="fixed inset-0 flex items-center justify-center z-50"
+            style={{ background: 'rgba(15,23,42,0.95)', backdropFilter: 'blur(10px)' }}>
+            <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 text-center">
+              <div className="text-5xl mb-4">🔒</div>
+              <h2 className="text-2xl font-black text-slate-900 mb-2">Enroll to Join This Class</h2>
+              <p className="text-slate-500 mb-2">
+                This is a <strong>Zoom live class</strong>. Only enrolled, paid students can join.
+              </p>
+              <p className="text-slate-400 text-sm mb-6">
+                Purchase <strong>{classInfo.course_title}</strong> to unlock full access to all live classes, recordings, and tests.
+              </p>
+              <div className="bg-blue-50 rounded-xl p-4 mb-6 border border-blue-100">
+                <p className="text-xs text-slate-500 mb-1">Course</p>
+                <p className="font-bold text-slate-900 text-lg">{classInfo.course_title}</p>
+                <p className="text-2xl font-black text-blue-600 mt-1">
+                  ₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}
+                </p>
               </div>
               <button
-                className="w-full py-3 rounded-xl font-bold text-white mb-3 transition-transform hover:scale-[1.02]"
-                style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}
-                onClick={() => window.open(classInfo.zoom_join_url, '_blank')}
-              >
-                🔵 Rejoin Zoom Meeting
+                className="w-full py-3 rounded-xl text-white font-black text-lg mb-3 transition hover:opacity-90"
+                style={{ background: 'linear-gradient(135deg, #1e40af, #3b82f6)' }}
+                onClick={() => { handleLeave(); navigate('/student', { state: { tab: 'catalog' } }); }}>
+                🎓 Enroll Now
               </button>
-            </>
-          ) : (
-            <button
-              className="w-full py-3 rounded-xl font-bold text-white mb-3 transition-transform hover:scale-[1.02]"
-              style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}
-              onClick={() => { window.open(classInfo.zoom_join_url, '_blank'); setZoomLaunched(true); }}
-            >
-              🔵 Open Zoom Meeting
-            </button>
-          )}
-
-          {/* Demo paywall for Zoom */}
-          {classInfo.is_demo && (
-            <div className="bg-amber-900/30 border border-amber-700/50 rounded-xl p-4 text-left">
-              <p className="font-bold text-amber-300 text-sm mb-1">🎁 You're watching a free preview</p>
-              <p className="text-amber-200/70 text-xs mb-3">
-                Purchase <strong>{classInfo.course_title}</strong> to get full access to all live classes.
-              </p>
-              <div className="flex gap-2">
-                <button
-                  className="flex-1 py-2 rounded-lg font-bold text-sm text-white"
-                  style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
-                  onClick={() => { handleLeave(); navigate('/student', { state: { tab: 'catalog' } }); }}
-                >
-                  Buy ₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}
-                </button>
-                <button
-                  className="px-4 py-2 rounded-lg border border-amber-700/50 text-amber-300 text-sm hover:bg-amber-900/30 transition"
-                  onClick={() => { handleLeave(); navigate(-1); }}
-                >
-                  Maybe Later
-                </button>
-              </div>
+              <button
+                className="w-full py-2 rounded-xl text-slate-400 text-sm hover:text-slate-700 transition-colors"
+                onClick={() => { handleLeave(); navigate(-1); }}>
+                Go Back
+              </button>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     );
   }
