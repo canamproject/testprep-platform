@@ -1328,24 +1328,46 @@ app.post('/api/live-classes', authMiddleware(['partner_admin', 'super_admin']), 
       return `${batch.agency_name} – ${batch.name} – ${datePart} ${timePart}`;
     })();
 
-    const roomName = `${batch.jitsi_room_prefix || batch.agency_slug}-class-${Date.now()}`;
-    const meetingUrl = `https://8x8.vc/${roomName}`;
+    // Determine active platform
+    const [[platformCfg]] = await getPool().query('SELECT * FROM live_platform_config WHERE id=1');
+    const activePlatform = platformCfg?.platform || 'jitsi';
+
+    let roomName, meetingUrl, zoomMeetingId = null, zoomJoinUrl = null, zoomPassword = null, zoomStartUrl = null;
+
+    if (activePlatform === 'zoom' && platformCfg?.active_zoom_config_id) {
+      const [[zoomCfg]] = await getPool().query('SELECT * FROM zoom_configs WHERE id=?', [platformCfg.active_zoom_config_id]);
+      if (!zoomCfg) throw new Error('Active Zoom account not found. Please configure Zoom in Live Platform Settings.');
+      const zm = await createZoomMeeting(zoomCfg, { topic: autoTitle, start_time: scheduled_at, duration_minutes: duration_minutes || 60 });
+      roomName    = `zoom-${zm.id}`;
+      meetingUrl  = zm.join_url;
+      zoomMeetingId = String(zm.id);
+      zoomJoinUrl   = zm.join_url;
+      zoomPassword  = zm.password;
+      zoomStartUrl  = zm.start_url;
+    } else {
+      roomName   = `${batch.jitsi_room_prefix || batch.agency_slug}-class-${Date.now()}`;
+      meetingUrl = `https://8x8.vc/${roomName}`;
+    }
 
     const [result] = await getPool().query(
       `INSERT INTO live_classes (batch_id, agency_id, title, description, lesson_id,
         scheduled_at, duration_minutes, jitsi_room_name, jitsi_meeting_url,
-        class_mode, auto_record, created_by, faculty_id, status)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        class_mode, auto_record, created_by, faculty_id, status,
+        platform, zoom_meeting_id, zoom_join_url, zoom_password, zoom_start_url)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [batch_id, batch.agency_id, autoTitle, description, lesson_id,
        scheduled_at, duration_minutes || 60, roomName, meetingUrl,
        class_mode || 'interactive', auto_record || 0, req.user.id,
-       faculty_id || null, 'scheduled']
+       faculty_id || null, 'scheduled',
+       activePlatform, zoomMeetingId, zoomJoinUrl, zoomPassword, zoomStartUrl]
     );
 
     res.json({
       id: result.insertId,
       message: 'Live class scheduled',
       title: autoTitle,
+      platform: activePlatform,
+      meeting_url: meetingUrl,
       jitsi_room_name: roomName
     });
   } catch (e) {
@@ -1378,17 +1400,40 @@ app.post('/api/faculty/live-classes', authMiddleware(['faculty']), async (req, r
       return `${batch.agency_name} – ${batch.name} – ${datePart} ${timePart}`;
     })();
 
-    const roomName = `${batch.jitsi_room_prefix || batch.agency_slug}-class-${Date.now()}`;
-    const meetingUrl = `https://8x8.vc/${roomName}`;
+    const [[platformCfg]] = await getPool().query('SELECT * FROM live_platform_config WHERE id=1');
+    const activePlatform = platformCfg?.platform || 'jitsi';
+    let roomName, meetingUrl, zoomMeetingId = null, zoomJoinUrl = null, zoomPassword = null, zoomStartUrl = null;
+
+    if (activePlatform === 'zoom' && platformCfg?.active_zoom_config_id) {
+      const [[zoomCfg]] = await getPool().query('SELECT * FROM zoom_configs WHERE id=?', [platformCfg.active_zoom_config_id]);
+      if (zoomCfg) {
+        try {
+          const zm = await createZoomMeeting(zoomCfg, { topic: autoTitle, start_time: scheduled_at, duration_minutes: duration_minutes || 60 });
+          roomName = `zoom-${zm.id}`; meetingUrl = zm.join_url;
+          zoomMeetingId = String(zm.id); zoomJoinUrl = zm.join_url; zoomPassword = zm.password; zoomStartUrl = zm.start_url;
+        } catch (_) {
+          roomName = `${batch.jitsi_room_prefix || batch.agency_slug}-class-${Date.now()}`;
+          meetingUrl = `https://8x8.vc/${roomName}`;
+        }
+      } else {
+        roomName = `${batch.jitsi_room_prefix || batch.agency_slug}-class-${Date.now()}`;
+        meetingUrl = `https://8x8.vc/${roomName}`;
+      }
+    } else {
+      roomName   = `${batch.jitsi_room_prefix || batch.agency_slug}-class-${Date.now()}`;
+      meetingUrl = `https://8x8.vc/${roomName}`;
+    }
 
     const [result] = await getPool().query(
       `INSERT INTO live_classes (batch_id, agency_id, title, description,
         scheduled_at, duration_minutes, jitsi_room_name, jitsi_meeting_url,
-        class_mode, created_by, faculty_id, status)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        class_mode, created_by, faculty_id, status,
+        platform, zoom_meeting_id, zoom_join_url, zoom_password, zoom_start_url)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [batch_id, batch.agency_id, autoTitle, description,
        scheduled_at, duration_minutes || 60, roomName, meetingUrl,
-       class_mode || 'interactive', req.user.id, req.user.id, 'pending_approval']
+       class_mode || 'interactive', req.user.id, req.user.id, 'pending_approval',
+       activePlatform, zoomMeetingId, zoomJoinUrl, zoomPassword, zoomStartUrl]
     );
 
     res.json({ id: result.insertId, message: 'Class submitted for admin approval', title: autoTitle });
@@ -2023,6 +2068,121 @@ app.put('/api/admin/agencies/:id/portal-settings', authMiddleware(['super_admin'
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// ─── ZOOM API HELPER ─────────────────────────────────────────────────────────
+async function getZoomToken(cfg) {
+  const creds = Buffer.from(`${cfg.client_id}:${cfg.client_secret}`).toString('base64');
+  const r = await fetch(
+    `https://zoom.us/oauth/token?grant_type=account_credentials&account_id=${encodeURIComponent(cfg.account_id)}`,
+    { method: 'POST', headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
+  );
+  const d = await r.json();
+  if (!d.access_token) throw new Error(d.reason || d.error_description || 'Zoom auth failed — check Account ID / Client ID / Client Secret');
+  return d.access_token;
+}
+
+async function createZoomMeeting(cfg, { topic, start_time, duration_minutes }) {
+  const token = await getZoomToken(cfg);
+  const pwd   = Math.random().toString(36).slice(2, 8).toUpperCase();
+  const r = await fetch('https://api.zoom.us/v2/users/me/meetings', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      topic,
+      type: 2,
+      start_time: start_time ? new Date(start_time).toISOString() : new Date().toISOString(),
+      duration: duration_minutes || 60,
+      password: pwd,
+      settings: { host_video: true, participant_video: true, join_before_host: false, waiting_room: true, auto_recording: 'none' }
+    })
+  });
+  const d = await r.json();
+  if (!d.id) throw new Error(d.message || 'Failed to create Zoom meeting');
+  return d; // { id, join_url, password, start_url, ... }
+}
+
+// ── Live Platform Config ─────────────────────────────────────
+app.get('/api/admin/live-platform-config', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [[cfg]] = await getPool().query('SELECT * FROM live_platform_config WHERE id=1');
+    const [zoomCfgs] = await getPool().query('SELECT id, label, account_email, is_paid, is_active, created_at FROM zoom_configs ORDER BY created_at DESC');
+    res.json({ platform: cfg?.platform || 'jitsi', active_zoom_config_id: cfg?.active_zoom_config_id || null, zoom_configs: zoomCfgs });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/admin/live-platform-config', authMiddleware(['super_admin']), async (req, res) => {
+  const { platform, active_zoom_config_id } = req.body;
+  try {
+    await getPool().query(
+      'INSERT INTO live_platform_config (id, platform, active_zoom_config_id) VALUES (1,?,?) ON DUPLICATE KEY UPDATE platform=VALUES(platform), active_zoom_config_id=VALUES(active_zoom_config_id)',
+      [platform || 'jitsi', active_zoom_config_id || null]
+    );
+    res.json({ message: 'Platform config saved' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ── Zoom Account CRUD ────────────────────────────────────────
+app.get('/api/admin/zoom-configs', authMiddleware(['super_admin']), async (req, res) => {
+  const [rows] = await getPool().query('SELECT * FROM zoom_configs ORDER BY created_at DESC');
+  // mask secrets
+  res.json(rows.map(r => ({ ...r, client_secret: '••••••••' })));
+});
+
+app.post('/api/admin/zoom-configs', authMiddleware(['super_admin']), async (req, res) => {
+  const { label, account_email, account_id, client_id, client_secret, is_paid } = req.body;
+  if (!label || !account_id || !client_id || !client_secret) return res.status(400).json({ error: 'label, account_id, client_id, client_secret are required' });
+  try {
+    const [r] = await getPool().query(
+      'INSERT INTO zoom_configs (label, account_email, account_id, client_id, client_secret, is_paid) VALUES (?,?,?,?,?,?)',
+      [label, account_email || '', account_id.trim(), client_id.trim(), client_secret.trim(), is_paid ? 1 : 0]
+    );
+    res.json({ id: r.insertId, message: 'Zoom account added' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.put('/api/admin/zoom-configs/:id', authMiddleware(['super_admin']), async (req, res) => {
+  const { label, account_email, account_id, client_id, client_secret, is_paid } = req.body;
+  try {
+    const fields = ['label=?', 'account_email=?', 'is_paid=?'];
+    const vals   = [label, account_email || '', is_paid ? 1 : 0];
+    if (account_id)   { fields.push('account_id=?');   vals.push(account_id.trim()); }
+    if (client_id)    { fields.push('client_id=?');    vals.push(client_id.trim()); }
+    if (client_secret && !client_secret.startsWith('•')) { fields.push('client_secret=?'); vals.push(client_secret.trim()); }
+    vals.push(req.params.id);
+    await getPool().query(`UPDATE zoom_configs SET ${fields.join(',')} WHERE id=?`, vals);
+    res.json({ message: 'Zoom account updated' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/admin/zoom-configs/:id', authMiddleware(['super_admin']), async (req, res) => {
+  await getPool().query('DELETE FROM zoom_configs WHERE id=?', [req.params.id]);
+  res.json({ message: 'Deleted' });
+});
+
+app.put('/api/admin/zoom-configs/:id/activate', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    await getPool().query('UPDATE zoom_configs SET is_active=0');
+    await getPool().query('UPDATE zoom_configs SET is_active=1 WHERE id=?', [req.params.id]);
+    await getPool().query('UPDATE live_platform_config SET active_zoom_config_id=?, platform="zoom" WHERE id=1', [req.params.id]);
+    res.json({ message: 'Zoom account activated and platform set to Zoom' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ── Test Zoom connection ──────────────────────────────────────
+app.post('/api/admin/zoom-configs/:id/test', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [[cfg]] = await getPool().query('SELECT * FROM zoom_configs WHERE id=?', [req.params.id]);
+    if (!cfg) return res.status(404).json({ error: 'Config not found' });
+    const token = await getZoomToken(cfg);
+    // Fetch user info to confirm it works
+    const r = await fetch('https://api.zoom.us/v2/users/me', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const user = await r.json();
+    if (!user.id) throw new Error(user.message || 'Could not fetch Zoom user info');
+    res.json({ ok: true, zoom_user: user.email, plan: user.type === 1 ? 'Free (Basic)' : user.type === 2 ? 'Pro' : 'Business/Enterprise', first_name: user.first_name });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // Student: get payment config — agency override if permitted, else global default
 app.get('/api/student/payment-config', authMiddleware(['student']), async (req, res) => {
   try {
@@ -2296,6 +2456,34 @@ async function runMigrations() {
     await getPool().query(`ALTER TABLE agencies ADD COLUMN visible_sections TEXT`).catch(() => {});
     await getPool().query(`ALTER TABLE agencies ADD COLUMN layout_type INT DEFAULT 1`).catch(() => {});
     await getPool().query(`ALTER TABLE agencies ADD COLUMN logo_shape VARCHAR(20) DEFAULT 'rounded'`).catch(() => {});
+    // Live class platform: Jitsi vs Zoom
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS live_platform_config (
+        id INT DEFAULT 1 PRIMARY KEY,
+        platform VARCHAR(20) DEFAULT 'jitsi',
+        active_zoom_config_id INT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `).catch(() => {});
+    await getPool().query(`INSERT IGNORE INTO live_platform_config (id, platform) VALUES (1, 'jitsi')`).catch(() => {});
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS zoom_configs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        label VARCHAR(100) NOT NULL,
+        account_email VARCHAR(100),
+        account_id VARCHAR(200) NOT NULL,
+        client_id VARCHAR(200) NOT NULL,
+        client_secret VARCHAR(200) NOT NULL,
+        is_paid TINYINT DEFAULT 0,
+        is_active TINYINT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `).catch(() => {});
+    await getPool().query(`ALTER TABLE live_classes ADD COLUMN platform VARCHAR(20) DEFAULT 'jitsi'`).catch(() => {});
+    await getPool().query(`ALTER TABLE live_classes ADD COLUMN zoom_meeting_id VARCHAR(100)`).catch(() => {});
+    await getPool().query(`ALTER TABLE live_classes ADD COLUMN zoom_join_url TEXT`).catch(() => {});
+    await getPool().query(`ALTER TABLE live_classes ADD COLUMN zoom_password VARCHAR(50)`).catch(() => {});
+    await getPool().query(`ALTER TABLE live_classes ADD COLUMN zoom_start_url TEXT`).catch(() => {});
     await getPool().query(`
       CREATE TABLE IF NOT EXISTS agency_edit_history (
         id INT AUTO_INCREMENT PRIMARY KEY,
