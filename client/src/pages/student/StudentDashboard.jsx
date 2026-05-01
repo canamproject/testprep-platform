@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
 import DashLayout, { NavItem } from '../../components/DashLayout';
+import StudentProgress from './StudentProgress';
 
 const fmt = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 const catIcons  = { IELTS:'📝', PTE:'🖥️', TOEFL:'🌐', GERMAN:'🇩🇪', FRENCH:'🇫🇷', SPOKEN_ENGLISH:'🗣️', OTHER:'📚' };
@@ -1194,6 +1195,8 @@ export default function StudentDashboard() {
     catalog:     <CourseCatalog accent={accent} user={enrichedUser} onEnrolled={loadEnrollments} />,
     batches:     <BatchBrowser accent={accent} user={enrichedUser} />,
     liveclasses: <StudentLiveClasses accent={accent} />,
+    progress:    <StudentProgress accent={accent} initialTab="plan" />,
+    tests:       <StudentProgress accent={accent} initialTab="tests" />,
     payments:    <Payments enrollments={enrollments} accent={accent} onRefresh={loadEnrollments} />,
     profile:     <Profile user={enrichedUser} />,
   };
@@ -1225,6 +1228,8 @@ export default function StudentDashboard() {
             <NavItem active={section==='catalog'}     onClick={() => setSection('catalog')}     icon="🛒" label="Buy Courses"   accent="rgba(255,255,255,0.9)" />
             <NavItem active={section==='batches'}     onClick={() => setSection('batches')}     icon="📅" label="Book Batches"  accent="rgba(255,255,255,0.9)" />
             <NavItem active={section==='liveclasses'} onClick={() => setSection('liveclasses')} icon="📺" label="Live Classes"  accent="rgba(255,255,255,0.9)" />
+            <NavItem active={section==='progress'}    onClick={() => setSection('progress')}    icon="📊" label="My Progress"   accent="rgba(255,255,255,0.9)" />
+            <NavItem active={section==='tests'}       onClick={() => setSection('tests')}       icon="📝" label="Tests & Mocks" accent="rgba(255,255,255,0.9)" />
             <NavItem active={section==='payments'}    onClick={() => setSection('payments')}    icon="💳" label="Payments"      accent="rgba(255,255,255,0.9)" />
             <NavItem active={section==='profile'}     onClick={() => setSection('profile')}     icon="👤" label="Profile"       accent="rgba(255,255,255,0.9)" />
           </>

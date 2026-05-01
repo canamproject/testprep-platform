@@ -2552,6 +2552,46 @@ async function runMigrations() {
       )
     `).catch(() => {});
 
+    // ── Target Planning & Performance Tracking ──────────────────
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS student_targets (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        student_id INT NOT NULL UNIQUE,
+        agency_id INT,
+        exam_type VARCHAR(30) NOT NULL,
+        target_score DECIMAL(4,1) NOT NULL,
+        target_date DATE NOT NULL,
+        study_hours_per_day DECIMAL(3,1) DEFAULT 2,
+        weak_modules TEXT,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (student_id) REFERENCES users(id)
+      )
+    `).catch(() => {});
+
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS test_attempts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        student_id INT NOT NULL,
+        agency_id INT,
+        course_id INT,
+        exam_type VARCHAR(30),
+        module_name VARCHAR(60),
+        test_type ENUM('module','mock','practice') DEFAULT 'module',
+        score_percent DECIMAL(5,2),
+        band_score DECIMAL(3,1),
+        total_questions INT DEFAULT 0,
+        correct_answers INT DEFAULT 0,
+        time_taken_seconds INT DEFAULT 0,
+        answers_json MEDIUMTEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_ta_student (student_id),
+        INDEX idx_ta_student_module (student_id, module_name),
+        FOREIGN KEY (student_id) REFERENCES users(id)
+      )
+    `).catch(() => {});
+
     console.log('✅ Migrations applied');
   } catch (e) {
     console.log('⚠️  Migration warning:', e.message);
@@ -2673,6 +2713,162 @@ app.post('/api/admin/zoom-configs/:id/test', authMiddleware(['super_admin']), as
     if (!user.id) throw new Error(user.message || 'Could not fetch Zoom user info');
     res.json({ ok: true, zoom_user: user.email, plan: user.type === 1 ? 'Free (Basic)' : user.type === 2 ? 'Pro' : 'Business/Enterprise', first_name: user.first_name });
   } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ─── TARGET PLANNING & PERFORMANCE TRACKING ──────────────────
+
+// GET student target
+app.get('/api/student/targets', authMiddleware(['student']), async (req, res) => {
+  try {
+    const [[target]] = await getPool().query('SELECT * FROM student_targets WHERE student_id=?', [req.user.id]);
+    res.json(target || null);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// SAVE / UPDATE student target
+app.post('/api/student/targets', authMiddleware(['student']), async (req, res) => {
+  const { exam_type, target_score, target_date, study_hours_per_day, weak_modules, notes } = req.body;
+  if (!exam_type || !target_score || !target_date) return res.status(400).json({ error: 'exam_type, target_score, target_date are required' });
+  try {
+    await getPool().query(
+      `INSERT INTO student_targets (student_id, agency_id, exam_type, target_score, target_date, study_hours_per_day, weak_modules, notes)
+       VALUES (?,?,?,?,?,?,?,?)
+       ON DUPLICATE KEY UPDATE exam_type=VALUES(exam_type), target_score=VALUES(target_score),
+         target_date=VALUES(target_date), study_hours_per_day=VALUES(study_hours_per_day),
+         weak_modules=VALUES(weak_modules), notes=VALUES(notes), updated_at=NOW()`,
+      [req.user.id, req.user.agency_id, exam_type, target_score, target_date,
+       study_hours_per_day || 2, weak_modules || '', notes || '']
+    );
+    res.json({ message: 'Target saved successfully' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// SUBMIT test attempt
+app.post('/api/student/tests/submit', authMiddleware(['student']), async (req, res) => {
+  const { exam_type, module_name, test_type, score_percent, band_score, total_questions, correct_answers, time_taken_seconds, answers_json, course_id } = req.body;
+  try {
+    const [r] = await getPool().query(
+      `INSERT INTO test_attempts (student_id, agency_id, course_id, exam_type, module_name, test_type, score_percent, band_score, total_questions, correct_answers, time_taken_seconds, answers_json)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [req.user.id, req.user.agency_id, course_id || null, exam_type, module_name,
+       test_type || 'module', score_percent, band_score || null,
+       total_questions || 0, correct_answers || 0, time_taken_seconds || 0,
+       JSON.stringify(answers_json || {})]
+    );
+    res.json({ id: r.insertId, message: 'Test result saved' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// GET test history
+app.get('/api/student/tests/history', authMiddleware(['student']), async (req, res) => {
+  try {
+    const [rows] = await getPool().query(
+      'SELECT * FROM test_attempts WHERE student_id=? ORDER BY created_at DESC LIMIT 100',
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET full progress summary
+app.get('/api/student/progress', authMiddleware(['student']), async (req, res) => {
+  const sid = req.user.id;
+  try {
+    const [[attStats]] = await getPool().query(`
+      SELECT COUNT(*) as total_classes,
+        SUM(CASE WHEN ca.attendance_status='present' THEN 1 ELSE 0 END) as attended,
+        AVG(ca.time_in_class_percent) as avg_duration_pct,
+        COALESCE(SUM(ca.duration_seconds),0) as total_seconds
+      FROM class_attendance ca
+      JOIN live_classes lc ON ca.live_class_id = lc.id
+      WHERE ca.student_id=?`, [sid]);
+
+    const [testScores] = await getPool().query(`
+      SELECT module_name, exam_type, ROUND(AVG(score_percent),1) as avg_score,
+             MAX(score_percent) as best_score, COUNT(*) as attempts, MAX(created_at) as last_attempt
+      FROM test_attempts WHERE student_id=?
+      GROUP BY module_name, exam_type ORDER BY last_attempt DESC`, [sid]);
+
+    const [recentAttempts] = await getPool().query(
+      'SELECT id, exam_type, module_name, test_type, score_percent, band_score, total_questions, correct_answers, time_taken_seconds, created_at FROM test_attempts WHERE student_id=? ORDER BY created_at DESC LIMIT 30',
+      [sid]);
+
+    const [weeklyProgress] = await getPool().query(`
+      SELECT YEAR(created_at) yr, WEEK(created_at) wk,
+        ROUND(AVG(score_percent),1) avg_score, COUNT(*) tests_taken, MIN(created_at) week_start
+      FROM test_attempts WHERE student_id=? AND created_at >= DATE_SUB(NOW(), INTERVAL 10 WEEK)
+      GROUP BY YEAR(created_at), WEEK(created_at) ORDER BY yr, wk`, [sid]);
+
+    const [[target]] = await getPool().query('SELECT * FROM student_targets WHERE student_id=?', [sid]);
+
+    const [enrolledCourses] = await getPool().query(`
+      SELECT e.id, e.status, c.title, c.category, c.id as course_id
+      FROM enrollments e JOIN courses c ON e.course_id = c.id
+      WHERE e.student_id=? AND e.status='active'`, [sid]);
+
+    const [recentClasses] = await getPool().query(`
+      SELECT lc.title, lc.scheduled_at, lc.platform, ca.attendance_status, ca.duration_seconds, ca.time_in_class_percent
+      FROM class_attendance ca
+      JOIN live_classes lc ON ca.live_class_id = lc.id
+      WHERE ca.student_id=? ORDER BY lc.scheduled_at DESC LIMIT 20`, [sid]);
+
+    res.json({ attendance: attStats, testScores, recentAttempts, weeklyProgress, target, enrolledCourses, recentClasses });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PARTNER: progress overview of all students
+app.get('/api/partner/students/progress-overview', authMiddleware(['partner_admin']), async (req, res) => {
+  const agencyId = req.user.agency_id;
+  try {
+    const [students] = await getPool().query(`
+      SELECT u.id, u.name, u.email, u.phone, u.created_at,
+        (SELECT COUNT(*) FROM enrollments e WHERE e.student_id=u.id AND e.agency_id=? AND e.status='active') as active_courses,
+        (SELECT ROUND(AVG(ta.score_percent),1) FROM test_attempts ta WHERE ta.student_id=u.id AND ta.agency_id=?) as avg_score,
+        (SELECT COUNT(*) FROM test_attempts ta WHERE ta.student_id=u.id AND ta.agency_id=?) as tests_taken,
+        (SELECT COUNT(*) FROM class_attendance ca WHERE ca.student_id=u.id AND ca.attendance_status='present') as classes_attended,
+        (SELECT exam_type FROM student_targets st WHERE st.student_id=u.id LIMIT 1) as target_exam,
+        (SELECT target_score FROM student_targets st WHERE st.student_id=u.id LIMIT 1) as target_score,
+        (SELECT target_date FROM student_targets st WHERE st.student_id=u.id LIMIT 1) as target_date
+      FROM users u WHERE u.agency_id=? AND u.role='student' ORDER BY u.name`,
+      [agencyId, agencyId, agencyId, agencyId]);
+    res.json(students);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PARTNER: specific student progress
+app.get('/api/partner/students/:id/progress', authMiddleware(['partner_admin']), async (req, res) => {
+  const studentId = req.params.id;
+  const agencyId = req.user.agency_id;
+  try {
+    const [[student]] = await getPool().query('SELECT id,name,email,phone,created_at FROM users WHERE id=? AND agency_id=? AND role="student"', [studentId, agencyId]);
+    if (!student) return res.status(404).json({ error: 'Student not found' });
+
+    const [testScores] = await getPool().query(`
+      SELECT module_name, exam_type, ROUND(AVG(score_percent),1) avg_score, MAX(score_percent) best_score, COUNT(*) attempts, MAX(created_at) last_attempt
+      FROM test_attempts WHERE student_id=? GROUP BY module_name, exam_type ORDER BY last_attempt DESC`, [studentId]);
+
+    const [recentAttempts] = await getPool().query(
+      'SELECT id, exam_type, module_name, test_type, score_percent, band_score, total_questions, correct_answers, created_at FROM test_attempts WHERE student_id=? ORDER BY created_at DESC LIMIT 20', [studentId]);
+
+    const [[attStats]] = await getPool().query(`
+      SELECT COUNT(*) total, SUM(CASE WHEN attendance_status='present' THEN 1 ELSE 0 END) attended,
+             ROUND(AVG(time_in_class_percent),1) avg_pct
+      FROM class_attendance WHERE student_id=?`, [studentId]);
+
+    const [[target]] = await getPool().query('SELECT * FROM student_targets WHERE student_id=?', [studentId]);
+
+    const [weeklyProgress] = await getPool().query(`
+      SELECT YEAR(created_at) yr, WEEK(created_at) wk, ROUND(AVG(score_percent),1) avg_score, COUNT(*) tests_taken, MIN(created_at) week_start
+      FROM test_attempts WHERE student_id=? AND created_at >= DATE_SUB(NOW(), INTERVAL 8 WEEK)
+      GROUP BY YEAR(created_at), WEEK(created_at) ORDER BY yr, wk`, [studentId]);
+
+    const [recentClasses] = await getPool().query(`
+      SELECT lc.title, lc.scheduled_at, lc.platform, ca.attendance_status, ca.duration_seconds
+      FROM class_attendance ca JOIN live_classes lc ON ca.live_class_id=lc.id
+      WHERE ca.student_id=? ORDER BY lc.scheduled_at DESC LIMIT 15`, [studentId]);
+
+    res.json({ student, testScores, recentAttempts, attendance: attStats, target, weeklyProgress, recentClasses });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── START ────────────────────────────────────────────────────

@@ -1636,6 +1636,280 @@ function AgencyProfile({ accent, user: partnerUser }) {
   );
 }
 
+// ── STUDENT PROGRESS OVERVIEW (Partner) ─────────────────────
+function StudentProgressOverview({ accent }) {
+  const [data, setData] = useState(null);
+  const [selected, setSelected] = useState(null); // student detail
+  const [detail, setDetail] = useState(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [filter, setFilter] = useState('ALL');
+
+  useEffect(() => {
+    api.get('/partner/students/progress-overview').then(setData).catch(() => setData([]));
+  }, []);
+
+  const loadDetail = async (studentId) => {
+    setLoadingDetail(true);
+    try {
+      const d = await api.get(`/partner/students/${studentId}/progress`);
+      setDetail(d);
+      setSelected(studentId);
+    } catch (e) { setDetail(null); }
+    finally { setLoadingDetail(false); }
+  };
+
+  const examColors = { IELTS:'#3b82f6', PTE:'#10b981', GERMAN_A1:'#f59e0b', GERMAN_A2:'#f97316', GERMAN_B1:'#8b5cf6', GERMAN_B2:'#ec4899', FRENCH_A1:'#ef4444' };
+  const scoreLabel = (exam, score) => {
+    if (!score) return '—';
+    if (exam?.startsWith('IELTS')) return `${score} Band`;
+    if (exam === 'PTE') return `${score} PTE`;
+    return `${score}%`;
+  };
+
+  if (!data) return <div className="text-slate-400 text-sm py-8 text-center">Loading student progress...</div>;
+
+  const students = Array.isArray(data) ? data : (data.students || []);
+  const examTypes = ['ALL', ...new Set(students.map(s => s.target_exam).filter(Boolean))];
+  const visible = filter === 'ALL' ? students : students.filter(s => s.target_exam === filter);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-xl font-black text-slate-900">Student Progress & Analytics 📊</h2>
+          <p className="text-sm text-slate-400 mt-0.5">Target planning, test scores, and attendance across all students</p>
+        </div>
+        <div className="flex items-center gap-2 text-sm bg-slate-100 rounded-xl px-3 py-1.5">
+          <span className="text-slate-500">Total Students:</span>
+          <span className="font-black text-slate-900">{students.length}</span>
+        </div>
+      </div>
+
+      {/* Summary KPI Row */}
+      {students.length > 0 && (() => {
+        const withTarget = students.filter(s => s.target_exam);
+        const withTests = students.filter(s => s.tests_taken > 0);
+        const avgAttendance = students.length ? Math.round(students.reduce((a, s) => a + (Number(s.attendance_rate) || 0), 0) / students.length) : 0;
+        const avgScore = withTests.length ? Math.round(withTests.reduce((a, s) => a + (Number(s.avg_score) || 0), 0) / withTests.length) : 0;
+        return (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            {[
+              { icon: '🎯', label: 'With Target Set', val: `${withTarget.length}`, sub: `${Math.round(withTarget.length/students.length*100)}% of students`, color: '#6366f1' },
+              { icon: '📝', label: 'Tests Taken', val: `${students.reduce((a,s) => a + (Number(s.tests_taken)||0), 0)}`, sub: `Across all students`, color: '#3b82f6' },
+              { icon: '📈', label: 'Avg Test Score', val: avgScore ? `${avgScore}%` : '—', sub: `Among tested students`, color: '#10b981' },
+              { icon: '📅', label: 'Avg Attendance', val: `${avgAttendance}%`, sub: `Live class attendance`, color: '#f59e0b' },
+            ].map(k => (
+              <div key={k.label} className="rounded-2xl p-4 border border-slate-100 bg-white shadow-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xl">{k.icon}</span>
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">{k.label}</span>
+                </div>
+                <div className="text-2xl font-black" style={{ color: k.color }}>{k.val}</div>
+                <div className="text-xs text-slate-400 mt-0.5">{k.sub}</div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
+      {/* Exam filter tabs */}
+      {examTypes.length > 1 && (
+        <div className="flex gap-2 mb-5 flex-wrap">
+          {examTypes.map(ex => (
+            <button key={ex} onClick={() => setFilter(ex)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${filter===ex ? 'text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+              style={filter===ex ? { background: examColors[ex] || accent } : {}}>
+              {ex.replace('_', ' ')}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Student table */}
+      <div className="card">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Student</th>
+                <th>Target Exam</th>
+                <th>Target Score</th>
+                <th>Avg Score</th>
+                <th>Tests Taken</th>
+                <th>Attendance</th>
+                <th>Target Date</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.length === 0 ? (
+                <tr><td colSpan={8} className="text-center py-10 text-slate-400">
+                  {students.length === 0
+                    ? 'No students have set targets yet. Encourage students to use the Progress tab.'
+                    : 'No students match this filter.'}
+                </td></tr>
+              ) : visible.map(s => {
+                const examColor = examColors[s.target_exam] || accent;
+                const attPct = Number(s.attendance_rate) || 0;
+                const attColor = attPct >= 80 ? '#10b981' : attPct >= 50 ? '#f59e0b' : '#ef4444';
+                const scoreGap = s.target_score && s.avg_score ? Math.round(Number(s.target_score) - Number(s.avg_score)) : null;
+                return (
+                  <tr key={s.student_id} className={selected === s.student_id ? 'bg-blue-50' : ''}>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-black text-white flex-shrink-0"
+                          style={{ background: accent }}>{s.student_name?.[0]}</div>
+                        <div>
+                          <div className="font-semibold text-sm text-slate-900">{s.student_name}</div>
+                          <div className="text-xs text-slate-400">{s.student_email}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      {s.target_exam
+                        ? <span className="text-xs font-black px-2 py-1 rounded-full text-white" style={{ background: examColor }}>{s.target_exam.replace('_',' ')}</span>
+                        : <span className="text-xs text-slate-300">Not set</span>}
+                    </td>
+                    <td className="font-bold text-sm">
+                      {s.target_score ? <span style={{ color: examColor }}>{scoreLabel(s.target_exam, s.target_score)}</span> : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td>
+                      {s.avg_score != null
+                        ? <div>
+                            <span className="font-bold text-sm">{scoreLabel(s.target_exam, Math.round(s.avg_score))}</span>
+                            {scoreGap != null && <span className={`text-xs ml-1 ${scoreGap > 0 ? 'text-amber-500' : 'text-emerald-500'}`}>
+                              {scoreGap > 0 ? `↑${scoreGap} to go` : '✓ On target'}
+                            </span>}
+                          </div>
+                        : <span className="text-slate-300 text-xs">No tests yet</span>}
+                    </td>
+                    <td className="text-center font-bold">{s.tests_taken || 0}</td>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full" style={{ width: `${attPct}%`, background: attColor }} />
+                        </div>
+                        <span className="text-xs font-bold" style={{ color: attColor }}>{attPct}%</span>
+                      </div>
+                    </td>
+                    <td className="text-xs text-slate-500">
+                      {s.target_date ? new Date(s.target_date).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td>
+                      <button
+                        onClick={() => selected === s.student_id ? setSelected(null) : loadDetail(s.student_id)}
+                        className="text-xs font-bold px-3 py-1.5 rounded-lg border-2 transition hover:text-white"
+                        style={{ borderColor: accent, color: selected === s.student_id ? 'white' : accent, background: selected === s.student_id ? accent : '' }}>
+                        {selected === s.student_id ? 'Close' : 'Details'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Student Detail Panel */}
+      {selected && (
+        <div className="mt-6 card border-2" style={{ borderColor: accent + '40' }}>
+          {loadingDetail ? (
+            <div className="text-center py-8 text-slate-400">Loading student details...</div>
+          ) : detail ? (
+            <div>
+              <div className="flex items-center justify-between mb-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-xl font-black text-white" style={{ background: accent }}>
+                    {detail.student?.name?.[0] || '?'}
+                  </div>
+                  <div>
+                    <div className="font-black text-slate-900">{detail.student?.name}</div>
+                    <div className="text-xs text-slate-400">{detail.student?.email} · {detail.student?.phone || 'No phone'}</div>
+                  </div>
+                </div>
+                <button onClick={() => setSelected(null)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+              </div>
+
+              {/* Target summary */}
+              {detail.target && (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+                  {[
+                    { label: 'Target Exam', val: detail.target.exam_type?.replace('_',' ') || '—', color: examColors[detail.target.exam_type] || accent },
+                    { label: 'Target Score', val: scoreLabel(detail.target.exam_type, detail.target.target_score), color: '#6366f1' },
+                    { label: 'Study Hours/Day', val: detail.target.daily_study_hours ? `${detail.target.daily_study_hours}h/day` : '—', color: '#10b981' },
+                    { label: 'Target Date', val: detail.target.target_date ? new Date(detail.target.target_date).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : '—', color: '#f59e0b' },
+                  ].map(k => (
+                    <div key={k.label} className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                      <div className="text-xs text-slate-400 font-bold uppercase tracking-wide mb-1">{k.label}</div>
+                      <div className="font-black text-sm" style={{ color: k.color }}>{k.val}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Module scores */}
+              {detail.module_scores && Object.keys(detail.module_scores).length > 0 && (
+                <div className="mb-5">
+                  <h4 className="text-xs font-black uppercase tracking-wide text-slate-500 mb-3">Module Performance</h4>
+                  <div className="space-y-2">
+                    {Object.entries(detail.module_scores).map(([mod, score]) => {
+                      const pct = Number(score) || 0;
+                      const barColor = pct >= 75 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#ef4444';
+                      return (
+                        <div key={mod} className="flex items-center gap-3">
+                          <span className="text-xs text-slate-600 w-32 flex-shrink-0 font-medium">{mod}</span>
+                          <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: barColor }} />
+                          </div>
+                          <span className="text-xs font-black w-10 text-right" style={{ color: barColor }}>{Math.round(pct)}%</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Recent test history */}
+              {detail.recent_tests && detail.recent_tests.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-wide text-slate-500 mb-3">Recent Tests</h4>
+                  <div className="space-y-2">
+                    {detail.recent_tests.slice(0, 5).map((t, i) => (
+                      <div key={i} className="flex items-center justify-between text-sm p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                        <div>
+                          <span className="font-semibold text-slate-800">{t.test_name}</span>
+                          <span className="text-xs text-slate-400 ml-2">{t.exam_type}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="font-black" style={{ color: Number(t.percentage_score) >= 70 ? '#10b981' : '#f59e0b' }}>
+                            {Math.round(t.percentage_score)}%
+                          </span>
+                          <span className="text-xs text-slate-400">{t.taken_at?.split('T')[0]}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!detail.target && !detail.recent_tests?.length && (
+                <div className="text-center py-6 text-slate-400">
+                  <div className="text-3xl mb-2">📊</div>
+                  <p className="font-semibold">No progress data yet</p>
+                  <p className="text-xs mt-1">Student hasn't set a target or taken any tests</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-slate-400">Could not load student details.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MAIN ─────────────────────────────────────────────────────
 const ALL_SECTIONS = [
   { id: 'overview', icon: '📊', label: 'Overview' },
@@ -1645,6 +1919,7 @@ const ALL_SECTIONS = [
   { id: 'batches', icon: '📅', label: 'Batches' },
   { id: 'faculty', icon: '🎓', label: 'Faculty' },
   { id: 'liveclasses', icon: '📺', label: 'Live Classes' },
+  { id: 'studentprogress', icon: '🏆', label: 'Student Progress' },
   { id: 'earnings', icon: '💵', label: 'Earnings' },
   { id: 'claim', icon: '✅', label: 'Claim Commission' },
   { id: 'crm', icon: '📋', label: 'CRM / Leads' },
@@ -1738,6 +2013,7 @@ export default function PartnerDashboard() {
     batches: <PartnerBatches accent={accent} />,
     faculty: <PartnerFaculty accent={accent} />,
     liveclasses: <PartnerLiveClasses accent={accent} />,
+    studentprogress: <StudentProgressOverview accent={accent} />,
     earnings: <Earnings accent={accent} commRate={commRate} />,
     claim: <Claim accent={accent} />,
     crm: <CRM accent={accent} />,
