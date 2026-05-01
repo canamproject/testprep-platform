@@ -2071,10 +2071,12 @@ app.put('/api/admin/agencies/:id/portal-settings', authMiddleware(['super_admin'
 // ─── ZOOM API HELPER ─────────────────────────────────────────────────────────
 async function getZoomToken(cfg) {
   const creds = Buffer.from(`${cfg.client_id}:${cfg.client_secret}`).toString('base64');
-  const r = await fetch(
-    `https://zoom.us/oauth/token?grant_type=account_credentials&account_id=${encodeURIComponent(cfg.account_id)}`,
-    { method: 'POST', headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
-  );
+  // account_id must be in the POST body (not query string) for Server-to-Server OAuth
+  const r = await fetch('https://zoom.us/oauth/token', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=account_credentials&account_id=${encodeURIComponent(cfg.account_id)}`
+  });
   const d = await r.json();
   if (!d.access_token) throw new Error(d.reason || d.error_description || 'Zoom auth failed — check Account ID / Client ID / Client Secret');
   return d.access_token;
