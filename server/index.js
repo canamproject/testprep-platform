@@ -1591,6 +1591,12 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
         isModerator = true;
       }
     } else if (userRole === 'student') {
+      // ── Fetch agency contact info (for WhatsApp button on payment issues) ──
+      const [[agencyInfo]] = await getPool().query(
+        'SELECT name, phone, email FROM agencies WHERE id=?', [liveClass.agency_id]
+      );
+      res._agencyInfo = agencyInfo || {};
+
       // 1. Paid enrollment → full access
       const [[enrollment]] = await getPool().query(`
         SELECT e.id FROM enrollments e
@@ -1601,7 +1607,7 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
       if (enrollment) {
         canJoin = true;
       } else {
-        // 2. Valid class-access coupon → full access (tracks usage)
+        // 2. Valid class-access coupon → full access
         const [[couponAccess]] = await getPool().query(`
           SELECT cr.id, cr.classes_used, cac.access_type, cac.allowed_count, cac.code
           FROM coupon_redemptions cr
@@ -1615,7 +1621,6 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
 
         if (couponAccess) {
           canJoin = true;
-          // Increment class usage counter
           await getPool().query(
             'UPDATE coupon_redemptions SET classes_used = classes_used + 1 WHERE id = ?',
             [couponAccess.id]
@@ -1628,9 +1633,40 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
               : couponAccess.allowed_count - couponAccess.classes_used - 1
           };
         } else {
-          // 3. Demo mode — ANY student can join any class for 15 min free preview
-          canJoin = true;
-          isDemo = true;
+          // 3. Check for pending enrollment with submitted payment proof
+          const [[pendingEnr]] = await getPool().query(`
+            SELECT e.id as enrollment_id, pp.id as proof_id, pp.status as proof_status,
+                   pp.created_at as proof_submitted_at, pp.admin_note,
+                   TIMESTAMPDIFF(HOUR, pp.created_at, NOW()) as hours_since_submission
+            FROM enrollments e
+            JOIN payment_proofs pp ON pp.enrollment_id = e.id
+            WHERE e.course_id = ? AND e.student_id = ? AND e.status = 'active'
+            ORDER BY pp.created_at DESC
+            LIMIT 1
+          `, [liveClass.course_id, userId]);
+
+          if (pendingEnr) {
+            if (pendingEnr.proof_status === 'pending' && pendingEnr.hours_since_submission <= 48) {
+              // Proof submitted, within 48hrs, not yet reviewed → allow join with pending banner
+              canJoin = true;
+              res._paymentPending = true;
+              res._proofSubmittedAt = pendingEnr.proof_submitted_at;
+              res._hoursLeft = Math.max(0, 48 - pendingEnr.hours_since_submission);
+            } else if (pendingEnr.proof_status === 'rejected') {
+              // Admin rejected the proof
+              res._paymentRejected = true;
+              res._adminNote = pendingEnr.admin_note || 'Your payment could not be verified.';
+            } else if (pendingEnr.proof_status === 'pending' && pendingEnr.hours_since_submission > 48) {
+              // Proof pending but 48hr deadline passed
+              res._paymentExpired = true;
+            }
+          }
+
+          if (!canJoin) {
+            // 4. Demo mode — 5 min free preview for Zoom, 15 min for Jitsi
+            canJoin = true;
+            isDemo = true;
+          }
         }
       }
     }
@@ -1676,8 +1712,19 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
       // ── Access control ──────────────────────────────────────────────────
       is_moderator: isModerator,
       is_demo: isDemo,
-      demo_minutes: isDemo ? 15 : null,
+      // Zoom demo = 5 min, Jitsi demo = 15 min
+      demo_minutes: isDemo ? (liveClass.platform === 'zoom' ? 5 : 15) : null,
       coupon_info: res._couponInfo || null,
+      // ── Payment status flags ─────────────────────────────────────────────
+      payment_pending: res._paymentPending || false,
+      payment_rejected: res._paymentRejected || false,
+      payment_expired: res._paymentExpired || false,
+      payment_admin_note: res._adminNote || null,
+      payment_hours_left: res._hoursLeft || null,
+      // ── Agency contact (for WhatsApp button) ────────────────────────────
+      agency_name: res._agencyInfo?.name || null,
+      agency_phone: res._agencyInfo?.phone || null,
+      agency_email: res._agencyInfo?.email || null,
       // ── Course info ─────────────────────────────────────────────────────
       course_id: liveClass.course_id,
       course_title: liveClass.course_title,
