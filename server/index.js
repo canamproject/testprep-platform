@@ -1497,92 +1497,132 @@ app.post('/api/faculty/live-classes', authMiddleware(['faculty']), async (req, r
   }
 });
 
-// ── Real-time Zoom participant count for a live class ─────────────────────────
-// Uses Zoom API + DB enrollment data to split enrolled vs demo participants
+// ── Real-time participant count for a live class ──────────────────────────────
+// Strategy: DB attendance (primary, always available) + Zoom API (supplement if scopes allow)
 app.get('/api/admin/live-classes/:id/zoom-participants', authMiddleware(['super_admin', 'partner_admin']), async (req, res) => {
   const classId = req.params.id;
   try {
     const [[lc]] = await getPool().query(
       `SELECT lc.zoom_meeting_id, lc.agency_id, b.course_id
        FROM live_classes lc JOIN batches b ON b.id = lc.batch_id
-       WHERE lc.id = ? AND lc.platform = 'zoom'`, [classId]
+       WHERE lc.id = ?`, [classId]
     );
-    if (!lc || !lc.zoom_meeting_id) return res.json({ enrolled: 0, demo: 0, total: 0, source: 'none' });
-
+    if (!lc) return res.json({ enrolled: 0, demo: 0, total: 0, source: 'not_found' });
     if (req.user.role === 'partner_admin' && lc.agency_id !== req.user.agency_id) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Get Zoom token for this agency
-    const [[platformCfg]] = await getPool().query(
-      'SELECT active_zoom_config_id FROM live_platform_config WHERE agency_id=?', [lc.agency_id]
-    ).catch(() => [[null]]);
-    if (!platformCfg?.active_zoom_config_id) return res.json({ enrolled: 0, demo: 0, total: 0, source: 'no_config' });
+    // ── 1. Always get DB attendance count (primary, most reliable) ────────────
+    const [dbRows] = await getPool().query(`
+      SELECT ca.student_id, u.email as user_email, u.name,
+             (SELECT e.id FROM enrollments e
+              WHERE e.student_id = ca.student_id AND e.course_id = ? AND e.status = 'active' LIMIT 1) as is_enrolled
+      FROM class_attendance ca
+      JOIN users u ON u.id = ca.student_id
+      WHERE ca.live_class_id = ? AND ca.left_at IS NULL
+    `, [lc.course_id, classId]);
 
-    const [[zoomCfg]] = await getPool().query('SELECT * FROM zoom_configs WHERE id=?', [platformCfg.active_zoom_config_id]);
-    if (!zoomCfg) return res.json({ enrolled: 0, demo: 0, total: 0, source: 'no_config' });
+    const dbEnrolled = dbRows.filter(r => r.is_enrolled).length;
+    const dbDemo     = dbRows.filter(r => !r.is_enrolled).length;
 
-    const token = await getZoomToken(zoomCfg).catch(() => null);
-    if (!token) return res.json({ enrolled: 0, demo: 0, total: 0, source: 'auth_failed' });
+    // ── 2. Try Zoom API as supplemental (if meeting_id exists + token works) ──
+    let zoomParticipants = null;
+    let zoomApiError = null;
+    let zoomApiSource = null;
 
-    const headers = { Authorization: `Bearer ${token}` };
-
-    // Try in-meeting participants (live) first
-    let participants = [];
-    let apiStatus = 0;
-    let apiError = null;
-    try {
-      const zRes = await fetch(
-        `https://api.zoom.us/v2/meetings/${lc.zoom_meeting_id}/participants?page_size=300`, { headers }
-      );
-      apiStatus = zRes.status;
-      const zData = await zRes.json();
-      if (zRes.ok && zData.participants) {
-        participants = zData.participants;
-      } else {
-        apiError = zData.message || zData.error || `HTTP ${zRes.status}`;
+    if (lc.zoom_meeting_id) {
+      // Find Zoom config: try agency-specific first, then global (id=1)
+      let zoomCfg = null;
+      const [[agencyCfg]] = await getPool().query(
+        'SELECT active_zoom_config_id FROM live_platform_config WHERE agency_id=?', [lc.agency_id]
+      ).catch(() => [[null]]);
+      const cfgId = agencyCfg?.active_zoom_config_id;
+      if (cfgId) {
+        const [[cfg]] = await getPool().query('SELECT * FROM zoom_configs WHERE id=?', [cfgId]);
+        zoomCfg = cfg;
       }
-    } catch (e) { apiError = e.message; }
+      // Fallback: global config
+      if (!zoomCfg) {
+        const [[globalCfg]] = await getPool().query(
+          'SELECT lpc.active_zoom_config_id FROM live_platform_config lpc WHERE lpc.id=1'
+        ).catch(() => [[null]]);
+        if (globalCfg?.active_zoom_config_id) {
+          const [[cfg]] = await getPool().query('SELECT * FROM zoom_configs WHERE id=?', [globalCfg.active_zoom_config_id]);
+          zoomCfg = cfg;
+        }
+      }
 
-    // If live API returns empty or error (meeting not started yet / scope issue),
-    // fall back to DB class_attendance with left_at IS NULL
-    if (participants.length === 0) {
-      const [dbRows] = await getPool().query(`
-        SELECT ca.student_id, u.email as user_email, u.name,
-               (SELECT e.id FROM enrollments e WHERE e.student_id = ca.student_id
-                AND e.course_id = ? AND e.status = 'active' LIMIT 1) as is_enrolled
-        FROM class_attendance ca
-        JOIN users u ON u.id = ca.student_id
-        WHERE ca.live_class_id = ? AND ca.left_at IS NULL
-      `, [lc.course_id, classId]);
+      if (zoomCfg) {
+        const token = await getZoomToken(zoomCfg).catch(() => null);
+        if (token) {
+          const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+          const meetingId = lc.zoom_meeting_id;
 
-      const enrolled = dbRows.filter(r => r.is_enrolled).length;
-      const demo     = dbRows.filter(r => !r.is_enrolled).length;
+          // Attempt 1: In-meeting participants API (requires meeting:read:admin)
+          try {
+            const r1 = await fetch(`https://api.zoom.us/v2/meetings/${meetingId}/participants?page_size=300`, { headers });
+            const d1 = await r1.json();
+            if (r1.ok && Array.isArray(d1.participants)) {
+              zoomParticipants = d1.participants;
+              zoomApiSource = 'zoom_inmeet';
+            } else {
+              zoomApiError = `meetings API: ${d1.message || d1.code || r1.status}`;
+            }
+          } catch (e) { zoomApiError = `meetings API: ${e.message}`; }
+
+          // Attempt 2: Dashboard metrics API (requires dashboard:read:admin)
+          if (!zoomParticipants || zoomParticipants.length === 0) {
+            try {
+              const r2 = await fetch(`https://api.zoom.us/v2/metrics/meetings/${meetingId}/participants?type=live&page_size=300`, { headers });
+              const d2 = await r2.json();
+              if (r2.ok && Array.isArray(d2.participants)) {
+                zoomParticipants = d2.participants;
+                zoomApiSource = 'zoom_dashboard';
+              } else {
+                zoomApiError = (zoomApiError ? zoomApiError + '; ' : '') + `dashboard API: ${d2.message || d2.code || r2.status}`;
+              }
+            } catch (e) { zoomApiError = (zoomApiError || '') + `; dashboard: ${e.message}`; }
+          }
+        } else {
+          zoomApiError = 'Token fetch failed';
+        }
+      } else {
+        zoomApiError = 'No Zoom config found for this agency';
+      }
+    }
+
+    // ── 3. Decide what to show ────────────────────────────────────────────────
+    if (zoomParticipants && zoomParticipants.length > 0) {
+      // Zoom API has real data — cross-ref with enrollments
+      const [enrolledRows] = await getPool().query(
+        `SELECT u.email FROM users u JOIN enrollments e ON e.student_id=u.id
+         WHERE e.course_id=? AND e.status='active'`, [lc.course_id]
+      );
+      const enrolledEmails = new Set(enrolledRows.map(r => r.email.toLowerCase()));
+      let zEnrolled = 0, zDemo = 0;
+      zoomParticipants.forEach(p => {
+        const em = (p.user_email || p.email || '').toLowerCase();
+        if (em && enrolledEmails.has(em)) zEnrolled++; else zDemo++;
+      });
       return res.json({
-        enrolled, demo, total: enrolled + demo,
-        source: 'db_attendance',
-        zoom_api_error: apiError,
-        zoom_api_status: apiStatus,
-        participants: dbRows.map(r => ({ name: r.name, email: r.user_email, enrolled: !!r.is_enrolled }))
+        enrolled: zEnrolled, demo: zDemo, total: zoomParticipants.length,
+        source: zoomApiSource,
+        db_enrolled: dbEnrolled, db_demo: dbDemo,
+        participants: zoomParticipants.map(p => ({
+          name: p.name || p.user_name, email: p.user_email || p.email,
+          enrolled: enrolledEmails.has((p.user_email || p.email || '').toLowerCase())
+        }))
       });
     }
 
-    // Get enrolled student emails for this course
-    const [enrolledRows] = await getPool().query(
-      `SELECT u.email, u.name FROM users u
-       JOIN enrollments e ON e.student_id = u.id
-       WHERE e.course_id = ? AND e.status = 'active'`, [lc.course_id]
-    );
-    const enrolledEmails = new Set(enrolledRows.map(r => r.email.toLowerCase()));
-
-    let enrolled = 0, demo = 0;
-    const details = participants.map(p => {
-      const isEnrolled = p.user_email && enrolledEmails.has(p.user_email.toLowerCase());
-      if (isEnrolled) enrolled++; else demo++;
-      return { name: p.name, email: p.user_email, enrolled: isEnrolled, join_time: p.join_time };
+    // Zoom API unavailable or returned empty — use DB counts (always accurate now)
+    return res.json({
+      enrolled: dbEnrolled, demo: dbDemo, total: dbEnrolled + dbDemo,
+      source: 'db_attendance',
+      zoom_api_error: zoomApiError,
+      participants: dbRows.map(r => ({ name: r.name, email: r.user_email, enrolled: !!r.is_enrolled }))
     });
 
-    res.json({ enrolled, demo, total: participants.length, source: 'zoom', participants: details });
   } catch (e) {
     console.error('zoom-participants error:', e.message);
     res.json({ enrolled: 0, demo: 0, total: 0, source: 'error', error: e.message });
@@ -1599,7 +1639,7 @@ app.put('/api/admin/live-classes/:id/start', authMiddleware(['super_admin', 'par
       return res.status(403).json({ error: 'Access denied' });
     }
     await getPool().query(
-      `UPDATE live_classes SET status='live', started_at=COALESCE(started_at, NOW()) WHERE id=?`, [classId]
+      `UPDATE live_classes SET status='live', started_at=NOW() WHERE id=?`, [classId]
     );
     res.json({ message: 'Class is now live' });
   } catch (e) {
@@ -1818,9 +1858,9 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
 
     try {
       await getPool().query(`
-        INSERT INTO class_attendance (live_class_id, student_id, batch_id, joined_at, attendance_status)
-        VALUES (?, ?, ?, NOW(), 'present')
-        ON DUPLICATE KEY UPDATE joined_at = NOW(), attendance_status = 'present'
+        INSERT INTO class_attendance (live_class_id, student_id, batch_id, joined_at, attendance_status, left_at)
+        VALUES (?, ?, ?, NOW(), 'present', NULL)
+        ON DUPLICATE KEY UPDATE joined_at = NOW(), attendance_status = 'present', left_at = NULL
       `, [classId, userId, liveClass.batch_id]);
     } catch (_) { /* attendance table may not exist yet */ }
 

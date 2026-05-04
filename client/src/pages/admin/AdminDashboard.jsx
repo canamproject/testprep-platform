@@ -1635,18 +1635,29 @@ function LiveClassesAdmin() {
                               </div>
                               {total === 0 && <div className="text-[10px] text-slate-400">No one in yet</div>}
                               {isZoomLive && zc && (
-                                <div className="flex items-center gap-1">
-                                  <span className={`text-[9px] font-semibold ${zc.source === 'zoom' ? 'text-blue-400' : zc.source === 'db_attendance' ? 'text-amber-500' : 'text-red-400'}`}>
-                                    {zc.source === 'zoom' ? '🔵 Zoom live' : zc.source === 'db_attendance' ? '🟡 DB (Zoom API failed)' : '⚠ error'}
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  <span className={`text-[9px] font-semibold ${
+                                    ['zoom_inmeet','zoom_dashboard'].includes(zc.source) ? 'text-blue-500'
+                                    : zc.source === 'db_attendance' ? 'text-amber-500'
+                                    : 'text-red-400'
+                                  }`}
+                                    title={zc.zoom_api_error ? `Zoom API: ${zc.zoom_api_error}` : zc.source}>
+                                    {['zoom_inmeet','zoom_dashboard'].includes(zc.source)
+                                      ? '🔵 Zoom' : zc.source === 'db_attendance' ? '🟡 DB' : '⚠ err'}
                                   </span>
                                   <button
-                                    title={zc.zoom_api_error ? `Zoom API error: ${zc.zoom_api_error}` : 'Refresh counts'}
-                                    className="text-[9px] text-blue-400 hover:text-blue-600"
+                                    title={`Refresh counts\n${zc.zoom_api_error ? 'Zoom error: ' + zc.zoom_api_error : ''}\nParticipants: ${(zc.participants||[]).map(p=>p.name).join(', ') || 'none'}`}
+                                    className="text-[10px] text-slate-400 hover:text-blue-500"
                                     onClick={() => api.get(`/admin/live-classes/${c.id}/zoom-participants`)
                                       .then(data => setZoomCounts(prev => ({ ...prev, [c.id]: { ...data, lastFetched: Date.now() } })))
                                       .catch(() => {})}>
                                     🔄
                                   </button>
+                                  {zc.participants?.length > 0 && (
+                                    <span className="text-[8px] text-slate-400 block w-full" title={zc.participants.map(p=>`${p.name}${p.enrolled?' ✓':' (demo)'}`).join(', ')}>
+                                      {zc.participants.map(p => p.name?.split(' ')[0]).join(', ')}
+                                    </span>
+                                  )}
                                 </div>
                               )}
                             </>
