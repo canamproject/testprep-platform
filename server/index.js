@@ -1497,6 +1497,65 @@ app.post('/api/faculty/live-classes', authMiddleware(['faculty']), async (req, r
   }
 });
 
+// ── Real-time Zoom participant count for a live class ─────────────────────────
+// Uses Zoom API + DB enrollment data to split enrolled vs demo participants
+app.get('/api/admin/live-classes/:id/zoom-participants', authMiddleware(['super_admin', 'partner_admin']), async (req, res) => {
+  const classId = req.params.id;
+  try {
+    const [[lc]] = await getPool().query(
+      `SELECT lc.zoom_meeting_id, lc.agency_id, b.course_id
+       FROM live_classes lc JOIN batches b ON b.id = lc.batch_id
+       WHERE lc.id = ? AND lc.platform = 'zoom'`, [classId]
+    );
+    if (!lc || !lc.zoom_meeting_id) return res.json({ enrolled: 0, demo: 0, total: 0, source: 'none' });
+
+    if (req.user.role === 'partner_admin' && lc.agency_id !== req.user.agency_id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Get Zoom token for this agency
+    const [[platformCfg]] = await getPool().query(
+      'SELECT active_zoom_config_id FROM live_platform_config WHERE agency_id=?', [lc.agency_id]
+    ).catch(() => [[null]]);
+    if (!platformCfg?.active_zoom_config_id) return res.json({ enrolled: 0, demo: 0, total: 0, source: 'no_config' });
+
+    const [[zoomCfg]] = await getPool().query('SELECT * FROM zoom_configs WHERE id=?', [platformCfg.active_zoom_config_id]);
+    if (!zoomCfg) return res.json({ enrolled: 0, demo: 0, total: 0, source: 'no_config' });
+
+    const token = await getZoomToken(zoomCfg).catch(() => null);
+    if (!token) return res.json({ enrolled: 0, demo: 0, total: 0, source: 'auth_failed' });
+
+    // Fetch live participant list from Zoom
+    const zRes = await fetch(`https://api.zoom.us/v2/meetings/${lc.zoom_meeting_id}/participants?page_size=300`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const zData = await zRes.json();
+    const participants = zData.participants || [];
+
+    if (participants.length === 0) return res.json({ enrolled: 0, demo: 0, total: 0, source: 'zoom', participants: [] });
+
+    // Get enrolled student emails for this course
+    const [enrolledRows] = await getPool().query(
+      `SELECT u.email, u.name FROM users u
+       JOIN enrollments e ON e.student_id = u.id
+       WHERE e.course_id = ? AND e.status = 'active'`, [lc.course_id]
+    );
+    const enrolledEmails = new Set(enrolledRows.map(r => r.email.toLowerCase()));
+
+    let enrolled = 0, demo = 0;
+    const details = participants.map(p => {
+      const isEnrolled = p.user_email && enrolledEmails.has(p.user_email.toLowerCase());
+      if (isEnrolled) enrolled++; else demo++;
+      return { name: p.name, email: p.user_email, enrolled: isEnrolled, join_time: p.join_time };
+    });
+
+    res.json({ enrolled, demo, total: participants.length, source: 'zoom', participants: details });
+  } catch (e) {
+    console.error('zoom-participants error:', e.message);
+    res.json({ enrolled: 0, demo: 0, total: 0, source: 'error', error: e.message });
+  }
+});
+
 // Admin starts a live class (sets status='live', records started_at)
 app.put('/api/admin/live-classes/:id/start', authMiddleware(['super_admin', 'partner_admin']), async (req, res) => {
   const classId = req.params.id;

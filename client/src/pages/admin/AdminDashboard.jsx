@@ -1270,6 +1270,9 @@ function LiveClassesAdmin() {
   const [facultyList, setFacultyList] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editClass, setEditClass] = useState(null); // class being edited
+  // Real-time Zoom participant counts: { [classId]: { enrolled, demo, total, source, lastFetched } }
+  const [zoomCounts, setZoomCounts] = useState({});
+  const zoomPollRef = React.useRef(null);
   const TIMEZONES = [
     { value: 'Asia/Kolkata',      label: '🇮🇳 India (IST, UTC+5:30)' },
     { value: 'America/New_York',  label: '🇺🇸 New York (EST/EDT)' },
@@ -1296,7 +1299,30 @@ function LiveClassesAdmin() {
     api.get('/admin/live-platform-config').then(d => setActivePlatform(d.platform || 'jitsi')).catch(() => {});
   }, []);
 
-  const loadClasses = () => api.get('/live-classes').then(setClasses);
+  const loadClasses = () => api.get('/live-classes').then(data => {
+    setClasses(data);
+    return data;
+  });
+
+  // Fetch real-time Zoom participant counts for all live Zoom classes
+  const fetchZoomCounts = (classList) => {
+    const liveZoom = (classList || classes).filter(c => c.status === 'live' && c.platform === 'zoom');
+    liveZoom.forEach(c => {
+      api.get(`/admin/live-classes/${c.id}/zoom-participants`)
+        .then(data => setZoomCounts(prev => ({ ...prev, [c.id]: { ...data, lastFetched: Date.now() } })))
+        .catch(() => {});
+    });
+  };
+
+  // Auto-poll every 30s while any Zoom class is live
+  React.useEffect(() => {
+    const liveZoom = classes.filter(c => c.status === 'live' && c.platform === 'zoom');
+    if (liveZoom.length > 0) {
+      fetchZoomCounts(classes);
+      zoomPollRef.current = setInterval(() => fetchZoomCounts(classes), 30000);
+    }
+    return () => { if (zoomPollRef.current) clearInterval(zoomPollRef.current); };
+  }, [classes.map(c => `${c.id}:${c.status}`).join(',')]);
 
   // Auto-generate title when batch or datetime changes
   const autoTitle = () => {
@@ -1330,8 +1356,12 @@ function LiveClassesAdmin() {
   const handleStartClass = async (c) => {
     try {
       await api.put(`/admin/live-classes/${c.id}/start`, {});
-      loadClasses();           // refresh so status badge turns 🔴 LIVE
-      // Then open the meeting
+      const updated = await loadClasses();   // refresh so status badge turns 🔴 LIVE
+      // For Zoom: immediately fetch participant count
+      if (c.platform === 'zoom') {
+        setTimeout(() => fetchZoomCounts(updated || classes), 3000); // 3s delay for Zoom to register
+      }
+      // Open the meeting
       if (c.platform === 'zoom' && c.zoom_start_url) {
         window.open(c.zoom_start_url, '_blank');
       } else {
@@ -1581,21 +1611,46 @@ function LiveClassesAdmin() {
                     )}
                   </td>
                   <td>
-                    {c.status === 'live' ? (
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-                          <span className="text-xs font-bold text-green-700">{c.enrolled_live_count ?? 0} enrolled</span>
+                    {c.status === 'live' ? (() => {
+                      // Zoom: use real-time Zoom API counts; Jitsi: use DB attendance counts
+                      const zc = c.platform === 'zoom' ? zoomCounts[c.id] : null;
+                      const enrolledCount = zc ? zc.enrolled : (c.enrolled_live_count ?? 0);
+                      const demoCount     = zc ? zc.demo    : (c.demo_live_count    ?? 0);
+                      const total         = enrolledCount + demoCount;
+                      const isZoomLive    = c.platform === 'zoom';
+                      const loading       = isZoomLive && !zc;
+                      return (
+                        <div className="space-y-1">
+                          {loading ? (
+                            <div className="text-[10px] text-slate-400 animate-pulse">Fetching from Zoom…</div>
+                          ) : (
+                            <>
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                                <span className="text-xs font-bold text-green-700">{enrolledCount} enrolled</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+                                <span className="text-xs font-bold text-amber-600">{demoCount} demo</span>
+                              </div>
+                              {total === 0 && <div className="text-[10px] text-slate-400">No one in yet</div>}
+                              {isZoomLive && zc && (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[9px] text-slate-400">via Zoom API</span>
+                                  <button
+                                    className="text-[9px] text-blue-400 hover:text-blue-600"
+                                    onClick={() => api.get(`/admin/live-classes/${c.id}/zoom-participants`)
+                                      .then(data => setZoomCounts(prev => ({ ...prev, [c.id]: { ...data, lastFetched: Date.now() } })))
+                                      .catch(() => {})}>
+                                    🔄
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )}
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
-                          <span className="text-xs font-bold text-amber-600">{c.demo_live_count ?? 0} demo</span>
-                        </div>
-                        {((c.enrolled_live_count ?? 0) + (c.demo_live_count ?? 0)) === 0 && (
-                          <div className="text-[10px] text-slate-400">No one in yet</div>
-                        )}
-                      </div>
-                    ) : (
+                      );
+                    })() : (
                       <span className="text-xs text-slate-300">—</span>
                     )}
                   </td>
