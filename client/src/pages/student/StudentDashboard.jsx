@@ -433,8 +433,9 @@ function StudentLiveClasses({ accent }) {
   };
 
   const parseDT = (s) => s ? new Date(s.slice(0, 19)) : new Date(0);
-  const isLive = (c) => c.status === 'live' || Math.abs(new Date() - parseDT(c.scheduled_at)) / 60000 < 60;
-  const canJoin = (c) => c.status === 'live' || (parseDT(c.scheduled_at) - new Date()) / 60000 <= 15;
+  // A class is "live" if: DB says live, OR started_at is set (admin clicked start), OR within 60 min of scheduled time
+  const isLive = (c) => c.status === 'live' || !!c.started_at || Math.abs(new Date() - parseDT(c.scheduled_at)) / 60000 < 60;
+  const canJoin = (c) => c.status === 'live' || !!c.started_at || (parseDT(c.scheduled_at) - new Date()) / 60000 <= 15;
   const demoMinutes = (c) => c.platform === 'zoom' ? 5 : 15;
 
   if (loading) return <div className="text-slate-400 text-sm">Loading...</div>;

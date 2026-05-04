@@ -1497,6 +1497,24 @@ app.post('/api/faculty/live-classes', authMiddleware(['faculty']), async (req, r
   }
 });
 
+// Admin starts a live class (sets status='live', records started_at)
+app.put('/api/admin/live-classes/:id/start', authMiddleware(['super_admin', 'partner_admin']), async (req, res) => {
+  const classId = req.params.id;
+  try {
+    const [[lc]] = await getPool().query('SELECT agency_id, status FROM live_classes WHERE id=?', [classId]);
+    if (!lc) return res.status(404).json({ error: 'Class not found' });
+    if (req.user.role === 'partner_admin' && lc.agency_id !== req.user.agency_id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    await getPool().query(
+      `UPDATE live_classes SET status='live', started_at=COALESCE(started_at, NOW()) WHERE id=?`, [classId]
+    );
+    res.json({ message: 'Class is now live' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Admin ends a live class
 app.put('/api/admin/live-classes/:id/end', authMiddleware(['super_admin', 'partner_admin']), async (req, res) => {
   const classId = req.params.id;
@@ -1785,11 +1803,14 @@ app.get('/api/student/all-classes', authMiddleware(['student']), async (req, res
       JOIN agencies a ON b.agency_id = a.id
       WHERE (
           lc.status = 'live'
-          OR (lc.status = 'scheduled' AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 30 MINUTE) AND lc.scheduled_at <= DATE_ADD(NOW(), INTERVAL 14 DAY))
+          OR lc.started_at IS NOT NULL
+          OR (lc.status = 'scheduled' AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 4 HOUR) AND lc.scheduled_at <= DATE_ADD(NOW(), INTERVAL 14 DAY))
         )
+        AND lc.status != 'ended'
       ORDER BY
         is_enrolled IS NOT NULL DESC,
         lc.status = 'live' DESC,
+        (lc.started_at IS NOT NULL) DESC,
         lc.scheduled_at ASC
       LIMIT 100
     `, [studentId]);

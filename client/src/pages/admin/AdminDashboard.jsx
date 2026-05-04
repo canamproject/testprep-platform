@@ -1327,6 +1327,19 @@ function LiveClassesAdmin() {
     } catch (err) { alert(err.message); }
   };
 
+  const handleStartClass = async (c) => {
+    try {
+      await api.put(`/admin/live-classes/${c.id}/start`, {});
+      loadClasses();           // refresh so status badge turns 🔴 LIVE
+      // Then open the meeting
+      if (c.platform === 'zoom' && c.zoom_start_url) {
+        window.open(c.zoom_start_url, '_blank');
+      } else {
+        window.open(`/live-class/${c.id}`, '_blank');
+      }
+    } catch (err) { alert(err.message); }
+  };
+
   const handleEndClass = async (c) => {
     if (!confirm(`End "${c.title}"? This will close the class for all participants.`)) return;
     try {
@@ -1599,14 +1612,11 @@ function LiveClassesAdmin() {
                         </button>
                       )}
                       {(c.status === 'scheduled' || c.status === 'live') && (
-                        c.platform === 'zoom' && c.zoom_start_url
-                          ? <a href={c.zoom_start_url} target="_blank" rel="noreferrer"
-                              className="btn-primary text-xs no-underline inline-block">
-                              {c.status === 'live' ? '🔴 Join Zoom' : '🔵 Start Zoom'}
-                            </a>
-                          : <button className="btn-primary text-xs" onClick={() => window.open(`/live-class/${c.id}`, '_blank')}>
-                              {c.status === 'live' ? '🔴 Join Live' : 'Start Class'}
-                            </button>
+                        <button className="btn-primary text-xs" onClick={() => handleStartClass(c)}>
+                          {c.status === 'live'
+                            ? (c.platform === 'zoom' ? '🔴 Join Zoom' : '🔴 Join Live')
+                            : (c.platform === 'zoom' ? '🔵 Start Zoom' : 'Start Class')}
+                        </button>
                       )}
                       {c.status === 'live' && (
                         <button className="text-xs px-3 py-1 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 transition" onClick={() => handleEndClass(c)}>
