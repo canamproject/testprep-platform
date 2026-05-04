@@ -1514,7 +1514,7 @@ function LiveClassesAdmin() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Class</th><th>Batch</th><th>Faculty</th><th>Scheduled</th><th>Platform</th><th>Status</th><th>Actions</th></tr>
+              <tr><th>Class</th><th>Batch</th><th>Faculty</th><th>Scheduled</th><th>Platform</th><th>Status</th><th>👥 Live Participants</th><th>Actions</th></tr>
             </thead>
             <tbody>
               {classes.map(c => (
@@ -1549,9 +1549,42 @@ function LiveClassesAdmin() {
                     }
                   </td>
                   <td>
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusColor(c.status)}`}>
-                      {c.status === 'pending_approval' ? '⏳ Pending' : c.status === 'live' ? '🔴 Live' : c.status}
-                    </span>
+                    {c.status === 'live' ? (
+                      <div>
+                        <span className="inline-flex items-center gap-1.5 text-xs font-black px-2.5 py-1 rounded-full bg-red-100 text-red-700 border border-red-200">
+                          <span className="w-2 h-2 rounded-full bg-red-500 animate-ping inline-block" />
+                          🔴 LIVE
+                        </span>
+                        {c.started_at && (
+                          <div className="text-[10px] text-red-500 font-semibold mt-1">
+                            Started {new Date(c.started_at.slice?.(0,19) ?? c.started_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true})}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusColor(c.status)}`}>
+                        {c.status === 'pending_approval' ? '⏳ Pending' : c.status}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    {c.status === 'live' ? (
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                          <span className="text-xs font-bold text-green-700">{c.enrolled_live_count ?? 0} enrolled</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+                          <span className="text-xs font-bold text-amber-600">{c.demo_live_count ?? 0} demo</span>
+                        </div>
+                        {((c.enrolled_live_count ?? 0) + (c.demo_live_count ?? 0)) === 0 && (
+                          <div className="text-[10px] text-slate-400">No one in yet</div>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-300">—</span>
+                    )}
                   </td>
                   <td>
                     <div className="flex gap-1.5 flex-wrap">

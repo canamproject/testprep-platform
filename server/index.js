@@ -1234,23 +1234,51 @@ app.get('/api/live-classes', authMiddleware(), async (req, res) => {
   } else if (isAdmin) {
     query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
         a.name as agency_name,
-        u.name as faculty_name
+        u.name as faculty_name,
+        (SELECT COUNT(DISTINCT ca.student_id)
+         FROM class_attendance ca
+         JOIN enrollments e ON e.student_id = ca.student_id
+           AND e.course_id = (SELECT bx.course_id FROM batches bx WHERE bx.id = lc.batch_id)
+           AND e.status = 'active'
+         WHERE ca.live_class_id = lc.id AND ca.left_at IS NULL) as enrolled_live_count,
+        (SELECT COUNT(DISTINCT ca.student_id)
+         FROM class_attendance ca
+         WHERE ca.live_class_id = lc.id AND ca.left_at IS NULL
+           AND ca.student_id NOT IN (
+             SELECT e2.student_id FROM enrollments e2
+             WHERE e2.course_id = (SELECT bx2.course_id FROM batches bx2 WHERE bx2.id = lc.batch_id)
+             AND e2.status = 'active'
+           )) as demo_live_count
        FROM live_classes lc
        JOIN batches b ON lc.batch_id = b.id
        JOIN courses c ON b.course_id = c.id
        JOIN agencies a ON lc.agency_id = a.id
        LEFT JOIN users u ON lc.faculty_id = u.id
-       ORDER BY lc.scheduled_at DESC`;
+       ORDER BY lc.status = 'live' DESC, lc.scheduled_at DESC`;
     params = [];
   } else {
     query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
-        u.name as faculty_name
+        u.name as faculty_name,
+        (SELECT COUNT(DISTINCT ca.student_id)
+         FROM class_attendance ca
+         JOIN enrollments e ON e.student_id = ca.student_id
+           AND e.course_id = (SELECT bx.course_id FROM batches bx WHERE bx.id = lc.batch_id)
+           AND e.status = 'active'
+         WHERE ca.live_class_id = lc.id AND ca.left_at IS NULL) as enrolled_live_count,
+        (SELECT COUNT(DISTINCT ca.student_id)
+         FROM class_attendance ca
+         WHERE ca.live_class_id = lc.id AND ca.left_at IS NULL
+           AND ca.student_id NOT IN (
+             SELECT e2.student_id FROM enrollments e2
+             WHERE e2.course_id = (SELECT bx2.course_id FROM batches bx2 WHERE bx2.id = lc.batch_id)
+             AND e2.status = 'active'
+           )) as demo_live_count
        FROM live_classes lc
        JOIN batches b ON lc.batch_id = b.id
        JOIN courses c ON b.course_id = c.id
        LEFT JOIN users u ON lc.faculty_id = u.id
        WHERE lc.agency_id = ?
-       ORDER BY lc.scheduled_at DESC`;
+       ORDER BY lc.status = 'live' DESC, lc.scheduled_at DESC`;
     params = [agencyId];
   }
 
@@ -1757,10 +1785,13 @@ app.get('/api/student/all-classes', authMiddleware(['student']), async (req, res
       JOIN agencies a ON b.agency_id = a.id
       WHERE (
           lc.status = 'live'
-          OR (lc.status = 'scheduled' AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 30 MINUTE))
+          OR (lc.status = 'scheduled' AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 30 MINUTE) AND lc.scheduled_at <= DATE_ADD(NOW(), INTERVAL 14 DAY))
         )
-      ORDER BY lc.status = 'live' DESC, lc.scheduled_at ASC
-      LIMIT 50
+      ORDER BY
+        is_enrolled IS NOT NULL DESC,
+        lc.status = 'live' DESC,
+        lc.scheduled_at ASC
+      LIMIT 100
     `, [studentId]);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }

@@ -433,15 +433,144 @@ function StudentLiveClasses({ accent }) {
   };
 
   const parseDT = (s) => s ? new Date(s.slice(0, 19)) : new Date(0);
-  const isLive = (scheduledAt) => Math.abs(new Date() - parseDT(scheduledAt)) / 60000 < 60;
-  const canJoin = (scheduledAt) => (parseDT(scheduledAt) - new Date()) / 60000 <= 15;
+  const isLive = (c) => c.status === 'live' || Math.abs(new Date() - parseDT(c.scheduled_at)) / 60000 < 60;
+  const canJoin = (c) => c.status === 'live' || (parseDT(c.scheduled_at) - new Date()) / 60000 <= 15;
+  const demoMinutes = (c) => c.platform === 'zoom' ? 5 : 15;
 
   if (loading) return <div className="text-slate-400 text-sm">Loading...</div>;
 
+  const enrolled = classes.filter(c => c.is_enrolled);
+  const demo     = classes.filter(c => !c.is_enrolled);
+
+  const ClassCard = ({ c }) => {
+    const live    = isLive(c);
+    const joinable = canJoin(c);
+    const isDemo  = !c.is_enrolled;
+    const mins    = demoMinutes(c);
+    const minsLeft = Math.max(0, Math.ceil((parseDT(c.scheduled_at) - new Date()) / 60000));
+    const hoursLeft = Math.ceil(minsLeft / 60);
+
+    return (
+      <div key={c.id} className={`rounded-2xl overflow-hidden relative ${
+        isDemo && live
+          ? 'border-2 border-red-400 shadow-lg shadow-red-100'
+          : isDemo
+          ? 'border-2 border-amber-300 shadow-sm'
+          : live
+          ? 'border-2 border-green-400 shadow-lg shadow-green-100'
+          : 'border border-slate-200 shadow-sm'
+      } bg-white`}>
+
+        {/* Top accent bar */}
+        <div className={`h-1.5 w-full ${
+          live && !isDemo ? 'bg-green-500 animate-pulse'
+          : live && isDemo ? 'bg-red-500 animate-pulse'
+          : isDemo ? 'bg-amber-400'
+          : 'bg-slate-200'
+        }`} />
+
+        {/* LIVE + DEMO banner — full width, very prominent */}
+        {live && isDemo && (
+          <div className="flex items-center justify-between px-4 py-2.5"
+            style={{ background: 'linear-gradient(135deg, #dc2626, #b91c1c)' }}>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping inline-block" />
+              <span className="text-white font-black text-sm tracking-wide">🔴 LIVE NOW</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="bg-white/20 text-white text-xs font-bold px-3 py-1 rounded-full border border-white/40">
+                🎁 FREE {mins}-MIN DEMO · NOT ENROLLED
+              </span>
+            </div>
+          </div>
+        )}
+        {live && !isDemo && (
+          <div className="flex items-center justify-between px-4 py-2"
+            style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)' }}>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping inline-block" />
+              <span className="text-white font-black text-sm tracking-wide">🟢 CLASS IS LIVE</span>
+            </div>
+            <span className="bg-white/20 text-white text-xs font-bold px-3 py-1 rounded-full">✅ You're Enrolled</span>
+          </div>
+        )}
+        {!live && isDemo && (
+          <div className="flex items-center justify-between px-4 py-2 bg-amber-50 border-b border-amber-100">
+            <span className="text-amber-700 text-xs font-black">🎁 FREE {mins}-MIN DEMO AVAILABLE · NOT ENROLLED</span>
+            <span className="text-amber-500 text-xs font-semibold">
+              {minsLeft <= 60 ? `Starts in ${minsLeft}m` : `Starts in ${hoursLeft}h`}
+            </span>
+          </div>
+        )}
+
+        <div className="p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <h3 className="font-bold text-slate-900 text-base mb-1 truncate">{c.title}</h3>
+              {c.description && <p className="text-sm text-slate-500 mb-2 line-clamp-1">{c.description}</p>}
+
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 mb-2">
+                <span>📅 {parseDT(c.scheduled_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</span>
+                <span>🕐 {parseDT(c.scheduled_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true})}
+                  <span className="ml-1 font-medium text-blue-500">
+                    {c.timezone === 'Asia/Kolkata' || !c.timezone ? 'IST' : c.timezone.split('/')[1]?.replace('_',' ')}
+                  </span>
+                </span>
+                <span>⏱️ {c.duration_minutes} min</span>
+                {c.agency_name && <span>🏫 {c.agency_name}</span>}
+                {c.batch_name  && <span>🎓 {c.batch_name}</span>}
+              </div>
+
+              {/* Demo enroll CTA below info */}
+              {isDemo && (
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-xs text-slate-500">
+                    {c.course_title} · <span className="font-bold text-slate-700">₹{Number(c.course_price||0).toLocaleString('en-IN')}</span>
+                  </span>
+                  <button
+                    className="text-xs px-3 py-1 rounded-full font-bold border-2 transition hover:opacity-80"
+                    style={{ borderColor: accent, color: accent }}
+                    onClick={() => navigate('/student', { state: { tab: 'catalog' } })}>
+                    Enroll →
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Right CTA */}
+            <div className="flex-shrink-0 flex flex-col items-end gap-2">
+              {joinable ? (
+                <button
+                  className={`px-5 py-2.5 rounded-xl font-black text-white text-sm transition-all hover:scale-105 shadow-md ${
+                    live && isDemo ? 'shadow-red-200' : live ? 'shadow-green-200' : ''
+                  }`}
+                  style={{
+                    background: isDemo
+                      ? (live ? 'linear-gradient(135deg,#dc2626,#b91c1c)' : 'linear-gradient(135deg,#f59e0b,#d97706)')
+                      : (live ? 'linear-gradient(135deg,#16a34a,#15803d)' : accent)
+                  }}
+                  onClick={() => window.open(`/live-class/${c.id}`, '_blank')}>
+                  {isDemo
+                    ? (live ? `▶ Join Demo` : `▶ Preview`)
+                    : (live ? '▶ Join Now' : 'Enter Class')}
+                </button>
+              ) : (
+                <div className="text-center px-3 py-2 rounded-xl bg-slate-50 border border-slate-200">
+                  <span className="text-[10px] text-slate-400 block">Starts in</span>
+                  <span className="text-sm font-black text-slate-700">{hoursLeft > 0 ? `${hoursLeft}h` : `${minsLeft}m`}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div>
-      <h2 className="text-xl font-black text-slate-900 mb-2">Live Classes</h2>
-      <p className="text-sm text-slate-400 mb-4">Your enrolled classes + previews available for other courses</p>
+      <h2 className="text-xl font-black text-slate-900 mb-1">Live Classes</h2>
+      <p className="text-sm text-slate-400 mb-4">Enrolled classes first · Free demo available for others</p>
 
       {/* Coupon redemption box */}
       <div className="card mb-5 p-4" style={{border:`1px solid ${accent}30`, background:`${accent}06`}}>
@@ -460,7 +589,6 @@ function StudentLiveClasses({ accent }) {
             {couponMsg.ok ? '✓ ' : '✗ '}{couponMsg.text}
           </p>
         )}
-        {/* Active coupons summary */}
         {myCoupons.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2">
             {myCoupons.map(c => (
@@ -476,84 +604,43 @@ function StudentLiveClasses({ accent }) {
           </div>
         )}
       </div>
+
       {classes.length === 0 ? (
         <div className="card text-center py-12">
           <p className="text-4xl mb-3">📺</p>
-          <p className="text-slate-400">No upcoming live classes scheduled</p>
-          <p className="text-sm text-slate-400 mt-1">Check back soon — all partner classes appear here as free 15-min previews</p>
+          <p className="text-slate-500 font-semibold">No live or upcoming classes right now</p>
+          <p className="text-sm text-slate-400 mt-1">Check back soon — all partner classes appear here with free demo access</p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {classes.map(c => {
-            const live = isLive(c.scheduled_at) || c.status === 'live';
-            const joinable = canJoin(c.scheduled_at) || c.status === 'live';
-            const isDemo = !c.is_enrolled;
-            return (
-              <div key={c.id} className="card relative overflow-hidden">
-                <div className={`absolute top-0 left-0 right-0 h-1.5 ${live ? 'bg-green-500 animate-pulse' : isDemo ? 'bg-amber-400' : 'bg-slate-200'}`} />
-                <div className="flex items-start justify-between mt-2">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2 flex-wrap">
-                      <h3 className="font-bold text-slate-900">{c.title}</h3>
-                      {live && (
-                        <span className="flex items-center gap-1 font-black text-white text-xs px-2.5 py-1 rounded-full"
-                          style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', boxShadow: '0 0 10px rgba(22,163,74,0.5)' }}>
-                          <span className="w-2 h-2 rounded-full bg-white animate-ping inline-block" />
-                          🟢 LIVE NOW
-                        </span>
-                      )}
-                      {isDemo && <span className="bg-amber-500 text-white text-xs px-2 py-0.5 rounded-full">15-MIN PREVIEW</span>}
-                      {!isDemo && <span className="bg-green-500 text-white text-xs px-2 py-0.5 rounded-full">Enrolled</span>}
-                    </div>
-                    <p className="text-sm text-slate-500 mb-3">{c.description}</p>
-                    <div className="flex flex-wrap gap-4 text-sm text-slate-600">
-                      <span>📅 {parseDT(c.scheduled_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</span>
-                      <span>🕐 {parseDT(c.scheduled_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true})}
-                        <span className="ml-1 text-xs font-medium text-blue-500">
-                          {c.timezone === 'Asia/Kolkata' || !c.timezone ? 'IST' : c.timezone.split('/')[1]?.replace('_',' ')}
-                        </span>
-                      </span>
-                      <span>⏱️ {c.duration_minutes} min</span>
-                      {c.agency_name && <span>🏫 {c.agency_name}</span>}
-                      {c.batch_name && <span>🎓 {c.batch_name}</span>}
-                      <span className="badge badge-blue">{c.class_mode}</span>
-                    </div>
-                    {isDemo && (
-                      <p className="text-xs text-amber-600 mt-2">
-                        Watch 15 min free, then purchase to continue
-                      </p>
-                    )}
-                  </div>
-                  <div className="ml-4 flex-shrink-0 flex flex-col gap-2">
-                    {joinable ? (
-                      <button
-                        className="px-5 py-2 rounded-lg text-white font-semibold text-sm transition-all hover:opacity-90"
-                        style={{ background: isDemo ? '#f59e0b' : accent }}
-                        onClick={() => window.open(`/live-class/${c.id}`, '_blank')}
-                      >
-                        {isDemo ? '▶ Preview (15 min)' : live ? 'Join Now' : 'Enter Class'}
-                      </button>
-                    ) : (
-                      <div className="text-center">
-                        <span className="text-xs text-slate-400 block">Starts in</span>
-                        <span className="text-sm font-semibold text-slate-600">{Math.ceil((parseDT(c.scheduled_at)-new Date())/3600000)}h</span>
-                      </div>
-                    )}
-                    {isDemo && (
-                      <button
-                        className="px-5 py-2 rounded-lg font-semibold text-sm border-2 transition-all hover:opacity-90"
-                        style={{ borderColor: accent, color: accent }}
-                        onClick={() => navigate('/student', { state: { tab: 'catalog' } })}
-                      >
-                        Buy Course
-                      </button>
-                    )}
-                  </div>
-                </div>
+        <>
+          {/* ── Enrolled classes ── */}
+          {enrolled.length > 0 && (
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" />
+                <h3 className="text-sm font-black text-slate-700 uppercase tracking-wide">Your Enrolled Classes</h3>
+                <span className="text-xs bg-green-100 text-green-700 font-bold px-2 py-0.5 rounded-full">{enrolled.length}</span>
               </div>
-            );
-          })}
-        </div>
+              <div className="space-y-3">
+                {enrolled.map(c => <ClassCard key={c.id} c={c} />)}
+              </div>
+            </div>
+          )}
+
+          {/* ── Demo / not enrolled classes ── */}
+          {demo.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block" />
+                <h3 className="text-sm font-black text-slate-700 uppercase tracking-wide">Other Live Classes — Free Demo</h3>
+                <span className="text-xs bg-amber-100 text-amber-700 font-bold px-2 py-0.5 rounded-full">{demo.length}</span>
+              </div>
+              <div className="space-y-3">
+                {demo.map(c => <ClassCard key={c.id} c={c} />)}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
