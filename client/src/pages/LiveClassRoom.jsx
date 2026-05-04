@@ -161,18 +161,23 @@ export default function LiveClassRoom() {
     };
     const api = new window.JitsiMeetExternalAPI(domain, options);
     api.addEventListeners({
-      readyToClose: () => { handleLeave(); navigate(-1); },
-      videoConferenceLeft: () => { handleLeave(); }
+      readyToClose: () => { handleLeave(true); navigate(-1); },
+      videoConferenceLeft: () => { handleLeave(true); }
     });
     window.jitsiApi = api;
   };
 
-  const handleLeave = async () => {
+  const handleLeave = async (forceMarkLeft = false) => {
     if (timerRef.current)     { clearInterval(timerRef.current);     timerRef.current = null; }
     if (demoTimerRef.current) { clearInterval(demoTimerRef.current); demoTimerRef.current = null; }
     try {
+      const isZoom = classInfo?.platform === 'zoom';
       if (attendance.joined) {
-        await api.post(`/live-classes/${id}/leave`);
+        // For Zoom: do NOT mark left_at when web page closes — student is still in Zoom desktop app.
+        // Only mark left when admin ends the class, demo expires, or user explicitly leaves.
+        if (!isZoom || forceMarkLeft) {
+          await api.post(`/live-classes/${id}/leave`);
+        }
         if (attendance.duration > 0) {
           await api.post(`/live-classes/${id}/attendance`, {
             duration_seconds: attendance.duration,
@@ -256,13 +261,13 @@ export default function LiveClassRoom() {
 
           {/* Re-enroll */}
           <button
-            onClick={() => { handleLeave(); navigate('/student', { state: { tab: 'payments' } }); }}
+            onClick={() => { handleLeave(true); navigate('/student', { state: { tab: 'payments' } }); }}
             className="w-full py-3 rounded-xl font-black text-white mb-3 transition hover:opacity-90"
             style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
             💳 Submit New Payment Proof
           </button>
           <button
-            onClick={() => { handleLeave(); navigate(-1); }}
+            onClick={() => { handleLeave(true); navigate(-1); }}
             className="w-full py-2 text-slate-400 text-sm hover:text-slate-600 transition">
             ← Go Back
           </button>
@@ -282,7 +287,7 @@ export default function LiveClassRoom() {
 
         {/* Back */}
         <div className="w-full max-w-lg mb-4">
-          <button onClick={() => { handleLeave(); navigate(-1); }}
+          <button onClick={() => { handleLeave(true); navigate(-1); }}
             className="flex items-center gap-2 text-slate-400 hover:text-white text-sm transition-colors">
             ← Back to Classes
           </button>
@@ -388,7 +393,7 @@ export default function LiveClassRoom() {
             )}
 
             <button
-              onClick={() => { handleLeave(); navigate(-1); }}
+              onClick={() => { handleLeave(true); navigate(-1); }}
               className="w-full py-2 rounded-xl text-slate-400 text-sm hover:text-white hover:bg-slate-700 transition-colors">
               ← Leave Class
             </button>
@@ -426,7 +431,7 @@ export default function LiveClassRoom() {
                 <button
                   className="w-full py-3 rounded-xl font-black text-white mb-2 transition hover:opacity-90 shadow-lg"
                   style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
-                  onClick={() => { setShowDemoNotice(false); handleLeave(); navigate('/student', { state: { tab: 'catalog' } }); }}>
+                  onClick={() => { setShowDemoNotice(false); handleLeave(true); navigate('/student', { state: { tab: 'catalog' } }); }}>
                   🎓 Enroll Now — ₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}
                 </button>
                 <button
@@ -458,12 +463,12 @@ export default function LiveClassRoom() {
               <button
                 className="w-full py-3 rounded-xl text-white font-black mb-3 transition hover:opacity-90"
                 style={{ background: 'linear-gradient(135deg, #1e40af, #3b82f6)' }}
-                onClick={() => { handleLeave(); navigate('/student', { state: { tab: 'catalog' } }); }}>
+                onClick={() => { handleLeave(true); navigate('/student', { state: { tab: 'catalog' } }); }}>
                 🎓 Enroll Now
               </button>
               <button
                 className="w-full py-2 text-slate-400 text-sm hover:text-slate-600 transition"
-                onClick={() => { handleLeave(); navigate(-1); }}>
+                onClick={() => { handleLeave(true); navigate(-1); }}>
                 Go Back
               </button>
             </div>
@@ -499,7 +504,7 @@ export default function LiveClassRoom() {
             </span>
           )}
           <button
-            onClick={() => { handleLeave(); navigate(-1); }}
+            onClick={() => { handleLeave(true); navigate(-1); }}
             className="bg-red-600 hover:bg-red-700 px-4 py-1.5 rounded text-sm font-medium transition-colors">
             Leave
           </button>
@@ -563,7 +568,7 @@ export default function LiveClassRoom() {
             <button
               className="w-full py-3 rounded-xl font-black text-white mb-2 transition hover:opacity-90"
               style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
-              onClick={() => { setShowDemoNotice(false); handleLeave(); navigate('/student', { state: { tab: 'catalog' } }); }}>
+              onClick={() => { setShowDemoNotice(false); handleLeave(true); navigate('/student', { state: { tab: 'catalog' } }); }}>
               🎓 Enroll Now
             </button>
             <button onClick={() => setShowDemoNotice(false)}

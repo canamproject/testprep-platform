@@ -1525,14 +1525,47 @@ app.get('/api/admin/live-classes/:id/zoom-participants', authMiddleware(['super_
     const token = await getZoomToken(zoomCfg).catch(() => null);
     if (!token) return res.json({ enrolled: 0, demo: 0, total: 0, source: 'auth_failed' });
 
-    // Fetch live participant list from Zoom
-    const zRes = await fetch(`https://api.zoom.us/v2/meetings/${lc.zoom_meeting_id}/participants?page_size=300`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    const zData = await zRes.json();
-    const participants = zData.participants || [];
+    const headers = { Authorization: `Bearer ${token}` };
 
-    if (participants.length === 0) return res.json({ enrolled: 0, demo: 0, total: 0, source: 'zoom', participants: [] });
+    // Try in-meeting participants (live) first
+    let participants = [];
+    let apiStatus = 0;
+    let apiError = null;
+    try {
+      const zRes = await fetch(
+        `https://api.zoom.us/v2/meetings/${lc.zoom_meeting_id}/participants?page_size=300`, { headers }
+      );
+      apiStatus = zRes.status;
+      const zData = await zRes.json();
+      if (zRes.ok && zData.participants) {
+        participants = zData.participants;
+      } else {
+        apiError = zData.message || zData.error || `HTTP ${zRes.status}`;
+      }
+    } catch (e) { apiError = e.message; }
+
+    // If live API returns empty or error (meeting not started yet / scope issue),
+    // fall back to DB class_attendance with left_at IS NULL
+    if (participants.length === 0) {
+      const [dbRows] = await getPool().query(`
+        SELECT ca.student_id, u.email as user_email, u.name,
+               (SELECT e.id FROM enrollments e WHERE e.student_id = ca.student_id
+                AND e.course_id = ? AND e.status = 'active' LIMIT 1) as is_enrolled
+        FROM class_attendance ca
+        JOIN users u ON u.id = ca.student_id
+        WHERE ca.live_class_id = ? AND ca.left_at IS NULL
+      `, [lc.course_id, classId]);
+
+      const enrolled = dbRows.filter(r => r.is_enrolled).length;
+      const demo     = dbRows.filter(r => !r.is_enrolled).length;
+      return res.json({
+        enrolled, demo, total: enrolled + demo,
+        source: 'db_attendance',
+        zoom_api_error: apiError,
+        zoom_api_status: apiStatus,
+        participants: dbRows.map(r => ({ name: r.name, email: r.user_email, enrolled: !!r.is_enrolled }))
+      });
+    }
 
     // Get enrolled student emails for this course
     const [enrolledRows] = await getPool().query(
@@ -1586,6 +1619,11 @@ app.put('/api/admin/live-classes/:id/end', authMiddleware(['super_admin', 'partn
     await getPool().query(
       `UPDATE live_classes SET status='ended', ended_at=NOW() WHERE id=?`, [classId]
     );
+    // Mark all still-in-class attendees as left (covers Zoom students who kept web page open)
+    await getPool().query(
+      `UPDATE class_attendance SET left_at=NOW(), updated_at=NOW()
+       WHERE live_class_id=? AND left_at IS NULL`, [classId]
+    ).catch(() => {});
     res.json({ message: 'Class ended' });
   } catch (e) {
     res.status(500).json({ error: e.message });

@@ -1636,8 +1636,11 @@ function LiveClassesAdmin() {
                               {total === 0 && <div className="text-[10px] text-slate-400">No one in yet</div>}
                               {isZoomLive && zc && (
                                 <div className="flex items-center gap-1">
-                                  <span className="text-[9px] text-slate-400">via Zoom API</span>
+                                  <span className={`text-[9px] font-semibold ${zc.source === 'zoom' ? 'text-blue-400' : zc.source === 'db_attendance' ? 'text-amber-500' : 'text-red-400'}`}>
+                                    {zc.source === 'zoom' ? '🔵 Zoom live' : zc.source === 'db_attendance' ? '🟡 DB (Zoom API failed)' : '⚠ error'}
+                                  </span>
                                   <button
+                                    title={zc.zoom_api_error ? `Zoom API error: ${zc.zoom_api_error}` : 'Refresh counts'}
                                     className="text-[9px] text-blue-400 hover:text-blue-600"
                                     onClick={() => api.get(`/admin/live-classes/${c.id}/zoom-participants`)
                                       .then(data => setZoomCounts(prev => ({ ...prev, [c.id]: { ...data, lastFetched: Date.now() } })))
