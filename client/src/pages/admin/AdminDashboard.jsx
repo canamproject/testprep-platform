@@ -1612,54 +1612,69 @@ function LiveClassesAdmin() {
                   </td>
                   <td>
                     {c.status === 'live' ? (() => {
-                      // Zoom: use real-time Zoom API counts; Jitsi: use DB attendance counts
-                      const zc = c.platform === 'zoom' ? zoomCounts[c.id] : null;
+                      const zc            = c.platform === 'zoom' ? zoomCounts[c.id] : null;
                       const enrolledCount = zc ? zc.enrolled : (c.enrolled_live_count ?? 0);
                       const demoCount     = zc ? zc.demo    : (c.demo_live_count    ?? 0);
                       const total         = enrolledCount + demoCount;
-                      const isZoomLive    = c.platform === 'zoom';
-                      const loading       = isZoomLive && !zc;
+                      const isZoom        = c.platform === 'zoom';
+                      const loading       = isZoom && !zc;
+                      const fromZoomAPI   = zc && ['zoom_inmeet','zoom_dashboard'].includes(zc.source);
+                      const doRefresh     = () => api.get(`/admin/live-classes/${c.id}/zoom-participants`)
+                        .then(data => setZoomCounts(prev => ({ ...prev, [c.id]: { ...data, lastFetched: Date.now() } })))
+                        .catch(() => {});
                       return (
-                        <div className="space-y-1">
+                        <div className="min-w-[140px]">
                           {loading ? (
-                            <div className="text-[10px] text-slate-400 animate-pulse">Fetching from Zoom…</div>
+                            <div className="text-[10px] text-slate-400 animate-pulse flex items-center gap-1">
+                              <span className="w-3 h-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin inline-block" />
+                              Fetching…
+                            </div>
                           ) : (
                             <>
-                              <div className="flex items-center gap-1.5">
-                                <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-                                <span className="text-xs font-bold text-green-700">{enrolledCount} enrolled</span>
+                              {/* Total bubble */}
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className={`text-sm font-black ${total > 0 ? 'text-slate-900' : 'text-slate-300'}`}>
+                                  👥 {total} in class
+                                </span>
+                                <button onClick={doRefresh}
+                                  className="text-[10px] text-slate-300 hover:text-blue-500 transition" title="Refresh">🔄</button>
                               </div>
-                              <div className="flex items-center gap-1.5">
-                                <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
-                                <span className="text-xs font-bold text-amber-600">{demoCount} demo</span>
-                              </div>
-                              {total === 0 && <div className="text-[10px] text-slate-400">No one in yet</div>}
-                              {isZoomLive && zc && (
-                                <div className="flex items-center gap-1 flex-wrap">
-                                  <span className={`text-[9px] font-semibold ${
-                                    ['zoom_inmeet','zoom_dashboard'].includes(zc.source) ? 'text-blue-500'
-                                    : zc.source === 'db_attendance' ? 'text-amber-500'
-                                    : 'text-red-400'
-                                  }`}
-                                    title={zc.zoom_api_error ? `Zoom API: ${zc.zoom_api_error}` : zc.source}>
-                                    {['zoom_inmeet','zoom_dashboard'].includes(zc.source)
-                                      ? '🔵 Zoom' : zc.source === 'db_attendance' ? '🟡 DB' : '⚠ err'}
+                              {/* Enrolled / Demo split */}
+                              {total > 0 && (
+                                <div className="flex gap-3 mb-1">
+                                  <span className="flex items-center gap-1 text-xs font-bold text-green-700">
+                                    <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />{enrolledCount} enrolled
                                   </span>
-                                  <button
-                                    title={`Refresh counts\n${zc.zoom_api_error ? 'Zoom error: ' + zc.zoom_api_error : ''}\nParticipants: ${(zc.participants||[]).map(p=>p.name).join(', ') || 'none'}`}
-                                    className="text-[10px] text-slate-400 hover:text-blue-500"
-                                    onClick={() => api.get(`/admin/live-classes/${c.id}/zoom-participants`)
-                                      .then(data => setZoomCounts(prev => ({ ...prev, [c.id]: { ...data, lastFetched: Date.now() } })))
-                                      .catch(() => {})}>
-                                    🔄
-                                  </button>
-                                  {zc.participants?.length > 0 && (
-                                    <span className="text-[8px] text-slate-400 block w-full" title={zc.participants.map(p=>`${p.name}${p.enrolled?' ✓':' (demo)'}`).join(', ')}>
-                                      {zc.participants.map(p => p.name?.split(' ')[0]).join(', ')}
-                                    </span>
-                                  )}
+                                  <span className="flex items-center gap-1 text-xs font-bold text-amber-600">
+                                    <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />{demoCount} demo
+                                  </span>
                                 </div>
                               )}
+                              {/* Participant names */}
+                              {zc?.participants?.length > 0 && (
+                                <div className="mt-1 space-y-0.5">
+                                  {zc.participants.map((p, i) => (
+                                    <div key={i} className="flex items-center gap-1">
+                                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${p.enrolled ? 'bg-green-500' : 'bg-amber-400'}`} />
+                                      <span className="text-[10px] text-slate-600 truncate max-w-[110px]" title={p.name}>{p.name}</span>
+                                      <span className={`text-[9px] font-bold ${p.enrolled ? 'text-green-600' : 'text-amber-500'}`}>
+                                        {p.enrolled ? '✓' : 'demo'}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {/* Source tag */}
+                              <div className="mt-1">
+                                <span className={`text-[8px] font-semibold px-1.5 py-0.5 rounded-full ${
+                                  fromZoomAPI ? 'bg-blue-50 text-blue-500'
+                                  : isZoom ? 'bg-amber-50 text-amber-500'
+                                  : 'bg-slate-100 text-slate-400'
+                                }`}
+                                  title={zc?.zoom_api_error || ''}>
+                                  {fromZoomAPI ? '🔵 Zoom API' : isZoom ? '🟡 DB fallback' : '🟢 DB'}
+                                </span>
+                              </div>
                             </>
                           )}
                         </div>

@@ -1593,25 +1593,42 @@ app.get('/api/admin/live-classes/:id/zoom-participants', authMiddleware(['super_
 
     // ── 3. Decide what to show ────────────────────────────────────────────────
     if (zoomParticipants && zoomParticipants.length > 0) {
-      // Zoom API has real data — cross-ref with enrollments
+      // Filter only in-meeting (leave_time empty = still in meeting)
+      const activeParts = zoomParticipants.filter(p =>
+        !p.leave_time || p.leave_time === '' || p.status === 'in_meeting'
+      );
+      const parts = activeParts.length > 0 ? activeParts : zoomParticipants;
+
+      // Cross-ref with enrollments by email OR name (free Zoom accounts omit emails)
       const [enrolledRows] = await getPool().query(
-        `SELECT u.email FROM users u JOIN enrollments e ON e.student_id=u.id
+        `SELECT u.email, u.name FROM users u JOIN enrollments e ON e.student_id=u.id
          WHERE e.course_id=? AND e.status='active'`, [lc.course_id]
       );
       const enrolledEmails = new Set(enrolledRows.map(r => r.email.toLowerCase()));
+      // Name-based fallback: first-name match against enrolled students
+      const enrolledNames = new Set(
+        enrolledRows.map(r => r.name.split(' ')[0].toLowerCase())
+      );
+
       let zEnrolled = 0, zDemo = 0;
-      zoomParticipants.forEach(p => {
-        const em = (p.user_email || p.email || '').toLowerCase();
-        if (em && enrolledEmails.has(em)) zEnrolled++; else zDemo++;
+      const details = parts.map(p => {
+        const em  = (p.user_email || p.email || '').toLowerCase();
+        const nm  = (p.name || p.user_name || '').split(' ')[0].toLowerCase();
+        const isE = (em && enrolledEmails.has(em)) || (!em && nm && enrolledNames.has(nm));
+        if (isE) zEnrolled++; else zDemo++;
+        return {
+          name: p.name || p.user_name || 'Unknown',
+          email: p.user_email || p.email || '',
+          enrolled: isE,
+          join_time: p.join_time
+        };
       });
+
       return res.json({
-        enrolled: zEnrolled, demo: zDemo, total: zoomParticipants.length,
+        enrolled: zEnrolled, demo: zDemo, total: parts.length,
         source: zoomApiSource,
         db_enrolled: dbEnrolled, db_demo: dbDemo,
-        participants: zoomParticipants.map(p => ({
-          name: p.name || p.user_name, email: p.user_email || p.email,
-          enrolled: enrolledEmails.has((p.user_email || p.email || '').toLowerCase())
-        }))
+        participants: details
       });
     }
 
