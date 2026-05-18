@@ -210,18 +210,22 @@ function CourseCatalog({ accent, user, onEnrolled }) {
 function BatchBrowser({ accent, user }) {
   const [batches, setBatches]   = useState([]);
   const [myBatches, setMyBatches] = useState([]);
+  const [courses, setCourses]   = useState([]);
   const [loading, setLoading]   = useState(true);
   const [joining, setJoining]   = useState(null);
   const [msg, setMsg]           = useState('');
   const [tab, setTab]           = useState('available'); // available | mine
+  const [availSubTab, setAvailSubTab] = useState('live'); // live | online
 
   const load = useCallback(() => {
     Promise.all([
       api.get('/student/available-batches'),
       api.get('/student/my-batches'),
-    ]).then(([avail, mine]) => {
+      api.get('/catalog').catch(() => []),
+    ]).then(([avail, mine, cats]) => {
       setBatches(avail);
       setMyBatches(mine);
+      setCourses(cats);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -243,6 +247,10 @@ function BatchBrowser({ accent, user }) {
 
   if (loading) return <div className="text-slate-400 text-sm">Loading batches...</div>;
 
+  // Split available batches
+  const liveBatches = batches.filter(b => b.start_date && b.class_time);
+  const onlineCourseBatches = batches.filter(b => !b.start_date || !b.class_time);
+
   return (
     <div>
       <h2 className="text-xl font-black text-slate-900 mb-6">Batches & Class Booking</h2>
@@ -253,9 +261,9 @@ function BatchBrowser({ accent, user }) {
         </div>
       )}
 
-      {/* Tab toggle */}
+      {/* Main tab toggle */}
       <div className="flex bg-slate-100 rounded-xl p-1 mb-6 gap-1 w-fit">
-        {[['available','Available Batches'],['mine','My Batches']].map(([k,l]) => (
+        {[['available','Browse'],['mine','My Batches']].map(([k,l]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${tab===k ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}>
             {l} {k === 'mine' && myBatches.length > 0 && <span className="ml-1 bg-emerald-500 text-white text-xs rounded-full px-1.5 py-0.5">{myBatches.length}</span>}
@@ -264,19 +272,60 @@ function BatchBrowser({ accent, user }) {
       </div>
 
       {tab === 'available' && (
+        <>
+          {/* Sub-tabs: Live Classes vs Online Courses */}
+          <div className="flex gap-3 mb-5">
+            <button
+              onClick={() => setAvailSubTab('live')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${availSubTab === 'live' ? 'text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+              style={availSubTab === 'live' ? { background: accent, borderColor: accent } : {}}>
+              🎯 Live Classes
+              {liveBatches.length > 0 && <span className={`text-xs rounded-full px-1.5 py-0.5 font-black ${availSubTab === 'live' ? 'bg-white/30 text-white' : 'bg-indigo-100 text-indigo-700'}`}>{liveBatches.length}</span>}
+            </button>
+            <button
+              onClick={() => setAvailSubTab('online')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${availSubTab === 'online' ? 'text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+              style={availSubTab === 'online' ? { background: accent, borderColor: accent } : {}}>
+              📚 Online Courses
+              {courses.length > 0 && <span className={`text-xs rounded-full px-1.5 py-0.5 font-black ${availSubTab === 'online' ? 'bg-white/30 text-white' : 'bg-purple-100 text-purple-700'}`}>{courses.length}</span>}
+            </button>
+          </div>
+
+          {availSubTab === 'online' && (
+            <div className="card p-6 text-center">
+              <p className="text-4xl mb-3">📚</p>
+              <p className="font-bold text-slate-700 text-base mb-1">Online Courses</p>
+              <p className="text-sm text-slate-400 mb-5">Self-paced courses you can enroll in anytime. No fixed schedule required.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-left">
+                {courses.slice(0, 6).map(c => (
+                  <div key={c.id} className="flex items-center gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50">
+                    <span className="text-2xl">{catIcons[c.category] || '📖'}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-sm text-slate-900 truncate">{c.title}</div>
+                      <div className="text-xs text-slate-400">{c.duration_weeks}w · ₹{Number(c.price || 0).toLocaleString('en-IN')}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {courses.length === 0 && <p className="text-slate-400 text-sm">No courses available yet.</p>}
+              <p className="text-xs text-slate-400 mt-4">To enroll in online courses, visit the <strong>Course Catalog</strong> section.</p>
+            </div>
+          )}
+
+          {availSubTab === 'live' && (
         <div className="space-y-4">
           {batches.some(b => b.already_joined) && (
             <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-700 font-semibold flex items-center gap-2 mb-2">
               ✅ Batches you've already joined are shown with a green badge — check "My Batches" tab to see them.
             </div>
           )}
-          {batches.length === 0 ? (
+          {liveBatches.length === 0 ? (
             <div className="card text-center py-12">
               <p className="text-4xl mb-3">📅</p>
-              <p className="text-slate-500 font-semibold">No active batches available</p>
-              <p className="text-sm text-slate-400 mt-1">Your academy hasn't scheduled any batches yet.</p>
+              <p className="text-slate-500 font-semibold">No live class batches available</p>
+              <p className="text-sm text-slate-400 mt-1">Your academy hasn't scheduled any live batches yet.</p>
             </div>
-          ) : batches.map(b => {
+          ) : liveBatches.map(b => {
             const color = catColors[b.category] || b.brand_color || accent;
             const isFull = b.enrolled_count >= b.max_students;
             return (
@@ -340,6 +389,8 @@ function BatchBrowser({ accent, user }) {
             );
           })}
         </div>
+          )} {/* end availSubTab === 'live' */}
+        </> /* end tab === 'available' */
       )}
 
       {tab === 'mine' && (
@@ -387,12 +438,76 @@ function BatchBrowser({ accent, user }) {
                     {b.demo_expires_at && (
                       <p className="text-xs text-amber-600 mt-2 font-medium">⚠️ Demo expires: {new Date(b.demo_expires_at).toLocaleDateString()}</p>
                     )}
+                    {/* Live class link widget */}
+                    <LiveClassLink batchId={b.batch_id || b.id} accent={color} classTime={b.class_time} />
                   </div>
                 </div>
               </div>
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── LIVE CLASS LINK WIDGET ────────────────────────────────────
+function LiveClassLink({ batchId, accent, classTime }) {
+  const [info, setInfo] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    api.get(`/student/today-live-link/${batchId}`)
+      .then(setInfo)
+      .catch(() => setInfo(null))
+      .finally(() => setLoading(false));
+  }, [batchId]);
+
+  // Tick every 30s to update countdown
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  if (loading) return null;
+  if (!info) return null;
+
+  if (info.available) {
+    return (
+      <a
+        href={info.link}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-3 flex items-center justify-center gap-2 w-full py-2.5 rounded-xl font-black text-white text-sm transition hover:opacity-90 shadow-sm animate-pulse"
+        style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)' }}>
+        <span className="w-2 h-2 rounded-full bg-white inline-block" />
+        {info.is_live ? '🔴 Join Live Class Now' : '🔴 Join Live Class (Starting Soon)'}
+      </a>
+    );
+  }
+
+  // Not available — show next class info
+  const nextDate = info.next_class ? new Date(info.next_class) : null;
+  if (!nextDate) return null;
+
+  const today = new Date();
+  const isToday = nextDate.toDateString() === today.toDateString();
+  const minsUntil = Math.ceil((nextDate - now) / 60000);
+  const hoursUntil = Math.ceil(minsUntil / 60);
+
+  return (
+    <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+      <span className="text-slate-400">📅</span>
+      {isToday ? (
+        <span className="text-slate-600">
+          Class starts at <strong>{nextDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}</strong>
+          {minsUntil > 0 && <span className="text-slate-400 ml-1">({minsUntil < 60 ? `${minsUntil} min` : `${hoursUntil}h`} away)</span>}
+        </span>
+      ) : (
+        <span className="text-slate-600">
+          Next class: <strong>{nextDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</strong>
+        </span>
       )}
     </div>
   );

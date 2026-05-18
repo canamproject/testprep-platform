@@ -1432,24 +1432,58 @@ app.get('/api/batches/:id/students', authMiddleware(), async (req, res) => {
 });
 
 app.post('/api/batches/:id/enroll', authMiddleware(['partner_admin', 'super_admin']), async (req, res) => {
-  const { student_id, enrollment_id, access_type } = req.body;
+  const { student_id, enrollment_id, access_type, new_student } = req.body;
   const batchId = req.params.id;
-  
+
   try {
-    // Verify student belongs to partner's agency
-    if (req.user.role === 'partner_admin') {
-      const [[batch]] = await getPool().query('SELECT agency_id FROM batches WHERE id=?', [batchId]);
-      if (!batch || batch.agency_id !== req.user.agency_id) {
-        return res.status(403).json({ error: 'Access denied' });
+    // Verify batch belongs to partner's agency
+    const [[batch]] = await getPool().query('SELECT agency_id, course_id FROM batches WHERE id=?', [batchId]);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    if (req.user.role === 'partner_admin' && batch.agency_id !== req.user.agency_id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    let resolvedStudentId = student_id;
+
+    // Create new student if new_student payload provided
+    if (new_student && !student_id) {
+      const { name, email, phone } = new_student;
+      if (!name || !email) return res.status(400).json({ error: 'New student name and email are required' });
+
+      // Check if email already exists
+      const [[existing]] = await getPool().query('SELECT id FROM users WHERE email=?', [email]);
+      if (existing) {
+        resolvedStudentId = existing.id;
+      } else {
+        const defaultPassword = await bcrypt.hash('Student@123', 10);
+        const agencyId = req.user.role === 'partner_admin' ? req.user.agency_id : batch.agency_id;
+        const [newUser] = await getPool().query(
+          `INSERT INTO users (name, email, phone, role, agency_id, password_hash, is_active)
+           VALUES (?,?,?,?,?,?,1)`,
+          [name, email, phone || null, 'student', agencyId, defaultPassword]
+        );
+        resolvedStudentId = newUser.insertId;
       }
     }
-    
+
+    if (!resolvedStudentId) return res.status(400).json({ error: 'student_id or new_student is required' });
+
+    // Find enrollment_id if not provided (optional - batch enrollment can exist without course enrollment)
+    let resolvedEnrollmentId = enrollment_id || null;
+    if (!resolvedEnrollmentId) {
+      const [[enr]] = await getPool().query(
+        'SELECT id FROM enrollments WHERE student_id=? AND course_id=? LIMIT 1',
+        [resolvedStudentId, batch.course_id]
+      );
+      if (enr) resolvedEnrollmentId = enr.id;
+    }
+
     const [result] = await getPool().query(
       `INSERT INTO batch_enrollments (batch_id, student_id, enrollment_id, access_type, status)
        VALUES (?,?,?,?,?)`,
-      [batchId, student_id, enrollment_id, access_type || 'full', 'active']
+      [batchId, resolvedStudentId, resolvedEnrollmentId, access_type || 'full', 'active']
     );
-    res.json({ id: result.insertId, message: 'Student enrolled to batch' });
+    res.json({ id: result.insertId, message: 'Student enrolled to batch', student_id: resolvedStudentId });
   } catch (e) {
     if (e.code === 'ER_DUP_ENTRY') {
       return res.status(400).json({ error: 'Student already enrolled in this batch' });
@@ -2416,6 +2450,88 @@ app.get('/api/student/my-batches', authMiddleware(['student']), async (req, res)
     `, [studentId]);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── STUDENT: TODAY LIVE LINK ─────────────────────────────────
+app.get('/api/student/today-live-link/:batchId', authMiddleware(['student']), async (req, res) => {
+  try {
+    const batchId = req.params.batchId;
+    const [[batch]] = await getPool().query(
+      'SELECT id, class_time, schedule_days, duration_minutes, jitsi_room_prefix, jitsi_meeting_id FROM batches WHERE id=? AND status="active"',
+      [batchId]
+    );
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+
+    // Verify student is enrolled
+    const [[enrollment]] = await getPool().query(
+      'SELECT id FROM batch_enrollments WHERE batch_id=? AND student_id=? AND status="active"',
+      [batchId, req.user.id]
+    );
+    if (!enrollment) return res.status(403).json({ error: 'Not enrolled in this batch' });
+
+    const now = new Date();
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const todayDay = dayNames[now.getDay()];
+
+    const scheduledDays = (batch.schedule_days || 'Mon,Tue,Wed,Thu,Fri').split(',').map(d => d.trim());
+    const isScheduledToday = scheduledDays.includes(todayDay);
+
+    const todayStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+
+    // Parse class_time (HH:MM:SS or HH:MM)
+    const [classHour, classMin] = (batch.class_time || '09:00').split(':').map(Number);
+    const classDateTime = new Date(now);
+    classDateTime.setHours(classHour, classMin, 0, 0);
+
+    const msUntilClass = classDateTime - now;
+    const minUntilClass = msUntilClass / 60000;
+    const classEndMs = classDateTime.getTime() + (batch.duration_minutes || 60) * 60000;
+    const isLiveNow = now.getTime() >= classDateTime.getTime() && now.getTime() < classEndMs;
+    const isWithin60Min = minUntilClass >= 0 && minUntilClass <= 60;
+
+    const jitsiPrefix = batch.jitsi_room_prefix || batch.jitsi_meeting_id?.split('-')[0] || 'class';
+    const jitsiUrl = `https://meet.jit.si/${jitsiPrefix}-${todayStr}`;
+
+    if (isScheduledToday && (isLiveNow || isWithin60Min)) {
+      return res.json({
+        available: true,
+        link: jitsiUrl,
+        starts_at: classDateTime.toISOString(),
+        is_live: isLiveNow,
+      });
+    }
+
+    // Find next scheduled day
+    let nextClassDate = null;
+    for (let i = 1; i <= 7; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() + i);
+      if (scheduledDays.includes(dayNames[d.getDay()])) {
+        d.setHours(classHour, classMin, 0, 0);
+        nextClassDate = d;
+        break;
+      }
+    }
+
+    // If today is scheduled but class hasn't started yet (more than 60 min away), it still counts as "today"
+    if (isScheduledToday && minUntilClass > 60) {
+      return res.json({
+        available: false,
+        starts_at: classDateTime.toISOString(),
+        starts_today: true,
+        next_class: classDateTime.toISOString(),
+      });
+    }
+
+    return res.json({
+      available: false,
+      starts_at: nextClassDate?.toISOString() || null,
+      starts_today: false,
+      next_class: nextClassDate?.toISOString() || null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── PARTNER: STUDENT SELF-PURCHASES ──────────────────────────

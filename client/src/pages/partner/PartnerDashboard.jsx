@@ -236,6 +236,7 @@ function Enrollments({ accent, partnerPhone }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ student_id: '', course_id: '', fee_paid: '', coupon_code: '' });
   const [msg, setMsg] = useState('');
+  const [activeSection, setActiveSection] = useState('online'); // 'live' | 'online'
 
   // ── Filters ──────────────────────────────────────────────────
   const [search, setSearch]       = useState('');
@@ -291,11 +292,41 @@ function Enrollments({ accent, partnerPhone }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-black text-slate-900">Enrollments</h2>
         <button className="btn-primary" style={{ background: accent }} onClick={() => setShowForm(!showForm)}>+ Enroll Student</button>
       </div>
+
+      {/* ── Section tabs ── */}
+      <div className="flex gap-3 mb-6">
+        <button
+          onClick={() => setActiveSection('live')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${activeSection === 'live' ? 'text-white border-current' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+          style={activeSection === 'live' ? { background: accent, borderColor: accent } : {}}>
+          🎯 Live Classes
+        </button>
+        <button
+          onClick={() => setActiveSection('online')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${activeSection === 'online' ? 'text-white border-current' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+          style={activeSection === 'online' ? { background: accent, borderColor: accent } : {}}>
+          📚 Online Learning
+        </button>
+      </div>
+
       {msg && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-sm">{msg}</div>}
+
+      {activeSection === 'live' && (
+        <div className="card p-6 text-center mb-6">
+          <p className="text-4xl mb-3">🎯</p>
+          <p className="font-bold text-slate-700 text-base">Live Class Enrollments</p>
+          <p className="text-sm text-slate-400 mt-1 mb-4">Manage batch enrollments from the <strong>Batches</strong> section using the "Enroll Student" button per batch.</p>
+          <div className="text-xs text-slate-400 bg-slate-50 rounded-xl p-3">
+            Go to <strong>My Batches</strong> → click <strong>+ Enroll Student</strong> on any batch row
+          </div>
+        </div>
+      )}
+
+      {activeSection === 'online' && <>
 
       {/* ── Filter bar ── */}
       <FilterRow onApply={handleSearch} onClear={handleClear} appliedCount={appliedCount}>
@@ -388,6 +419,8 @@ function Enrollments({ accent, partnerPhone }) {
           </table>
         </div>
       </div>
+
+      </> /* end activeSection === 'online' */}
     </div>
   );
 }
@@ -1097,12 +1130,131 @@ function SignupLinkBox({ slug, accent, agencyName }) {
   );
 }
 
+// ── ENROLL STUDENT MODAL (per batch) ────────────────────────
+function EnrollStudentModal({ batch, accent, students, onClose, onSuccess }) {
+  const [mode, setMode] = useState('existing'); // 'existing' | 'new'
+  const [studentId, setStudentId] = useState('');
+  const [newStudent, setNewStudent] = useState({ name: '', email: '', phone: '' });
+  const [accessType, setAccessType] = useState('full');
+  const [submitting, setSubmitting] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setMsg('');
+    try {
+      const payload = { access_type: accessType };
+      if (mode === 'existing') {
+        if (!studentId) { setMsg('Please select a student.'); setSubmitting(false); return; }
+        payload.student_id = Number(studentId);
+      } else {
+        if (!newStudent.name || !newStudent.email) { setMsg('Name and email are required.'); setSubmitting(false); return; }
+        payload.new_student = newStudent;
+      }
+      await api.post(`/batches/${batch.id}/enroll`, payload);
+      setMsg('');
+      onSuccess('Student enrolled successfully!');
+    } catch (e) {
+      setMsg(e.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <h3 className="font-black text-slate-900">Enroll Student</h3>
+            <p className="text-xs text-slate-500 mt-0.5">{batch.name} · {batch.course_title}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-2xl leading-none">&times;</button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          {/* Mode toggle */}
+          <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
+            {[['existing', 'Existing Student'], ['new', 'Add New Student']].map(([k, l]) => (
+              <button key={k} type="button" onClick={() => setMode(k)}
+                className={`flex-1 px-3 py-2 text-xs font-bold rounded-lg transition-all ${mode === k ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}>
+                {l}
+              </button>
+            ))}
+          </div>
+
+          {mode === 'existing' ? (
+            <div>
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Select Student</label>
+              <select className="input" value={studentId} onChange={e => setStudentId(e.target.value)}>
+                <option value="">Choose a student...</option>
+                {students.map(s => <option key={s.id} value={s.id}>{s.name} — {s.email}</option>)}
+              </select>
+              {students.length === 0 && <p className="text-xs text-slate-400 mt-1">No students found. Add students first or use "Add New Student".</p>}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Full Name *</label>
+                <input className="input" required placeholder="Student name" value={newStudent.name}
+                  onChange={e => setNewStudent({ ...newStudent, name: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Email *</label>
+                <input type="email" className="input" required placeholder="student@email.com" value={newStudent.email}
+                  onChange={e => setNewStudent({ ...newStudent, email: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Phone</label>
+                <input className="input" placeholder="Mobile number" value={newStudent.phone}
+                  onChange={e => setNewStudent({ ...newStudent, phone: e.target.value })} />
+              </div>
+            </div>
+          )}
+
+          {/* Access type */}
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-2">Access Type</label>
+            <div className="flex gap-3">
+              {[['full', 'Full'], ['demo', 'Demo'], ['trial', 'Trial']].map(([v, l]) => (
+                <label key={v} className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer transition flex-1 justify-center text-sm font-bold
+                  ${accessType === v ? 'border-current text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                  style={accessType === v ? { background: accent, borderColor: accent } : {}}>
+                  <input type="radio" name="access_type" value={v} checked={accessType === v}
+                    onChange={() => setAccessType(v)} className="hidden" />
+                  {l}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {msg && <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm">{msg}</div>}
+
+          <div className="flex gap-2 pt-2">
+            <button type="submit" disabled={submitting}
+              className="flex-1 py-3 rounded-xl font-black text-white text-sm transition hover:opacity-90 disabled:opacity-50"
+              style={{ background: accent }}>
+              {submitting ? 'Enrolling...' : 'Confirm Enrollment'}
+            </button>
+            <button type="button" onClick={onClose}
+              className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition">
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── BATCHES (Partner) ───────────────────────────────────────
 function PartnerBatches({ accent }) {
   const [batches, setBatches] = useState([]);
   const [courses, setCourses] = useState([]);
   const [facultyList, setFacultyList] = useState([]);
+  const [students, setStudents] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [enrollModal, setEnrollModal] = useState(null); // batch object
   const [form, setForm] = useState({
     course_id: '', name: '', description: '',
     start_date: '', end_date: '', schedule_days: 'Mon,Tue,Wed,Thu,Fri',
@@ -1115,6 +1267,7 @@ function PartnerBatches({ accent }) {
     loadBatches();
     api.get('/courses').then(setCourses);
     api.get('/partner/faculty').then(setFacultyList).catch(() => {});
+    api.get('/partner/students').then(setStudents).catch(() => {});
   }, []);
 
   const loadBatches = () => api.get('/partner/batches').then(setBatches);
@@ -1131,6 +1284,48 @@ function PartnerBatches({ accent }) {
     } catch (e) { setMsg(e.message); }
   };
 
+  // Split batches into Live Classes (have start_date + class_time) and others
+  const liveBatches = batches.filter(b => b.start_date && b.class_time);
+  const onlineBatches = batches.filter(b => !b.start_date || !b.class_time);
+
+  const BatchTable = ({ rows }) => (
+    <div className="card">
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Batch</th><th>Course</th><th>Schedule</th><th>Students</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan={6} className="text-center text-slate-400 text-sm py-8">No batches in this section.</td></tr>
+            )}
+            {rows.map(b => (
+              <tr key={b.id}>
+                <td>
+                  <div className="font-semibold text-slate-900">{b.name}</div>
+                  <div className="text-xs text-slate-400">{b.trainer_name || 'No trainer assigned'}</div>
+                </td>
+                <td>{b.course_title}</td>
+                <td>
+                  <div className="text-sm">{b.class_time ? b.class_time.slice(0,5) : '—'} ({b.duration_minutes} min)</div>
+                  <div className="text-xs text-slate-400">{b.schedule_days}</div>
+                </td>
+                <td className="font-semibold">{b.enrolled_students || 0} / {b.max_students}</td>
+                <td><Badge status={b.status} /></td>
+                <td>
+                  <button
+                    onClick={() => setEnrollModal(b)}
+                    className="text-xs px-3 py-1.5 rounded-lg font-bold text-white transition hover:opacity-90"
+                    style={{ background: accent }}>
+                    + Enroll Student
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -1138,7 +1333,7 @@ function PartnerBatches({ accent }) {
         <button className="btn-primary" style={{ background: accent }} onClick={() => setShowForm(!showForm)}>+ Create Batch</button>
       </div>
 
-      {msg && <div className="mb-4 text-sm text-red-600">{msg}</div>}
+      {msg && <div className="mb-4 p-3 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 text-sm">{msg}</div>}
 
       {showForm && (
         <form onSubmit={handleSubmit} className="card mb-6">
@@ -1191,31 +1386,42 @@ function PartnerBatches({ accent }) {
         </form>
       )}
 
-      <div className="card">
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Batch</th><th>Course</th><th>Schedule</th><th>Students</th><th>Status</th><th>Meeting ID</th></tr></thead>
-            <tbody>
-              {batches.map(b => (
-                <tr key={b.id}>
-                  <td>
-                    <div className="font-semibold text-slate-900">{b.name}</div>
-                    <div className="text-xs text-slate-400">{b.trainer_name || 'No trainer assigned'}</div>
-                  </td>
-                  <td>{b.course_title}</td>
-                  <td>
-                    <div className="text-sm">{b.class_time} ({b.duration_minutes} min)</div>
-                    <div className="text-xs text-slate-400">{b.schedule_days}</div>
-                  </td>
-                  <td className="font-semibold">{b.enrolled_students || 0} / {b.max_students}</td>
-                  <td><Badge status={b.status} /></td>
-                  <td><span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">{b.jitsi_meeting_id?.slice(0, 20)}...</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* ── Section 1: Live Classes ── */}
+      <div className="mb-8">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-lg">🎯</span>
+          <h3 className="text-base font-black text-slate-900">Live Classes</h3>
+          <span className="text-xs bg-indigo-100 text-indigo-700 font-bold px-2 py-0.5 rounded-full">{liveBatches.length} batches</span>
         </div>
+        <p className="text-xs text-slate-400 mb-4">Batches with scheduled class times and start dates</p>
+        <BatchTable rows={liveBatches} />
       </div>
+
+      {/* ── Section 2: Online Learning ── */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-lg">📚</span>
+          <h3 className="text-base font-black text-slate-900">Online Learning</h3>
+          <span className="text-xs bg-purple-100 text-purple-700 font-bold px-2 py-0.5 rounded-full">{onlineBatches.length} batches</span>
+        </div>
+        <p className="text-xs text-slate-400 mb-4">Batches without fixed class schedules (self-paced or TBD)</p>
+        <BatchTable rows={onlineBatches} />
+      </div>
+
+      {/* Enroll modal */}
+      {enrollModal && (
+        <EnrollStudentModal
+          batch={enrollModal}
+          accent={accent}
+          students={students}
+          onClose={() => setEnrollModal(null)}
+          onSuccess={(successMsg) => {
+            setMsg(successMsg);
+            setEnrollModal(null);
+            loadBatches();
+          }}
+        />
+      )}
     </div>
   );
 }

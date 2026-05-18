@@ -2269,6 +2269,9 @@ function BatchesAdmin() {
     trainer_name: '', max_students: 20, jitsi_room_prefix: ''
   });
   const [msg, setMsg] = useState('');
+  // inline date editing state: { [batchId]: { start_date, end_date } }
+  const [editDates, setEditDates] = useState({});
+  const [savingDate, setSavingDate] = useState(null);
 
   useEffect(() => {
     loadBatches();
@@ -2290,6 +2293,33 @@ function BatchesAdmin() {
     } catch (e) { setMsg(e.message); }
   };
 
+  const startEditDates = (b) => {
+    setEditDates(prev => ({
+      ...prev,
+      [b.id]: {
+        start_date: b.start_date ? b.start_date.split('T')[0] : '',
+        end_date: b.end_date ? b.end_date.split('T')[0] : '',
+      }
+    }));
+  };
+
+  const cancelEditDates = (batchId) => {
+    setEditDates(prev => { const n = { ...prev }; delete n[batchId]; return n; });
+  };
+
+  const saveDates = async (batchId) => {
+    setSavingDate(batchId);
+    try {
+      const { start_date, end_date } = editDates[batchId];
+      await api.put(`/admin/batches/${batchId}`, { start_date, end_date });
+      setMsg('Dates updated!');
+      cancelEditDates(batchId);
+      loadBatches();
+      setTimeout(() => setMsg(''), 3000);
+    } catch (e) { setMsg(e.message); }
+    finally { setSavingDate(null); }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -2297,7 +2327,7 @@ function BatchesAdmin() {
         <button className="btn-primary" onClick={() => setShowForm(!showForm)}>+ Create Batch</button>
       </div>
 
-      {msg && <div className="mb-4 text-sm text-red-600">{msg}</div>}
+      {msg && <div className="mb-4 text-sm p-3 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200">{msg}</div>}
 
       {showForm && (
         <form onSubmit={handleSubmit} className="card mb-6">
@@ -2360,25 +2390,72 @@ function BatchesAdmin() {
       <div className="card">
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Batch</th><th>Agency</th><th>Course</th><th>Schedule</th><th>Students</th><th>Status</th><th>Meeting ID</th></tr></thead>
+            <thead><tr><th>Batch</th><th>Agency</th><th>Course</th><th>Schedule</th><th>Dates</th><th>Students</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>
-              {batches.map(b => (
-                <tr key={b.id}>
-                  <td>
-                    <div className="font-semibold text-slate-900">{b.name}</div>
-                    <div className="text-xs text-slate-400">{b.trainer_name || 'No trainer assigned'}</div>
-                  </td>
-                  <td>{b.agency_name}</td>
-                  <td>{b.course_title}</td>
-                  <td>
-                    <div className="text-sm">{b.schedule_days}</div>
-                    <div className="text-xs text-slate-400">{b.class_time} ({b.duration_minutes} min)</div>
-                  </td>
-                  <td className="font-semibold">{b.enrolled_students || 0} / {b.max_students}</td>
-                  <td><Badge status={b.status} /></td>
-                  <td><span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">{b.jitsi_meeting_id?.slice(0, 20)}...</span></td>
-                </tr>
-              ))}
+              {batches.map(b => {
+                const isEditing = !!editDates[b.id];
+                return (
+                  <tr key={b.id}>
+                    <td>
+                      <div className="font-semibold text-slate-900">{b.name}</div>
+                      <div className="text-xs text-slate-400">{b.trainer_name || 'No trainer assigned'}</div>
+                    </td>
+                    <td>{b.agency_name}</td>
+                    <td>{b.course_title}</td>
+                    <td>
+                      <div className="text-sm">{b.schedule_days}</div>
+                      <div className="text-xs text-slate-400">{b.class_time} ({b.duration_minutes} min)</div>
+                    </td>
+                    <td>
+                      {isEditing ? (
+                        <div className="space-y-1 min-w-[200px]">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase">Start Date</label>
+                            <input type="date" className="input text-xs py-1"
+                              value={editDates[b.id].start_date}
+                              onChange={e => setEditDates(prev => ({ ...prev, [b.id]: { ...prev[b.id], start_date: e.target.value } }))} />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase">Tentative End Date</label>
+                            <input type="date" className="input text-xs py-1"
+                              value={editDates[b.id].end_date}
+                              onChange={e => setEditDates(prev => ({ ...prev, [b.id]: { ...prev[b.id], end_date: e.target.value } }))} />
+                          </div>
+                          <div className="flex gap-1 pt-1">
+                            <button
+                              onClick={() => saveDates(b.id)}
+                              disabled={savingDate === b.id}
+                              className="text-xs px-2.5 py-1 rounded-lg font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 transition">
+                              {savingDate === b.id ? '...' : 'Save'}
+                            </button>
+                            <button
+                              onClick={() => cancelEditDates(b.id)}
+                              className="text-xs px-2.5 py-1 rounded-lg font-semibold border border-slate-200 text-slate-500 hover:bg-slate-50 transition">
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-slate-600 space-y-0.5">
+                          <div>{b.start_date ? b.start_date.split('T')[0] : '—'}</div>
+                          {b.end_date && <div className="text-slate-400">→ {b.end_date.split('T')[0]}</div>}
+                        </div>
+                      )}
+                    </td>
+                    <td className="font-semibold">{b.enrolled_students || 0} / {b.max_students}</td>
+                    <td><Badge status={b.status} /></td>
+                    <td>
+                      {!isEditing && (
+                        <button
+                          onClick={() => startEditDates(b)}
+                          className="text-xs px-3 py-1.5 rounded-lg font-bold border border-blue-200 text-blue-600 hover:bg-blue-50 transition">
+                          ✏️ Edit Dates
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
