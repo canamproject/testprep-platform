@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
 import DashLayout, { NavItem } from '../../components/DashLayout';
+import MaskedContact from '../../components/MaskedContact';
+import LogoDisplay, { SHAPE_RADIUS, logoBgColor } from '../../components/LogoDisplay';
 
 const fmt = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 // Parse DB datetime as local time (strip Z so JS doesn't shift by UTC offset)
@@ -25,6 +27,94 @@ function StatCard({ label, value, sub, color = 'blue' }) {
 function Badge({ status }) {
   const map = { active: 'badge-green', paid: 'badge-green', approved: 'badge-blue', pending: 'badge-amber', pending_approval: 'badge-amber', on_hold: 'badge-amber', suspended: 'badge-red', rejected: 'badge-red', completed: 'badge-blue', cancelled: 'badge-gray' };
   return <span className={`badge ${map[status] || 'badge-gray'}`}>{status?.replace('_', ' ')}</span>;
+}
+
+// ── SHARED FILTER COMPONENTS ─────────────────────────────────
+// Multi-select dropdown — compact, click-outside aware
+function MultiSelectDropdown({ label, options, selected, onChange }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+  const toggle = (v) => onChange(selected.includes(v) ? selected.filter(x => x !== v) : [...selected, v]);
+  const count = selected.length;
+  return (
+    <div ref={ref} className="relative flex-shrink-0">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border font-semibold transition-all whitespace-nowrap
+          ${count > 0 ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-400'}`}>
+        {label}
+        {count > 0 && <span className="bg-blue-600 text-white text-[9px] font-black px-1 rounded-full min-w-[16px] text-center leading-none">{count}</span>}
+        <span className="text-[10px] opacity-40 ml-0.5">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-200 rounded-xl shadow-2xl min-w-[160px] max-h-52 overflow-y-auto py-1.5">
+          {options.length === 0 && <div className="px-3 py-2 text-xs text-slate-400 italic">No options</div>}
+          {options.map(opt => {
+            const val = typeof opt === 'string' ? opt : opt.value;
+            const lbl = typeof opt === 'string' ? opt : opt.label;
+            const checked = selected.includes(val);
+            return (
+              <label key={val} className={`flex items-center gap-2.5 px-3 py-1.5 cursor-pointer text-xs transition-colors ${checked ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
+                <input type="checkbox" checked={checked} onChange={() => toggle(val)} className="accent-blue-600 w-3.5 h-3.5 flex-shrink-0" />
+                <span className={checked ? 'font-bold text-blue-700' : 'text-slate-700'}>{lbl}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Compact filter row — all filters in one line + Search button
+function FilterRow({ onApply, onClear, appliedCount, children }) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2 px-3 py-2 bg-white rounded-xl border border-slate-200 shadow-sm">
+      {children}
+      <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
+        {appliedCount > 0 && (
+          <button type="button" onClick={onClear}
+            className="flex items-center gap-1 text-xs font-semibold text-red-500 hover:text-red-700 px-2.5 py-1.5 rounded-lg hover:bg-red-50 transition-all">
+            ✕ Clear
+            <span className="bg-red-100 text-red-600 text-[9px] font-black px-1.5 py-0.5 rounded-full leading-none">{appliedCount}</span>
+          </button>
+        )}
+        <button type="button" onClick={onApply}
+          className="flex items-center gap-1 text-xs font-bold px-4 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 active:scale-95 transition-all shadow-sm">
+          🔍 Search
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Compact search input
+function SearchInput({ value, onChange, placeholder = 'Search…', width = 'w-44' }) {
+  return (
+    <div className="relative flex-shrink-0">
+      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-[11px]">🔍</span>
+      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        className={`${width} pl-7 pr-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-300`} />
+    </div>
+  );
+}
+
+// Compact date range
+function DateRange({ from, to, onFrom, onTo }) {
+  return (
+    <div className="flex items-center gap-1 flex-shrink-0">
+      <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider whitespace-nowrap">Date</span>
+      <input type="date" value={from} onChange={e => onFrom(e.target.value)}
+        className="text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300 w-32" />
+      <span className="text-slate-300 text-xs">→</span>
+      <input type="date" value={to} onChange={e => onTo(e.target.value)}
+        className="text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300 w-32" />
+    </div>
+  );
 }
 
 // ── OVERVIEW ────────────────────────────────────────────────
@@ -57,9 +147,12 @@ function Overview() {
                 <tr key={ag.id}>
                   <td>
                     <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black text-white overflow-hidden" style={{ background: ag.brand_color }}>
-                        {ag.logo_url ? <img src={ag.logo_url} alt="logo" className="w-full h-full object-contain p-0.5 bg-white" /> : ag.logo_initials}
-                      </div>
+                      <LogoDisplay
+                        logoUrl={ag.logo_url} fit={ag.logo_fit || 'contain'} bg={ag.logo_bg || 'white'}
+                        padding={ag.logo_padding != null ? Number(ag.logo_padding) : 4}
+                        brandColor={ag.brand_color} initials={ag.logo_initials || ag.name?.[0]}
+                        shape={ag.logo_shape || 'rounded'} size={32}
+                      />
                       <div>
                         <div className="font-semibold text-slate-900">{ag.name}</div>
                         <div className="text-xs text-slate-400">{ag.email}</div>
@@ -76,6 +169,230 @@ function Overview() {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── COPY SIGNUP LINK (used in both Admin agencies & Partner sidebar) ────
+function CopySignupLink({ slug, agencyName, compact = false }) {
+  const [copied, setCopied] = useState(false);
+  const [showShare, setShowShare] = useState(false);
+  const signupUrl = `${window.location.origin}/${slug}`;
+
+  const doCopy = () => {
+    navigator.clipboard.writeText(signupUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const doWhatsApp = () => {
+    const msg = `🎓 Join ${agencyName || 'our academy'} and kickstart your exam prep!\n\nSign up here 👇\n${signupUrl}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+
+  if (compact) {
+    // Compact horizontal version for agency profile sidebar
+    return (
+      <div className="w-full flex gap-1.5 mt-1">
+        <button onClick={doCopy}
+          className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-bold transition"
+          style={{ background: copied ? '#16a34a' : '#f1f5f9', color: copied ? '#fff' : '#475569' }}>
+          {copied ? '✅ Copied!' : '🔗 Copy Link'}
+        </button>
+        <button onClick={doWhatsApp}
+          className="flex items-center justify-center px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
+          style={{ background: 'rgba(37,211,102,0.15)', color: '#16a34a' }}
+          title="Share via WhatsApp">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+        </button>
+      </div>
+    );
+  }
+
+  // Full card version for admin agency cards
+  return (
+    <div className="mt-2 pt-3 border-t border-slate-100">
+      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1.5">Student Signup Link</p>
+      <div className="flex items-center gap-1.5 bg-slate-50 rounded-xl p-2 border border-slate-200 mb-2">
+        <span className="text-[10px] text-slate-500 font-mono flex-1 truncate">{signupUrl}</span>
+        <button onClick={doCopy}
+          className="text-[10px] font-black px-2.5 py-1 rounded-lg transition flex-shrink-0"
+          style={{ background: copied ? '#16a34a' : '#1e40af', color: '#fff' }}>
+          {copied ? '✅ Copied!' : '📋 Copy'}
+        </button>
+      </div>
+      <button onClick={doWhatsApp}
+        className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-xl text-xs font-bold transition hover:opacity-90"
+        style={{ background: 'rgba(37,211,102,0.12)', color: '#16a34a', border: '1px solid rgba(37,211,102,0.3)' }}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+        Share via WhatsApp
+      </button>
+    </div>
+  );
+}
+
+// ── LOGO APPEARANCE EDITOR (admin portal tab + partner branding) ────────────
+const FIT_OPTIONS = [
+  { value: 'contain', label: 'Contain', desc: 'Show full logo', icon: '⬜' },
+  { value: 'cover',   label: 'Cover',   desc: 'Fill frame (may crop)', icon: '🔳' },
+  { value: 'fill',    label: 'Fill',    desc: 'Stretch to fit', icon: '▬' },
+];
+const BG_OPTIONS = [
+  { value: 'white',       label: 'White',       desc: 'Clean white bg' },
+  { value: 'transparent', label: 'Transparent', desc: 'Logo only, no bg' },
+  { value: 'brand',       label: 'Brand Color', desc: 'Uses your brand color' },
+  { value: 'light',       label: 'Light Tint',  desc: 'Subtle color wash' },
+];
+const PADDING_OPTIONS = [
+  { value: 0,  label: 'None' },
+  { value: 6,  label: 'Small' },
+  { value: 12, label: 'Medium' },
+  { value: 18, label: 'Large' },
+];
+
+function LogoAppearanceEditor({ agency, localFit, localBg, localPadding, localShape,
+  onChangeFit, onChangeBg, onChangePadding, onChangeShape,
+  onLogoUpload, onLogoRemove, uploading }) {
+
+  const brandColor = agency?.brand_color || '#1e40af';
+  const logoUrl    = agency?.logo_url;
+  const initials   = agency?.logo_initials || agency?.name?.[0] || 'P';
+  const dropRef    = useRef();
+  const [dragging, setDragging] = useState(false);
+
+  // Preview sizes
+  const previews = [
+    { label: 'Sidebar',  size: 60 },
+    { label: 'Nav',      size: 40 },
+    { label: 'Small',    size: 28 },
+  ];
+
+  const handleDrop = (e) => {
+    e.preventDefault(); setDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) onLogoUpload(file);
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Upload zone */}
+      <div>
+        <p className="text-sm font-black text-slate-800 mb-1">Logo Image</p>
+        <p className="text-xs text-slate-400 mb-3">PNG or SVG with transparent background works best. Max 2 MB.</p>
+        <div
+          ref={dropRef}
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
+          className={`relative flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed p-6 transition cursor-pointer
+            ${dragging ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-blue-300 hover:bg-slate-50'}`}>
+
+          {/* Preview in all sizes */}
+          <div className="flex items-end gap-4 mb-1">
+            {previews.map(p => (
+              <div key={p.label} className="flex flex-col items-center gap-1.5">
+                <LogoDisplay
+                  logoUrl={logoUrl} fit={localFit} bg={localBg} padding={localPadding}
+                  brandColor={brandColor} initials={initials} shape={localShape} size={p.size}
+                />
+                <span className="text-[10px] text-slate-400 font-medium">{p.label}</span>
+              </div>
+            ))}
+          </div>
+
+          <label className={`cursor-pointer px-4 py-2 rounded-xl text-sm font-bold text-white transition hover:opacity-90 ${uploading ? 'opacity-60' : ''}`}
+            style={{ background: brandColor }}>
+            {uploading ? '⏳ Uploading…' : logoUrl ? '🔄 Change Logo' : '📁 Upload Logo'}
+            <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp"
+              className="hidden" disabled={uploading}
+              onChange={e => e.target.files[0] && onLogoUpload(e.target.files[0])} />
+          </label>
+          <p className="text-[11px] text-slate-400">or drag & drop here</p>
+
+          {logoUrl && (
+            <button onClick={onLogoRemove}
+              className="text-xs text-red-500 hover:text-red-700 font-semibold underline transition">
+              Remove logo
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Background */}
+      <div>
+        <p className="text-sm font-black text-slate-800 mb-1">Logo Background</p>
+        <p className="text-xs text-slate-400 mb-3">Choose what sits behind your logo in the container.</p>
+        <div className="grid grid-cols-2 gap-2">
+          {BG_OPTIONS.map(opt => {
+            const preview = opt.value === 'white' ? '#fff'
+              : opt.value === 'brand' ? brandColor
+              : opt.value === 'light' ? brandColor + '1a'
+              : 'repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 0 0 / 10px 10px'; // checkerboard for transparent
+            const isSelected = localBg === opt.value;
+            return (
+              <button key={opt.value} onClick={() => onChangeBg(opt.value)}
+                className={`flex items-center gap-3 p-3 rounded-xl border-2 text-left transition ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}>
+                <div className="w-8 h-8 rounded-lg flex-shrink-0 border border-slate-200"
+                  style={{ background: preview }} />
+                <div>
+                  <p className={`text-xs font-bold ${isSelected ? 'text-blue-700' : 'text-slate-700'}`}>{opt.label}</p>
+                  <p className="text-[10px] text-slate-400">{opt.desc}</p>
+                </div>
+                {isSelected && <span className="ml-auto text-blue-600 text-sm">✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Fit mode */}
+      <div>
+        <p className="text-sm font-black text-slate-800 mb-1">Logo Fit</p>
+        <p className="text-xs text-slate-400 mb-3">Controls how the image fills the container.</p>
+        <div className="flex gap-2">
+          {FIT_OPTIONS.map(opt => (
+            <button key={opt.value} onClick={() => onChangeFit(opt.value)}
+              className={`flex-1 p-3 rounded-xl border-2 text-center transition ${localFit === opt.value ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}>
+              <div className="text-lg mb-1">{opt.icon}</div>
+              <p className={`text-xs font-bold ${localFit === opt.value ? 'text-blue-700' : 'text-slate-700'}`}>{opt.label}</p>
+              <p className="text-[10px] text-slate-400 leading-tight">{opt.desc}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Padding */}
+      <div>
+        <p className="text-sm font-black text-slate-800 mb-1">Inner Padding</p>
+        <p className="text-xs text-slate-400 mb-3">Space between the logo image and its container edge.</p>
+        <div className="flex gap-2">
+          {PADDING_OPTIONS.map(opt => (
+            <button key={opt.value} onClick={() => onChangePadding(opt.value)}
+              className={`flex-1 py-2 rounded-xl border-2 text-center text-xs font-bold transition
+                ${localPadding === opt.value ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 hover:border-slate-300 text-slate-600'}`}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Shape (reuse existing shapes) */}
+      <div>
+        <p className="text-sm font-black text-slate-800 mb-1">Logo Shape</p>
+        <div className="grid grid-cols-4 gap-2">
+          {LOGO_SHAPES.map(shape => (
+            <button key={shape.id} onClick={() => onChangeShape(shape.id)}
+              className={`flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition ${localShape === shape.id ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}>
+              <LogoDisplay
+                logoUrl={logoUrl} fit={localFit} bg={localBg} padding={localPadding}
+                brandColor={brandColor} initials={initials} shape={shape.id} size={36}
+              />
+              <span className={`text-[10px] font-bold ${localShape === shape.id ? 'text-blue-600' : 'text-slate-500'}`}>{shape.label}</span>
+            </button>
+          ))}
         </div>
       </div>
     </div>
@@ -190,16 +507,23 @@ function PortalPreview({ agency, visibleSections, layoutType, logoShape, onClose
             {/* Logo area */}
             <div className="p-4" style={{ borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0'}` }}>
               <div className="flex items-center justify-center mb-2">
-                <div style={{ width: logoSize, height: logoSize, overflow: 'hidden', background: isDark ? 'rgba(255,255,255,0.15)' : '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, ...shapeStyle }}>
-                  {agency.logo_url
-                    ? <img src={agency.logo_url} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 4 }} />
-                    : <span style={{ fontWeight: 900, fontSize: 20, color: isDark ? 'white' : accent }}>{agency.logo_initials || agency.name?.[0]}</span>
-                  }
-                </div>
+                <LogoDisplay
+                  logoUrl={agency.logo_url}
+                  fit={agency.logo_fit || 'contain'}
+                  bg={agency.logo_bg || 'white'}
+                  padding={agency.logo_padding != null ? Number(agency.logo_padding) : 8}
+                  brandColor={accent}
+                  initials={agency.logo_initials || agency.name?.[0]}
+                  shape={logoShape}
+                  size={logoSize}
+                />
               </div>
               <div style={{ color: textPrimary, fontWeight: 700, fontSize: 13, textAlign: 'center', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{agency.name}</div>
               <div style={{ color: textSub, fontSize: 10, textAlign: 'center', fontFamily: 'monospace' }}>/{agency.slug}</div>
-              <div style={{ marginTop: 8, background: 'rgba(37,211,102,0.85)', borderRadius: 8, padding: '5px 8px', fontSize: 10, fontWeight: 700, color: '#fff', textAlign: 'center' }}>📱 Share My Link</div>
+              <div style={{ marginTop: 8, display: 'flex', gap: 4 }}>
+                <div style={{ flex: 1, background: isDark ? 'rgba(255,255,255,0.18)' : '#f1f5f9', borderRadius: 8, padding: '5px 6px', fontSize: 9, fontWeight: 700, color: isDark ? '#fff' : '#475569', textAlign: 'center' }}>🔗 Copy Link</div>
+                <div style={{ background: 'rgba(37,211,102,0.85)', borderRadius: 8, padding: '5px 8px', fontSize: 9, fontWeight: 700, color: '#fff' }}>📱</div>
+              </div>
             </div>
             {/* Nav items */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 6px' }}>
@@ -280,18 +604,77 @@ function AgencyEditModal({ agency, onClose, onSaved }) {
   const [visibleSections, setVisibleSections] = useState(defaultSections);
   const [layoutType, setLayoutType] = useState(Number(agency.layout_type) || 1);
   const [logoShape, setLogoShape] = useState(agency.logo_shape || 'rounded');
+  // Logo appearance state
+  const [logoFit,     setLogoFit]     = useState(agency.logo_fit     || 'contain');
+  const [logoBg,      setLogoBg]      = useState(agency.logo_bg      || 'white');
+  const [logoPadding, setLogoPadding] = useState(agency.logo_padding != null ? Number(agency.logo_padding) : 8);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [localAgency, setLocalAgency] = useState(agency); // tracks live logo_url changes
   const [showPreview, setShowPreview] = useState(false);
   const [portalSaving, setPortalSaving] = useState(false);
   const [portalMsg, setPortalMsg] = useState('');
+  // Partner admin password
+  const [partnerUser, setPartnerUser] = useState(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [pwMsg, setPwMsg] = useState('');
+  const [pwSaving, setPwSaving] = useState(false);
+
+  const handleLogoUpload = (file) => {
+    if (file.size > 2 * 1024 * 1024) { setPortalMsg('❌ Image must be under 2 MB'); return; }
+    setLogoUploading(true); setPortalMsg('');
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const res = await api.post(`/admin/agencies/${agency.id}/logo`, { logo_url: ev.target.result });
+        setLocalAgency(a => ({ ...a, logo_url: res.logo_url }));
+        setPortalMsg('✅ Logo uploaded!');
+        onSaved();
+      } catch (e) { setPortalMsg('❌ ' + e.message); }
+      finally { setLogoUploading(false); }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleLogoRemove = async () => {
+    setLogoUploading(true);
+    try {
+      await api.post(`/admin/agencies/${agency.id}/logo`, { logo_url: '' });
+      setLocalAgency(a => ({ ...a, logo_url: null }));
+      setPortalMsg('✅ Logo removed.');
+      onSaved();
+    } catch (e) { setPortalMsg('❌ ' + e.message); }
+    finally { setLogoUploading(false); }
+  };
 
   useEffect(() => {
     api.get(`/admin/agencies/${agency.id}/history`).then(setHistory).catch(() => {});
+    api.get(`/admin/agencies/${agency.id}/partner-user`).then(r => setPartnerUser(r.user)).catch(() => {});
   }, [agency.id]);
+
+  const resetPartnerPassword = async () => {
+    if (!newPassword) return;
+    setPwSaving(true); setPwMsg('');
+    try {
+      await api.put(`/admin/agencies/${agency.id}/partner-password`, { password: newPassword });
+      setPwMsg('✅ Password updated!');
+      setNewPassword('');
+      setTimeout(() => setPwMsg(''), 3000);
+    } catch (e) { setPwMsg('❌ ' + e.message); }
+    finally { setPwSaving(false); }
+  };
 
   const savePortalSettings = async () => {
     setPortalSaving(true); setPortalMsg('');
     try {
-      await api.put(`/admin/agencies/${agency.id}/portal-settings`, { visible_sections: visibleSections, layout_type: layoutType, logo_shape: logoShape });
+      await api.put(`/admin/agencies/${agency.id}/portal-settings`, {
+        visible_sections: visibleSections,
+        layout_type: layoutType,
+        logo_shape: logoShape,
+        logo_fit: logoFit,
+        logo_bg: logoBg,
+        logo_padding: logoPadding,
+      });
       setPortalMsg('✅ Portal settings saved!');
       onSaved();
       setTimeout(() => setPortalMsg(''), 2500);
@@ -370,6 +753,50 @@ function AgencyEditModal({ agency, onClose, onSaved }) {
                   </div>
                 </div>
               </div>
+              {/* Partner Admin Credentials */}
+              <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50/60 space-y-3">
+                <p className="text-sm font-black text-slate-800 flex items-center gap-2">🔑 Partner Admin Login</p>
+                {partnerUser ? (
+                  <>
+                    <div className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-200">
+                      <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-black text-sm flex-shrink-0">
+                        {partnerUser.name?.[0]?.toUpperCase() || 'P'}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-800 truncate">{partnerUser.name}</p>
+                        <p className="text-xs text-slate-500 truncate">{partnerUser.email}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="label">Set New Password</label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            type={showPassword ? 'text' : 'password'}
+                            value={newPassword}
+                            onChange={e => setNewPassword(e.target.value)}
+                            placeholder="Enter new password (min 6 chars)"
+                            className="w-full pr-10"
+                          />
+                          <button type="button" onClick={() => setShowPassword(p => !p)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-sm">
+                            {showPassword ? '🙈' : '👁️'}
+                          </button>
+                        </div>
+                        <button type="button" onClick={resetPartnerPassword}
+                          disabled={pwSaving || !newPassword}
+                          className="px-4 py-2 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 transition disabled:opacity-40 whitespace-nowrap flex-shrink-0">
+                          {pwSaving ? 'Saving…' : '🔒 Update'}
+                        </button>
+                      </div>
+                      {pwMsg && <p className={`text-xs mt-1 font-semibold ${pwMsg.startsWith('✅') ? 'text-emerald-600' : 'text-red-600'}`}>{pwMsg}</p>}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-slate-400 italic">No partner admin user found for this agency.</p>
+                )}
+              </div>
+
               <div className="flex gap-2 pt-2 border-t border-slate-100">
                 <button type="submit" className="btn-primary">💾 Save Changes</button>
                 {(agency.partner_edit_count || 0) > 0 && (
@@ -424,27 +851,18 @@ function AgencyEditModal({ agency, onClose, onSaved }) {
                 </div>
               </div>
 
-              {/* Logo Shape */}
-              <div>
-                <p className="text-sm font-black text-slate-800 mb-1">Logo Shape</p>
-                <p className="text-xs text-slate-500 mb-3">Controls how the partner's logo appears in their sidebar.</p>
-                <div className="grid grid-cols-4 gap-3">
-                  {LOGO_SHAPES.map(shape => {
-                    const bg = agency.brand_color || '#1e40af';
-                    return (
-                      <button key={shape.id} onClick={() => setLogoShape(shape.id)}
-                        className={`flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition ${logoShape === shape.id ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}>
-                        <div style={{ width: 44, height: 44, background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', color: 'white', fontWeight: 900, fontSize: 16, ...shape.style }}>
-                          {agency.logo_url
-                            ? <img src={agency.logo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 3 }} />
-                            : (agency.logo_initials || agency.name?.[0] || 'P')
-                          }
-                        </div>
-                        <span className={`text-xs font-bold ${logoShape === shape.id ? 'text-blue-600' : 'text-slate-500'}`}>{shape.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+              {/* Logo Appearance (full editor) */}
+              <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50/50">
+                <p className="text-sm font-black text-slate-800 mb-0.5">🖼 Logo Appearance</p>
+                <p className="text-xs text-slate-400 mb-4">Upload a logo and fine-tune how it looks across the partner portal.</p>
+                <LogoAppearanceEditor
+                  agency={localAgency}
+                  localFit={logoFit}   localBg={logoBg}   localPadding={logoPadding}  localShape={logoShape}
+                  onChangeFit={setLogoFit}  onChangeBg={setLogoBg}
+                  onChangePadding={setLogoPadding}  onChangeShape={setLogoShape}
+                  onLogoUpload={handleLogoUpload}  onLogoRemove={handleLogoRemove}
+                  uploading={logoUploading}
+                />
               </div>
 
               {/* Visible Sections */}
@@ -599,13 +1017,12 @@ function Agencies() {
           <div key={ag.id} className="card relative overflow-hidden">
             <div className="absolute top-0 left-0 right-0 h-1" style={{ background: ag.brand_color }} />
             <div className="flex items-center gap-3 mt-2 mb-3">
-              <div className="w-12 h-12 rounded-xl overflow-hidden flex items-center justify-center flex-shrink-0"
-                style={{ background: ag.brand_color }}>
-                {ag.logo_url
-                  ? <img src={ag.logo_url} alt="logo" className="w-full h-full object-contain p-1 bg-white" />
-                  : <span className="text-lg font-black text-white">{ag.logo_initials}</span>
-                }
-              </div>
+              <LogoDisplay
+                logoUrl={ag.logo_url} fit={ag.logo_fit || 'contain'} bg={ag.logo_bg || 'white'}
+                padding={ag.logo_padding != null ? Number(ag.logo_padding) : 8}
+                brandColor={ag.brand_color} initials={ag.logo_initials || ag.name?.[0]}
+                shape={ag.logo_shape || 'rounded'} size={48}
+              />
               <div className="flex-1 min-w-0">
                 <div className="font-bold text-slate-900 truncate">{ag.name}</div>
                 <div className="text-xs text-slate-400 truncate">{ag.city} · {ag.email}</div>
@@ -624,6 +1041,8 @@ function Agencies() {
                 📋 History
               </button>
             </div>
+            {/* Copy Signup Link */}
+            <CopySignupLink slug={ag.slug} agencyName={ag.name} />
             <div className="grid grid-cols-3 gap-3 border-t border-slate-50 pt-4">
               <div className="text-center"><div className="text-lg font-black text-slate-900">{ag.student_count}</div><div className="text-xs text-slate-400">Students</div></div>
               <div className="text-center"><div className="text-lg font-black text-slate-900">{fmt(ag.total_revenue).replace('₹', '').split(',')[0]}L</div><div className="text-xs text-slate-400">Revenue</div></div>
@@ -654,38 +1073,94 @@ function Agencies() {
 // ── ALL STUDENTS ─────────────────────────────────────────────
 function AllStudents() {
   const [students, setStudents] = useState([]);
-  const [filter, setFilter] = useState('');
+  // ── Filters ─────────────────────────────────────────
+  const [search,        setSearch]        = useState('');
+  const [agencyF,       setAgencyF]       = useState([]);   // selected agency names
+  const [enrolF,        setEnrolF]        = useState([]);   // '0','1','2+'
+  const [paidF,         setPaidF]         = useState([]);   // 'paid','unpaid'
+  const [dateFrom,      setDateFrom]      = useState('');
+  const [dateTo,        setDateTo]        = useState('');
+  const [sortBy,        setSortBy]        = useState('newest');
+
   useEffect(() => { api.get('/admin/students').then(setStudents); }, []);
-  const filtered = students.filter(s => !filter || s.agency_name?.toLowerCase().includes(filter.toLowerCase()) || s.name?.toLowerCase().includes(filter.toLowerCase()));
+
+  // Derived filter options from data
+  const agencyOptions = [...new Set(students.map(s => s.agency_name).filter(Boolean))].sort();
+
+  // ── Applied snapshot (only updates on Search click) ────────
+  const [applied, setApplied] = useState(null);
+  const handleSearch = () => setApplied({ search, agencyF, enrolF, paidF, dateFrom, dateTo });
+  const handleClear  = () => { setSearch(''); setAgencyF([]); setEnrolF([]); setPaidF([]); setDateFrom(''); setDateTo(''); setApplied(null); };
+  const f = applied || {};
+  const appliedCount = !applied ? 0 : [f.search, f.agencyF?.length, f.enrolF?.length, f.paidF?.length, f.dateFrom, f.dateTo].filter(Boolean).length;
+
+  const filtered = students
+    .filter(s => {
+      if (!applied) return true;
+      if (f.search && !s.name?.toLowerCase().includes(f.search.toLowerCase()) && !s.email?.toLowerCase().includes(f.search.toLowerCase()) && !s.agency_name?.toLowerCase().includes(f.search.toLowerCase()) && !s.phone?.includes(f.search)) return false;
+      if (f.agencyF?.length && !f.agencyF.includes(s.agency_name)) return false;
+      if (f.enrolF?.length) {
+        const n = s.enrollment_count || 0;
+        if (!f.enrolF.some(v => v === '0' ? n === 0 : v === '1' ? n === 1 : n >= 2)) return false;
+      }
+      if (f.paidF?.length) {
+        const hasPaid = Number(s.total_paid) > 0;
+        if (!f.paidF.some(v => v === 'paid' ? hasPaid : !hasPaid)) return false;
+      }
+      if (f.dateFrom && s.created_at < f.dateFrom) return false;
+      if (f.dateTo   && s.created_at > f.dateTo + 'T23:59:59') return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'oldest')    return new Date(a.created_at) - new Date(b.created_at);
+      if (sortBy === 'courses')   return (b.enrollment_count || 0) - (a.enrollment_count || 0);
+      if (sortBy === 'paid')      return Number(b.total_paid) - Number(a.total_paid);
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-black text-slate-900">All Students <span className="text-base font-normal text-slate-400 ml-2">{students.length} total</span></h2>
-        <input placeholder="Filter by name or agency..." className="w-56" value={filter} onChange={e => setFilter(e.target.value)} />
-      </div>
+      <h2 className="text-xl font-black text-slate-900 mb-3">All Students
+        <span className="text-base font-normal text-slate-400 ml-2">{applied ? `${filtered.length} of ${students.length}` : students.length}</span>
+      </h2>
+
+      <FilterRow onApply={handleSearch} onClear={handleClear} appliedCount={appliedCount}>
+        <SearchInput value={search} onChange={setSearch} placeholder="Name, email, phone…" width="w-48" />
+        {agencyOptions.length > 0 && (
+          <MultiSelectDropdown label="Agency" options={agencyOptions} selected={agencyF} onChange={setAgencyF} />
+        )}
+        <MultiSelectDropdown label="Courses" options={[{value:'0',label:'0 courses'},{value:'1',label:'1 course'},{value:'2+',label:'2+ courses'}]} selected={enrolF} onChange={setEnrolF} />
+        <MultiSelectDropdown label="Revenue" options={[{value:'paid',label:'Has paid'},{value:'unpaid',label:'₹0 paid'}]} selected={paidF} onChange={setPaidF} />
+        <DateRange from={dateFrom} to={dateTo} onFrom={setDateFrom} onTo={setDateTo} />
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+          className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none text-slate-600 flex-shrink-0">
+          <option value="newest">↕ Newest</option>
+          <option value="oldest">↕ Oldest</option>
+          <option value="courses">↕ Most courses</option>
+          <option value="paid">↕ Highest paid</option>
+        </select>
+      </FilterRow>
+
       <div className="card">
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Student</th><th>Agency</th><th>Phone</th><th>Courses</th><th>Total Paid</th><th>LMS ID</th><th>Joined</th>
+                <th>Student</th><th>Agency</th><th>🔒 Contact (masked)</th><th>Courses</th><th>Total Paid</th><th>LMS ID</th><th>Joined</th>
               </tr>
             </thead>
             <tbody>
+              {filtered.length === 0 && <tr><td colSpan={7} className="text-center text-slate-400 py-6 text-sm">No students match the selected filters</td></tr>}
               {filtered.map(s => (
                 <tr key={s.id}>
                   <td>
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-black">{s.name?.[0]}</div>
-                      <div>
-                        <div className="font-semibold text-slate-900">{s.name}</div>
-                        <div className="text-xs text-slate-400">{s.email}</div>
-                      </div>
+                      <div className="font-semibold text-slate-900">{s.name}</div>
                     </div>
                   </td>
                   <td><span className="text-xs font-bold px-2 py-1 rounded" style={{ background: s.brand_color + '20', color: s.brand_color }}>{s.agency_name}</span></td>
-                  <td className="text-slate-500">{s.phone}</td>
+                  <td><MaskedContact studentId={s.id} email={s.email} phone={s.phone} /></td>
                   <td className="font-semibold">{s.enrollment_count} course{s.enrollment_count !== 1 ? 's' : ''}</td>
                   <td className="font-semibold text-emerald-600">{fmt(s.total_paid)}</td>
                   <td><span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">{s.lms_user_id || '—'}</span></td>
@@ -703,19 +1178,110 @@ function AllStudents() {
 // ── ALL ENROLLMENTS ──────────────────────────────────────────
 function AllEnrollments() {
   const [enrollments, setEnrollments] = useState([]);
+  // ── Filters ─────────────────────────────────────────
+  const [search,      setSearch]      = useState('');
+  const [agencyF,     setAgencyF]     = useState([]);
+  const [categoryF,   setCategoryF]   = useState([]);
+  const [paymentF,    setPaymentF]    = useState([]);
+  const [statusF,     setStatusF]     = useState([]);
+  const [progressF,   setProgressF]   = useState([]);  // 'none','low','mid','high'
+  const [dateFrom,    setDateFrom]    = useState('');
+  const [dateTo,      setDateTo]      = useState('');
+  const [feeMin,      setFeeMin]      = useState('');
+  const [feeMax,      setFeeMax]      = useState('');
+  const [sortBy,      setSortBy]      = useState('newest');
+
   useEffect(() => { api.get('/admin/enrollments').then(setEnrollments); }, []);
-  const totalRev = enrollments.filter(e => e.payment_status === 'paid').reduce((a, e) => a + Number(e.fee_paid), 0);
+
+  // Derived options
+  const agencyOptions   = [...new Set(enrollments.map(e => e.agency_name).filter(Boolean))].sort();
+  const categoryOptions = [...new Set(enrollments.map(e => e.category).filter(Boolean))].sort();
+
+  // ── Applied snapshot (only updates on Search click) ────────
+  const [applied, setApplied] = useState(null);
+  const handleSearch = () => setApplied({ search, agencyF, categoryF, paymentF, statusF, progressF, feeMin, feeMax, dateFrom, dateTo });
+  const handleClear  = () => { setSearch(''); setAgencyF([]); setCategoryF([]); setPaymentF([]); setStatusF([]); setProgressF([]); setFeeMin(''); setFeeMax(''); setDateFrom(''); setDateTo(''); setApplied(null); };
+  const f = applied || {};
+  const appliedCount = !applied ? 0 : [f.search, f.agencyF?.length, f.categoryF?.length, f.paymentF?.length, f.statusF?.length, f.progressF?.length, f.feeMin, f.feeMax, f.dateFrom, f.dateTo].filter(Boolean).length;
+
+  const filtered = enrollments
+    .filter(e => {
+      if (!applied) return true;
+      if (f.search && !e.student_name?.toLowerCase().includes(f.search.toLowerCase()) && !e.student_email?.toLowerCase().includes(f.search.toLowerCase()) && !e.course_title?.toLowerCase().includes(f.search.toLowerCase())) return false;
+      if (f.agencyF?.length   && !f.agencyF.includes(e.agency_name)) return false;
+      if (f.categoryF?.length && !f.categoryF.includes(e.category)) return false;
+      if (f.paymentF?.length  && !f.paymentF.includes(e.payment_status)) return false;
+      if (f.statusF?.length   && !f.statusF.includes(e.status)) return false;
+      if (f.progressF?.length) {
+        const p = e.progress_percent || 0;
+        if (!f.progressF.some(v => v==='none'?p===0 : v==='low'?p>0&&p<50 : v==='mid'?p>=50&&p<80 : p>=80)) return false;
+      }
+      if (f.feeMin && Number(e.fee_paid) < Number(f.feeMin)) return false;
+      if (f.feeMax && Number(e.fee_paid) > Number(f.feeMax)) return false;
+      if (f.dateFrom && e.enrolled_at < f.dateFrom) return false;
+      if (f.dateTo   && e.enrolled_at > f.dateTo + 'T23:59:59') return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'oldest')   return new Date(a.enrolled_at) - new Date(b.enrolled_at);
+      if (sortBy === 'fee_high') return Number(b.fee_paid) - Number(a.fee_paid);
+      if (sortBy === 'fee_low')  return Number(a.fee_paid) - Number(b.fee_paid);
+      if (sortBy === 'progress') return (b.progress_percent||0) - (a.progress_percent||0);
+      return new Date(b.enrolled_at||0) - new Date(a.enrolled_at||0);
+    });
+
+  const totalRev    = enrollments.filter(e => e.payment_status === 'paid').reduce((a, e) => a + Number(e.fee_paid), 0);
+  const filteredRev = filtered.filter(e => e.payment_status === 'paid').reduce((a, e) => a + Number(e.fee_paid), 0);
 
   return (
     <div>
-      <h2 className="text-xl font-black text-slate-900 mb-2">All Enrollments</h2>
-      <p className="text-sm text-slate-500 mb-6">Total paid revenue across all agencies: <strong className="text-emerald-600">{fmt(totalRev)}</strong></p>
+      <div className="mb-3">
+        <h2 className="text-xl font-black text-slate-900">All Enrollments
+          <span className="text-base font-normal text-slate-400 ml-2">{applied ? `${filtered.length} of ${enrollments.length}` : enrollments.length}</span>
+        </h2>
+        <p className="text-sm text-slate-500 mt-0.5">
+          Revenue: <strong className="text-emerald-600">{fmt(applied ? filteredRev : totalRev)}</strong>
+          {applied && <span className="text-slate-400"> of {fmt(totalRev)} total</span>}
+        </p>
+      </div>
+
+      <FilterRow onApply={handleSearch} onClear={handleClear} appliedCount={appliedCount}>
+        <SearchInput value={search} onChange={setSearch} placeholder="Student, course…" width="w-44" />
+        {agencyOptions.length > 0 && (
+          <MultiSelectDropdown label="Agency" options={agencyOptions} selected={agencyF} onChange={setAgencyF} />
+        )}
+        {categoryOptions.length > 0 && (
+          <MultiSelectDropdown label="Category" options={categoryOptions} selected={categoryF} onChange={setCategoryF} />
+        )}
+        <MultiSelectDropdown label="Payment" options={['paid','pending','rejected']} selected={paymentF} onChange={setPaymentF} />
+        <MultiSelectDropdown label="Status" options={['active','completed','cancelled']} selected={statusF} onChange={setStatusF} />
+        <MultiSelectDropdown label="Progress" options={[{value:'none',label:'0%'},{value:'low',label:'1–49%'},{value:'mid',label:'50–79%'},{value:'high',label:'80%+'}]} selected={progressF} onChange={setProgressF} />
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider whitespace-nowrap">Fee ₹</span>
+          <input type="number" value={feeMin} onChange={e => setFeeMin(e.target.value)} placeholder="Min"
+            className="w-16 text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" />
+          <span className="text-slate-300 text-xs">–</span>
+          <input type="number" value={feeMax} onChange={e => setFeeMax(e.target.value)} placeholder="Max"
+            className="w-16 text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" />
+        </div>
+        <DateRange from={dateFrom} to={dateTo} onFrom={setDateFrom} onTo={setDateTo} />
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+          className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none text-slate-600 flex-shrink-0">
+          <option value="newest">↕ Newest</option>
+          <option value="oldest">↕ Oldest</option>
+          <option value="fee_high">↕ Fee High→Low</option>
+          <option value="fee_low">↕ Fee Low→High</option>
+          <option value="progress">↕ Progress</option>
+        </select>
+      </FilterRow>
+
       <div className="card">
         <div className="table-wrap">
           <table>
             <thead><tr><th>Student</th><th>Course</th><th>Category</th><th>Agency</th><th>Fee</th><th>Payment</th><th>Progress</th><th>Status</th></tr></thead>
             <tbody>
-              {enrollments.map(e => (
+              {filtered.length === 0 && <tr><td colSpan={8} className="text-center text-slate-400 py-6 text-sm">No enrollments match the selected filters</td></tr>}
+              {filtered.map(e => (
                 <tr key={e.id}>
                   <td>
                     <div className="font-semibold">{e.student_name}</div>
@@ -1072,11 +1638,562 @@ function LmsBridge() {
 }
 
 // ── COURSES ADMIN ────────────────────────────────────────────
+// ── Module templates by category ─────────────────────────────
+const MODULE_TEMPLATES = {
+  IELTS: [
+    { title: 'Introduction to IELTS', lectures: ['Exam Overview & Format', 'Band Score System', 'Test Day Tips'] },
+    { title: 'Listening Skills', lectures: ['Section 1 – Conversations', 'Section 2 – Monologue', 'Section 3 – Academic', 'Section 4 – Lecture', 'Practice Test 1'] },
+    { title: 'Reading Skills', lectures: ['True/False/Not Given', 'Matching Headings', 'Summary Completion', 'Multiple Choice', 'Practice Test 2'] },
+    { title: 'Writing Task 1', lectures: ['Bar Charts & Line Graphs', 'Pie Charts & Tables', 'Process Diagrams', 'Maps & Plans', 'Sample Essays'] },
+    { title: 'Writing Task 2', lectures: ['Opinion Essays', 'Discussion Essays', 'Problem-Solution Essays', 'Advantage-Disadvantage', 'Feedback & Corrections'] },
+    { title: 'Speaking', lectures: ['Part 1 – Introduction', 'Part 2 – Cue Card', 'Part 3 – Discussion', 'Pronunciation Tips', 'Mock Speaking Tests'] },
+    { title: 'Grammar & Vocabulary', lectures: ['Cohesive Devices', 'Academic Word List', 'Complex Sentences', 'Collocations'] },
+    { title: 'Full Mock Tests', lectures: ['Mock Test 1 – Full Paper', 'Mock Test 2 – Full Paper', 'Mock Test 3 – Full Paper'] },
+  ],
+  PTE: [
+    { title: 'Introduction to PTE Academic', lectures: ['Exam Format Overview', 'Scoring System', 'Test Center Tips'] },
+    { title: 'Speaking & Writing', lectures: ['Read Aloud', 'Repeat Sentence', 'Describe Image', 'Re-tell Lecture', 'Answer Short Question', 'Summarize Written Text', 'Essay Writing'] },
+    { title: 'Reading', lectures: ['Multiple Choice Single', 'Multiple Choice Multiple', 'Re-order Paragraphs', 'Fill in the Blanks', 'Reading & Writing FIB'] },
+    { title: 'Listening', lectures: ['Summarize Spoken Text', 'MCQ Listening', 'Fill Blanks (Listening)', 'Highlight Correct Summary', 'Select Missing Word', 'Highlight Incorrect Words', 'Write from Dictation'] },
+    { title: 'AI-Scored Practice', lectures: ['Pronunciation Drills', 'Fluency Practice', 'AI Feedback Sessions'] },
+    { title: 'Full Mock Tests', lectures: ['Mock Test 1', 'Mock Test 2', 'Mock Test 3'] },
+  ],
+  TOEFL: [
+    { title: 'Introduction to TOEFL iBT', lectures: ['Test Format & Timing', 'Scoring Breakdown', 'Registration Guide'] },
+    { title: 'Reading Section', lectures: ['Factual Information', 'Inference Questions', 'Vocabulary in Context', 'Prose Summary', 'Practice Passages'] },
+    { title: 'Listening Section', lectures: ['Academic Lectures', 'Campus Conversations', 'Note-Taking Strategies'] },
+    { title: 'Speaking Section', lectures: ['Independent Task', 'Integrated Task 1 & 2', 'Fluency & Pronunciation'] },
+    { title: 'Writing Section', lectures: ['Integrated Essay', 'Independent Essay', 'Paraphrasing Techniques'] },
+    { title: 'Full Mock Tests', lectures: ['Mock Test 1', 'Mock Test 2'] },
+  ],
+  GERMAN: [
+    { title: 'A1 – Absolute Beginners', lectures: ['Alphabet & Pronunciation', 'Greetings & Introductions', 'Numbers 1–100', 'Days, Months, Seasons', 'Basic Verbs (sein, haben)'] },
+    { title: 'A2 – Elementary', lectures: ['Nominative & Accusative Cases', 'Modal Verbs', 'Daily Routines', 'Food & Shopping', 'Simple Past Tense'] },
+    { title: 'B1 – Intermediate', lectures: ['Dative Case', 'Subordinate Clauses', 'Comparing Things', 'Travel & Transport', 'Expressing Opinions'] },
+    { title: 'B2 – Upper Intermediate', lectures: ['Genitive Case', 'Passive Voice', 'Subjunctive II', 'Business German', 'Media & Culture'] },
+    { title: 'Speaking Practice', lectures: ['Role Plays', 'Presentation Skills', 'Telephone Conversations', 'Interview Prep'] },
+    { title: 'Exam Preparation (Goethe/TestDaF)', lectures: ['Exam Format', 'Hören Practice', 'Lesen Practice', 'Schreiben Practice', 'Sprechen Practice'] },
+  ],
+  FRENCH: [
+    { title: 'A1 – Débutant', lectures: ['Alphabet & Sounds', 'Greetings & Politeness', 'Numbers & Dates', 'Colours & Adjectives', 'Verb Être & Avoir'] },
+    { title: 'A2 – Élémentaire', lectures: ['Present Tense Verbs', 'Family & Relationships', 'At the Restaurant', 'Directions & Places', 'Simple Past (Passé Composé)'] },
+    { title: 'B1 – Intermédiaire', lectures: ['Imparfait Tense', 'Future Tense', 'Expressing Emotions', 'Work & Career', 'French Media'] },
+    { title: 'DELF/DALF Preparation', lectures: ['Compréhension Écrite', 'Compréhension Orale', 'Production Écrite', 'Production Orale', 'Mock Tests'] },
+  ],
+  SPOKEN_ENGLISH: [
+    { title: 'Foundations', lectures: ['IPA & Phonetics', 'Stress & Rhythm', 'Intonation Patterns', 'Word Linking'] },
+    { title: 'Everyday Conversations', lectures: ['Greetings & Small Talk', 'At Work', 'On the Phone', 'Social Situations'] },
+    { title: 'Professional English', lectures: ['Presentations', 'Meetings & Discussions', 'Email Writing', 'Job Interviews'] },
+    { title: 'Grammar in Use', lectures: ['Tense Review', 'Conditionals', 'Reported Speech', 'Phrasal Verbs'] },
+    { title: 'Advanced Communication', lectures: ['Debate & Argumentation', 'Public Speaking', 'Negotiation Skills', 'Leadership Language'] },
+  ],
+  OTHER: [
+    { title: 'Introduction', lectures: ['Course Overview', 'Learning Goals', 'Study Plan'] },
+    { title: 'Core Concepts', lectures: ['Lesson 1', 'Lesson 2', 'Lesson 3', 'Lesson 4'] },
+    { title: 'Intermediate Topics', lectures: ['Topic 1', 'Topic 2', 'Topic 3'] },
+    { title: 'Advanced Material', lectures: ['Advanced 1', 'Advanced 2'] },
+    { title: 'Practice & Assessment', lectures: ['Practice Test 1', 'Practice Test 2', 'Final Assessment'] },
+  ],
+};
+
+// ── Curriculum Editor (modules + lectures) — redesigned ──────
+function CurriculumEditor({ course }) {
+  const [modules, setModules]   = useState([]);
+  const [loading, setLoading]   = useState(false);
+  const [loadErr, setLoadErr]   = useState('');
+  const [openMods, setOpenMods] = useState({});
+  const [msg, setMsg]           = useState('');
+  const [editingMod, setEditingMod] = useState(null);
+  const [showModForm, setShowModForm] = useState(false);
+  const [modForm, setModForm]   = useState({ title:'', description:'', sort_order:0, price:'', is_free_preview:false });
+  const [lecForms, setLecForms] = useState({});
+
+  // Modals
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showLibrary, setShowLibrary]     = useState(false);
+  const [libraryModules, setLibraryModules] = useState([]);
+  const [selectedLibMods, setSelectedLibMods] = useState([]);
+  const [selectedTemplMods, setSelectedTemplMods] = useState([]);
+  const [importing, setImporting] = useState(false);
+
+  const fmtDur = (m) => { if (!m) return ''; const h=Math.floor(m/60),mn=m%60; return h>0?(mn>0?`${h}h ${mn}m`:`${h}h`):`${mn}m`; };
+  const totalLectures = modules.reduce((s,m)=>s+(m.lectures?.length||0),0);
+  const totalMins     = modules.reduce((s,m)=>s+m.lectures?.reduce((ls,l)=>ls+(l.duration_minutes||0),0),0);
+
+  const load = async () => {
+    setLoading(true); setLoadErr('');
+    try {
+      const data = await api.get(`/admin/courses/${course.id}/modules`);
+      setModules(Array.isArray(data) ? data : []);
+    } catch(e) {
+      setLoadErr(e.message?.includes('DOCTYPE') || e.message?.includes('JSON')
+        ? 'Server is updating — please wait a moment and click Retry.'
+        : (e.message || 'Failed to load curriculum'));
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [course.id]);
+
+  const openLibraryModal = async () => {
+    setSelectedLibMods([]);
+    try {
+      const all = await api.get('/admin/all-modules');
+      setLibraryModules((all||[]).filter(m => m.course_id !== course.id));
+    } catch(e) { setLibraryModules([]); }
+    setShowLibrary(true);
+  };
+
+  const importFromTemplates = async () => {
+    if (!selectedTemplMods.length) return;
+    setImporting(true);
+    const templates = MODULE_TEMPLATES[course.category] || MODULE_TEMPLATES.OTHER;
+    try {
+      for (let idx=0; idx<selectedTemplMods.length; idx++) {
+        const tmpl = templates[selectedTemplMods[idx]];
+        if (!tmpl) continue;
+        const r = await api.post(`/admin/courses/${course.id}/modules`, {
+          title: tmpl.title, description:'', sort_order: modules.length+idx, price:null, is_free_preview:false
+        });
+        for (let li=0; li<tmpl.lectures.length; li++) {
+          await api.post(`/admin/modules/${r.id}/lectures`, {
+            title: tmpl.lectures[li], course_id: course.id,
+            duration_minutes: 60, sort_order: li, price: null, is_free_preview: li===0
+          });
+        }
+      }
+      setMsg(`✅ Added ${selectedTemplMods.length} module(s) with lectures`);
+      setShowTemplates(false); setSelectedTemplMods([]);
+      load();
+    } catch(e) { setMsg('❌ '+e.message); }
+    finally { setImporting(false); }
+  };
+
+  const importFromLibrary = async () => {
+    if (!selectedLibMods.length) return;
+    setImporting(true);
+    try {
+      const r = await api.post(`/admin/courses/${course.id}/import-modules`, { module_ids: selectedLibMods });
+      setMsg(`✅ Copied ${r.copied} module(s) with all lectures`);
+      setShowLibrary(false); setSelectedLibMods([]);
+      load();
+    } catch(e) { setMsg('❌ '+e.message); }
+    finally { setImporting(false); }
+  };
+
+  const saveModule = async (e) => {
+    e.preventDefault(); setMsg('');
+    try {
+      if (editingMod) {
+        await api.put(`/admin/modules/${editingMod}`, modForm);
+        setEditingMod(null);
+      } else {
+        await api.post(`/admin/courses/${course.id}/modules`, modForm);
+      }
+      setShowModForm(false);
+      setModForm({ title:'', description:'', sort_order:0, price:'', is_free_preview:false });
+      load(); setMsg('✅ Module saved');
+    } catch(e) { setMsg('❌ '+e.message); }
+  };
+
+  const deleteModule = async (id) => {
+    if (!confirm('Delete this module and all its lectures?')) return;
+    try { await api.delete(`/admin/modules/${id}`); load(); }
+    catch(e) { setMsg('❌ '+e.message); }
+  };
+
+  const saveLecture = async (e, moduleId) => {
+    e.preventDefault(); setMsg('');
+    const lf = lecForms[moduleId] || {};
+    try {
+      if (lf.editingId) {
+        await api.put(`/admin/lectures/${lf.editingId}`, { ...lf, course_id: course.id });
+      } else {
+        await api.post(`/admin/modules/${moduleId}/lectures`, { ...lf, course_id: course.id });
+      }
+      setLecForms(p => ({ ...p, [moduleId]: {} }));
+      load(); setMsg('✅ Lecture saved');
+    } catch(e) { setMsg('❌ '+e.message); }
+  };
+
+  const deleteLecture = async (id) => {
+    if (!confirm('Delete this lecture?')) return;
+    try { await api.delete(`/admin/lectures/${id}`); load(); }
+    catch(e) { setMsg('❌ '+e.message); }
+  };
+
+  const startEditMod = (mod) => {
+    setEditingMod(mod.id);
+    setModForm({ title:mod.title, description:mod.description||'', sort_order:mod.sort_order||0, price:mod.price||'', is_free_preview:!!mod.is_free_preview });
+    setShowModForm(true);
+    setOpenMods(p=>({...p,[mod.id]:true}));
+  };
+  const startEditLec = (mod, lec) => {
+    setLecForms(p=>({...p,[mod.id]:{editingId:lec.id,title:lec.title,description:lec.description||'',duration_minutes:lec.duration_minutes||60,sort_order:lec.sort_order||0,price:lec.price||'',is_free_preview:!!lec.is_free_preview}}));
+    setOpenMods(p=>({...p,[mod.id]:true}));
+  };
+
+  const templates = MODULE_TEMPLATES[course.category] || MODULE_TEMPLATES.OTHER;
+
+  return (
+    <div className="mt-6 border-t-2 border-indigo-100 pt-6 pb-2">
+
+      {/* ── Header row ── */}
+      <div className="flex items-start justify-between mb-5 flex-wrap gap-3">
+        <div>
+          <h3 className="font-black text-slate-800 text-sm flex items-center gap-2">
+            📋 Curriculum Editor
+            <span className="text-xs font-normal text-slate-400">— {course.title}</span>
+          </h3>
+          {!loading && !loadErr && (
+            <p className="text-xs text-slate-400 mt-0.5">
+              {modules.length} module{modules.length!==1?'s':''} · {totalLectures} lecture{totalLectures!==1?'s':''}{totalMins>0?` · ${fmtDur(totalMins)} total`:''}
+            </p>
+          )}
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={()=>{setShowTemplates(true);setSelectedTemplMods([]);}}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 font-semibold transition-all">
+            📦 Load Templates
+          </button>
+          <button onClick={openLibraryModal}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold transition-all">
+            📚 Copy from Course
+          </button>
+          <button onClick={()=>{setShowModForm(v=>!v);setEditingMod(null);setModForm({title:'',description:'',sort_order:modules.length,price:'',is_free_preview:false});}}
+            className="flex items-center gap-1.5 text-xs px-4 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-bold transition-all">
+            + New Module
+          </button>
+        </div>
+      </div>
+
+      {/* ── Status messages ── */}
+      {loadErr && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between gap-3">
+          <span className="text-xs text-amber-700 font-semibold">⚠️ {loadErr}</span>
+          <button onClick={load} className="flex-shrink-0 text-xs px-3 py-1.5 bg-amber-600 text-white rounded-lg font-bold hover:bg-amber-700 transition-all">↻ Retry</button>
+        </div>
+      )}
+      {msg && (
+        <div className={`mb-3 p-2.5 rounded-xl text-xs font-semibold flex items-center justify-between ${msg.startsWith('✅')?'bg-emerald-50 border border-emerald-100 text-emerald-700':'bg-red-50 border border-red-100 text-red-600'}`}>
+          <span>{msg}</span>
+          <button onClick={()=>setMsg('')} className="text-slate-400 hover:text-slate-600 ml-3">✕</button>
+        </div>
+      )}
+      {loading && (
+        <div className="flex items-center gap-2 text-slate-400 text-xs py-6 justify-center">
+          <div className="w-4 h-4 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin" />
+          Loading curriculum…
+        </div>
+      )}
+
+      {/* ── Module Add/Edit Form ── */}
+      {showModForm && (
+        <div className="mb-5 p-5 bg-gradient-to-br from-indigo-50 to-slate-50 border border-indigo-200 rounded-2xl shadow-sm">
+          <h4 className="text-sm font-black text-indigo-800 mb-4 flex items-center gap-2">
+            {editingMod ? '✏️ Edit Module' : '➕ Add New Module'}
+          </h4>
+          <form onSubmit={saveModule} className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="label">Module Title *</label>
+              <input className="input" required value={modForm.title} onChange={e=>setModForm({...modForm,title:e.target.value})}
+                placeholder="e.g. Listening Skills, Writing Task 1…" />
+            </div>
+            <div>
+              <label className="label">Separate Price (₹)</label>
+              <input className="input" type="number" min="0" value={modForm.price} onChange={e=>setModForm({...modForm,price:e.target.value})}
+                placeholder="Leave blank — included in course" />
+            </div>
+            <div>
+              <label className="label">Sort / Display Order</label>
+              <input className="input" type="number" value={modForm.sort_order} onChange={e=>setModForm({...modForm,sort_order:Number(e.target.value)})} />
+            </div>
+            <div className="col-span-2">
+              <label className="label">Short Description (optional)</label>
+              <input className="input" value={modForm.description} onChange={e=>setModForm({...modForm,description:e.target.value})}
+                placeholder="What students will learn in this module" />
+            </div>
+            <div className="col-span-2 flex items-center gap-2 bg-emerald-50 rounded-lg px-3 py-2">
+              <input type="checkbox" id="mod-fp" checked={modForm.is_free_preview} onChange={e=>setModForm({...modForm,is_free_preview:e.target.checked})} className="accent-emerald-600 w-4 h-4 flex-shrink-0" />
+              <label htmlFor="mod-fp" className="text-xs font-semibold text-emerald-800 cursor-pointer">
+                Free Preview — students can view this module without purchasing
+              </label>
+            </div>
+            <div className="col-span-2 flex gap-2 pt-1">
+              <button type="submit" className="btn-success text-xs py-2 px-5">{editingMod?'✅ Update Module':'✅ Add Module'}</button>
+              <button type="button" className="btn-ghost text-xs py-2" onClick={()=>{setShowModForm(false);setEditingMod(null);}}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ── Empty state ── */}
+      {!loading && !loadErr && modules.length===0 && (
+        <div className="text-center py-14 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+          <div className="text-5xl mb-3">📂</div>
+          <p className="font-black text-slate-600 text-sm">No modules yet</p>
+          <p className="text-xs text-slate-400 mt-1 mb-5">Use industry templates for a quick start, or build manually</p>
+          <div className="flex gap-3 justify-center">
+            <button onClick={()=>{setShowTemplates(true);setSelectedTemplMods([]);}}
+              className="text-xs px-5 py-2 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 transition-all shadow-sm">
+              📦 Load {course.category} Templates
+            </button>
+            <button onClick={()=>{setShowModForm(true);setEditingMod(null);}}
+              className="text-xs px-5 py-2 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-sm">
+              + Add First Module
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modules list ── */}
+      <div className="space-y-3">
+        {modules.map((mod, mi) => {
+          const isOpen = !!openMods[mod.id];
+          const modDur = mod.lectures?.reduce((s,l)=>s+(l.duration_minutes||0),0)||0;
+          return (
+            <div key={mod.id} className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+              {/* Module header row */}
+              <div className="flex items-center gap-3 px-4 py-3.5 bg-white cursor-pointer select-none"
+                onClick={()=>setOpenMods(p=>({...p,[mod.id]:!p[mod.id]}))}>
+                {/* Index badge */}
+                <div className="w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black flex-shrink-0 text-white shadow-sm"
+                  style={{background:`hsl(${(mi*53+215)%360},55%,52%)`}}>
+                  {mi+1}
+                </div>
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-slate-900 text-sm">{mod.title}</span>
+                    {mod.is_free_preview && <span className="text-[10px] font-black bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">FREE</span>}
+                    {mod.price && <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded-full">{fmt(mod.price)}</span>}
+                  </div>
+                  <div className="flex items-center gap-3 mt-0.5">
+                    <span className="text-[11px] text-slate-400">{mod.lectures?.length||0} lecture{mod.lectures?.length!==1?'s':''}</span>
+                    {modDur>0 && <span className="text-[11px] text-slate-400">⏱ {fmtDur(modDur)}</span>}
+                    {mod.description && <span className="text-[11px] text-slate-400 truncate max-w-xs hidden md:block">{mod.description}</span>}
+                  </div>
+                </div>
+                {/* Actions */}
+                <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e=>e.stopPropagation()}>
+                  <button onClick={()=>startEditMod(mod)}
+                    className="text-xs px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 font-semibold transition-all">
+                    ✏️
+                  </button>
+                  <button onClick={()=>deleteModule(mod.id)}
+                    className="text-xs px-2.5 py-1 rounded-lg bg-white border border-red-100 text-red-400 hover:bg-red-50 hover:border-red-300 transition-all">
+                    🗑
+                  </button>
+                  <span className="text-slate-300 ml-1 text-xs">{isOpen?'▲':'▼'}</span>
+                </div>
+              </div>
+
+              {/* Lectures panel */}
+              {isOpen && (
+                <div className="border-t border-slate-100 bg-slate-50/60">
+                  {/* Lectures list */}
+                  {(mod.lectures||[]).map((lec,li)=>(
+                    <div key={lec.id} className="group flex items-center gap-3 px-5 py-2.5 border-b border-slate-100 hover:bg-white/80 transition-colors">
+                      <span className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-500 flex-shrink-0 shadow-sm">
+                        {mi+1}.{li+1}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-semibold text-slate-800">{lec.title}</span>
+                          {lec.is_free_preview && <span className="text-[9px] font-black bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded-full border border-emerald-100">FREE PREVIEW</span>}
+                          {lec.price && <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1 py-0.5 rounded">{fmt(lec.price)}</span>}
+                        </div>
+                        {lec.description && <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-xs">{lec.description}</p>}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {lec.duration_minutes>0 && (
+                          <span className="text-[11px] font-semibold text-slate-400 bg-white border border-slate-100 px-2 py-0.5 rounded-lg">{lec.duration_minutes} min</span>
+                        )}
+                        <button onClick={()=>startEditLec(mod,lec)}
+                          className="text-[10px] px-2 py-0.5 rounded-lg bg-white border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600 transition-all opacity-0 group-hover:opacity-100">
+                          Edit
+                        </button>
+                        <button onClick={()=>deleteLecture(lec.id)}
+                          className="text-[10px] px-1.5 py-0.5 rounded-lg bg-white border border-red-100 text-red-400 hover:bg-red-50 transition-all opacity-0 group-hover:opacity-100">
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Add / Edit lecture form */}
+                  {(()=>{
+                    const lf = lecForms[mod.id] || {};
+                    return (
+                      <div className="p-4 bg-white/50 border-t border-slate-100">
+                        <p className="text-[11px] font-black text-slate-500 uppercase tracking-wide mb-2">{lf.editingId?'Edit Lecture':'+ Add Lecture'}</p>
+                        <form onSubmit={e=>saveLecture(e,mod.id)} className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          <div className="col-span-2 sm:col-span-4">
+                            <input className="input text-xs" required placeholder="Lecture title *" value={lf.title||''}
+                              onChange={e=>setLecForms(p=>({...p,[mod.id]:{...lf,title:e.target.value}}))} />
+                          </div>
+                          <input className="input text-xs col-span-2" placeholder="Description (optional)" value={lf.description||''}
+                            onChange={e=>setLecForms(p=>({...p,[mod.id]:{...lf,description:e.target.value}}))} />
+                          <input className="input text-xs" type="number" min="1" placeholder="Duration (mins) *" value={lf.duration_minutes||''}
+                            onChange={e=>setLecForms(p=>({...p,[mod.id]:{...lf,duration_minutes:Number(e.target.value)}}))} />
+                          <input className="input text-xs" type="number" min="0" placeholder="Price ₹ (blank = free w/ course)" value={lf.price||''}
+                            onChange={e=>setLecForms(p=>({...p,[mod.id]:{...lf,price:e.target.value}}))} />
+                          <div className="col-span-2 sm:col-span-4 flex items-center justify-between gap-3">
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                              <input type="checkbox" checked={!!lf.is_free_preview}
+                                onChange={e=>setLecForms(p=>({...p,[mod.id]:{...lf,is_free_preview:e.target.checked}}))} className="accent-emerald-600 w-3.5 h-3.5" />
+                              <span className="text-[11px] font-semibold text-slate-600">Free preview</span>
+                            </label>
+                            <div className="flex gap-2">
+                              <button type="submit" className="btn-success text-xs py-1 px-4">{lf.editingId?'Update':'+ Add Lecture'}</button>
+                              {lf.editingId && <button type="button" className="btn-ghost text-xs py-1" onClick={()=>setLecForms(p=>({...p,[mod.id]:{}}))}>Cancel</button>}
+                            </div>
+                          </div>
+                        </form>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ════════════════════════════════════════════
+          TEMPLATE MODAL (full-screen overlay)
+          ════════════════════════════════════════════ */}
+      {/* ── TEMPLATE PICKER (inline panel) ── */}
+      {showTemplates && (
+        <div className="mb-5 rounded-2xl border-2 border-purple-200 bg-purple-50 overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 bg-purple-100 border-b border-purple-200">
+            <div>
+              <span className="font-bold text-purple-900 text-sm">📦 {course.category} Module Templates</span>
+              <span className="ml-2 text-[11px] text-purple-500">Select modules to add to this course</span>
+            </div>
+            <button onClick={()=>setShowTemplates(false)} className="text-purple-400 hover:text-purple-700 text-lg leading-none font-bold px-1">✕</button>
+          </div>
+          {/* Grid of template cards */}
+          <div className="p-4 grid grid-cols-1 gap-2" style={{maxHeight:'340px',overflowY:'auto'}}>
+            {templates.map((tmpl, i) => {
+              const checked = selectedTemplMods.includes(i);
+              return (
+                <label key={i} onClick={()=>setSelectedTemplMods(p=>p.includes(i)?p.filter(x=>x!==i):[...p,i])}
+                  className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${checked?'border-purple-500 bg-white shadow-sm':'border-transparent bg-white hover:border-purple-300'}`}>
+                  {/* Checkbox */}
+                  <div className={`flex-shrink-0 mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center ${checked?'bg-purple-600 border-purple-600':'border-slate-300'}`}>
+                    {checked && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>}
+                  </div>
+                  {/* Content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-slate-800 text-sm">{tmpl.title}</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">{tmpl.lectures.length} lectures</div>
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {tmpl.lectures.slice(0,4).map((l,li)=>(
+                        <span key={li} className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{l}</span>
+                      ))}
+                      {tmpl.lectures.length>4 && <span className="text-[10px] text-slate-400">+{tmpl.lectures.length-4} more</span>}
+                    </div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+          {/* Footer */}
+          <div className="flex items-center justify-between px-4 py-3 bg-purple-100 border-t border-purple-200">
+            <div className="flex gap-3">
+              <button onClick={()=>setSelectedTemplMods(templates.map((_,i)=>i))} className="text-xs text-purple-700 hover:text-purple-900 font-semibold underline">Select All</button>
+              <button onClick={()=>setSelectedTemplMods([])} className="text-xs text-slate-500 hover:text-slate-700 font-semibold underline">Clear</button>
+              <span className="text-xs text-purple-500">{selectedTemplMods.length} selected</span>
+            </div>
+            <button disabled={!selectedTemplMods.length||importing} onClick={importFromTemplates}
+              className="text-xs px-4 py-2 rounded-xl font-bold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-40 transition-all shadow-sm">
+              {importing ? '⏳ Adding…' : `✅ Add ${selectedTemplMods.length} Module(s)`}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════
+          LIBRARY MODAL (copy from other course)
+          ════════════════════════════════════════════ */}
+      {showLibrary && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)',backdropFilter:'blur(4px)'}}
+          onClick={e=>e.target===e.currentTarget&&setShowLibrary(false)}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl max-h-[80vh] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100">
+              <div>
+                <h3 className="font-black text-slate-900 text-base">📚 Copy from Other Course</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Deep-copy selected modules (with all lectures) into this course</p>
+              </div>
+              <button onClick={()=>setShowLibrary(false)} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 font-bold text-sm">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              {libraryModules.length===0 ? (
+                <div className="text-center py-10 text-slate-400">
+                  <div className="text-3xl mb-2">📭</div>
+                  <p className="text-sm font-semibold">No modules in other courses yet</p>
+                  <p className="text-xs mt-1">Add modules to other courses first, then copy them here</p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {(()=>{
+                    let lastCourse=null;
+                    return libraryModules.map(mod=>{
+                      const showHeader=mod.course_title!==lastCourse;
+                      lastCourse=mod.course_title;
+                      return (
+                        <React.Fragment key={mod.id}>
+                          {showHeader && (
+                            <div className="text-[10px] font-black text-blue-500 uppercase tracking-wider px-1 pt-3 pb-1 flex items-center gap-1.5">
+                              <span className="w-3 h-px bg-blue-300 flex-1" />
+                              {mod.category} · {mod.course_title}
+                              <span className="w-3 h-px bg-blue-300 flex-1" />
+                            </div>
+                          )}
+                          <div onClick={()=>setSelectedLibMods(p=>p.includes(mod.id)?p.filter(x=>x!==mod.id):[...p,mod.id])}
+                            className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 cursor-pointer transition-all ${selectedLibMods.includes(mod.id)?'border-blue-500 bg-blue-50':'border-slate-200 bg-white hover:border-blue-300'}`}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${selectedLibMods.includes(mod.id)?'bg-blue-600 border-blue-600':'border-slate-300'}`}>
+                              {selectedLibMods.includes(mod.id) && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-bold text-slate-900">{mod.title}</div>
+                              <div className="text-[10px] text-slate-400 mt-0.5">
+                                {mod.lectures?.length||0} lectures{mod.price?` · ${fmt(mod.price)}`:''}{mod.is_free_preview?' · FREE':''}
+                              </div>
+                            </div>
+                          </div>
+                        </React.Fragment>
+                      );
+                    });
+                  })()}
+                </div>
+              )}
+            </div>
+            {libraryModules.length>0 && (
+              <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 bg-slate-50">
+                <div className="flex gap-3">
+                  <button onClick={()=>setSelectedLibMods(libraryModules.map(m=>m.id))} className="text-xs text-blue-600 font-semibold hover:underline">Select All</button>
+                  <button onClick={()=>setSelectedLibMods([])} className="text-xs text-slate-400 font-semibold hover:underline">Clear</button>
+                </div>
+                <button disabled={!selectedLibMods.length||importing} onClick={importFromLibrary}
+                  className="text-xs px-5 py-2 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 transition-all shadow-sm">
+                  {importing?'⏳ Copying…':`📋 Copy ${selectedLibMods.length} Module${selectedLibMods.length!==1?'s':''}`}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CoursesAdmin() {
   const [courses, setCourses] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: '', category: 'IELTS', description: '', price: '', duration_weeks: 12 });
   const [msg, setMsg] = useState('');
+  const [editingCurriculum, setEditingCurriculum] = useState(null);
   const load = () => api.get('/courses').then(setCourses);
   useEffect(() => { load(); }, []);
 
@@ -1113,19 +2230,27 @@ function CoursesAdmin() {
       <div className="card">
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Title</th><th>Category</th><th>Price</th><th>Duration</th></tr></thead>
+            <thead><tr><th>Title</th><th>Category</th><th>Price</th><th>Duration</th><th>Action</th></tr></thead>
             <tbody>
               {courses.map(c => (
-                <tr key={c.id}>
+                <tr key={c.id} className={editingCurriculum?.id === c.id ? 'bg-blue-50' : ''}>
                   <td className="font-semibold">{c.title}</td>
                   <td><span className={`badge ${catColors[c.category] || 'badge-gray'}`}>{c.category}</span></td>
                   <td className="font-bold text-slate-900">{fmt(c.price)}</td>
                   <td className="text-slate-500">{c.duration_weeks} weeks</td>
+                  <td>
+                    <button
+                      onClick={() => setEditingCurriculum(editingCurriculum?.id === c.id ? null : c)}
+                      className={`text-xs px-2.5 py-1 rounded-lg font-semibold border transition-all ${editingCurriculum?.id === c.id ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-200 text-slate-600 hover:border-blue-400 hover:text-blue-600'}`}>
+                      {editingCurriculum?.id === c.id ? '▲ Close' : '📋 Curriculum'}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {editingCurriculum && <CurriculumEditor course={editingCurriculum} />}
       </div>
     </div>
   );
@@ -1273,6 +2398,10 @@ function LiveClassesAdmin() {
   // Real-time Zoom participant counts: { [classId]: { enrolled, demo, total, source, lastFetched } }
   const [zoomCounts, setZoomCounts] = useState({});
   const zoomPollRef = React.useRef(null);
+  // Live class detail modal (real-time)
+  const [detailModal, setDetailModal] = useState(null); // { classId, classTitle }
+  // Class insights modal (historical, all classes)
+  const [insightModal, setInsightModal] = useState(null); // { classId, classTitle }
   const TIMEZONES = [
     { value: 'Asia/Kolkata',      label: '🇮🇳 India (IST, UTC+5:30)' },
     { value: 'America/New_York',  label: '🇺🇸 New York (EST/EDT)' },
@@ -1618,65 +2747,33 @@ function LiveClassesAdmin() {
                       const total         = enrolledCount + demoCount;
                       const isZoom        = c.platform === 'zoom';
                       const loading       = isZoom && !zc;
-                      const fromZoomAPI   = zc && ['zoom_inmeet','zoom_dashboard'].includes(zc.source);
-                      const doRefresh     = () => api.get(`/admin/live-classes/${c.id}/zoom-participants`)
-                        .then(data => setZoomCounts(prev => ({ ...prev, [c.id]: { ...data, lastFetched: Date.now() } })))
-                        .catch(() => {});
                       return (
-                        <div className="min-w-[140px]">
+                        <div className="flex flex-col gap-1 min-w-[130px]">
                           {loading ? (
-                            <div className="text-[10px] text-slate-400 animate-pulse flex items-center gap-1">
+                            <span className="text-[10px] text-slate-400 animate-pulse flex items-center gap-1">
                               <span className="w-3 h-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin inline-block" />
                               Fetching…
-                            </div>
+                            </span>
                           ) : (
-                            <>
-                              {/* Total bubble */}
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className={`text-sm font-black ${total > 0 ? 'text-slate-900' : 'text-slate-300'}`}>
-                                  👥 {total} in class
-                                </span>
-                                <button onClick={doRefresh}
-                                  className="text-[10px] text-slate-300 hover:text-blue-500 transition" title="Refresh">🔄</button>
-                              </div>
-                              {/* Enrolled / Demo split */}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className={`text-xs font-black ${total > 0 ? 'text-slate-800' : 'text-slate-300'}`}>
+                                👥 {total}
+                              </span>
                               {total > 0 && (
-                                <div className="flex gap-3 mb-1">
-                                  <span className="flex items-center gap-1 text-xs font-bold text-green-700">
-                                    <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />{enrolledCount} enrolled
-                                  </span>
-                                  <span className="flex items-center gap-1 text-xs font-bold text-amber-600">
-                                    <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />{demoCount} demo
-                                  </span>
-                                </div>
+                                <>
+                                  <span className="text-[10px] text-green-700 font-bold">✓{enrolledCount} enrolled</span>
+                                  <span className="text-[10px] text-amber-600 font-bold">·</span>
+                                  <span className="text-[10px] text-amber-600 font-bold">{demoCount} demo</span>
+                                </>
                               )}
-                              {/* Participant names */}
-                              {zc?.participants?.length > 0 && (
-                                <div className="mt-1 space-y-0.5">
-                                  {zc.participants.map((p, i) => (
-                                    <div key={i} className="flex items-center gap-1">
-                                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${p.enrolled ? 'bg-green-500' : 'bg-amber-400'}`} />
-                                      <span className="text-[10px] text-slate-600 truncate max-w-[110px]" title={p.name}>{p.name}</span>
-                                      <span className={`text-[9px] font-bold ${p.enrolled ? 'text-green-600' : 'text-amber-500'}`}>
-                                        {p.enrolled ? '✓' : 'demo'}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                              {/* Source tag */}
-                              <div className="mt-1">
-                                <span className={`text-[8px] font-semibold px-1.5 py-0.5 rounded-full ${
-                                  fromZoomAPI ? 'bg-blue-50 text-blue-500'
-                                  : isZoom ? 'bg-amber-50 text-amber-500'
-                                  : 'bg-slate-100 text-slate-400'
-                                }`}
-                                  title={zc?.zoom_api_error || ''}>
-                                  {fromZoomAPI ? '🔵 Zoom API' : isZoom ? '🟡 DB fallback' : '🟢 DB'}
-                                </span>
-                              </div>
-                            </>
+                            </div>
                           )}
+                          <button
+                            onClick={() => setDetailModal({ classId: c.id, classTitle: c.title })}
+                            className="flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition w-fit"
+                          >
+                            👁 View Details
+                          </button>
                         </div>
                       );
                     })() : (
@@ -1707,6 +2804,14 @@ function LiveClassesAdmin() {
                           ⏹ End
                         </button>
                       )}
+                      {/* Class Insights — available for all statuses except scheduled/pending */}
+                      {(c.status === 'live' || c.status === 'ended') && (
+                        <button
+                          className="text-xs px-3 py-1 rounded-lg bg-violet-50 text-violet-700 font-semibold hover:bg-violet-100 border border-violet-200 transition"
+                          onClick={() => setInsightModal({ classId: c.id, classTitle: c.title })}>
+                          📊 Class Insights
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1716,6 +2821,498 @@ function LiveClassesAdmin() {
         </div>
       </div>
       </>}
+
+      {/* Live Class Detail Modal (real-time, live only) */}
+      {detailModal && (
+        <LiveClassDetailModal
+          classId={detailModal.classId}
+          classTitle={detailModal.classTitle}
+          onClose={() => setDetailModal(null)}
+        />
+      )}
+
+      {/* Class Insights Modal (historical, all classes) */}
+      {insightModal && (
+        <ClassInsightsModal
+          classId={insightModal.classId}
+          classTitle={insightModal.classTitle}
+          onClose={() => setInsightModal(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── LIVE CLASS DETAIL MODAL ───────────────────────────────────
+function LiveClassDetailModal({ classId, classTitle, onClose }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState(null);
+  const pollRef = React.useRef(null);
+
+  const fmt = (n) => n ? '₹' + Number(n).toLocaleString('en-IN') : '—';
+  const fmtDur = (secs) => {
+    if (!secs || secs < 0) return '< 1 min';
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  };
+  const fmtTime = (s) => {
+    if (!s) return '—';
+    try { return new Date(s.slice ? s.slice(0,19) : s).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }); }
+    catch { return '—'; }
+  };
+
+  const fetchData = () => {
+    api.get(`/admin/live-classes/${classId}/participant-details`)
+      .then(d => { setData(d); setLastRefresh(new Date()); setLoading(false); })
+      .catch(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchData();
+    pollRef.current = setInterval(fetchData, 30000);
+    return () => clearInterval(pollRef.current);
+  }, [classId]);
+
+  // Prevent body scroll while modal open
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
+
+  const participants = data?.participants || [];
+  const enrolled = participants.filter(p => p.is_enrolled);
+  const demo = participants.filter(p => !p.is_enrolled);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.7)' }} onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
+          <div>
+            <div className="flex items-center gap-3">
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-black text-white animate-pulse" style={{ background: 'linear-gradient(135deg,#dc2626,#b91c1c)' }}>
+                🔴 LIVE
+              </span>
+              <h3 className="font-black text-slate-900 text-lg truncate max-w-sm">{classTitle}</h3>
+            </div>
+            <div className="flex items-center gap-4 mt-1">
+              <span className="text-xs text-slate-500">👥 <strong>{data?.total ?? '…'}</strong> in class</span>
+              <span className="text-xs text-green-700 font-bold">✓ {data?.enrolled ?? '…'} enrolled</span>
+              <span className="text-xs text-amber-600 font-bold">🎯 {data?.demo ?? '…'} demo</span>
+              {lastRefresh && (
+                <span className="text-[10px] text-slate-300">
+                  Updated {lastRefresh.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={fetchData}
+              className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition"
+            >
+              🔄 Refresh
+            </button>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-xl w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 transition">
+              ✕
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-4">
+          {loading ? (
+            <div className="flex items-center justify-center h-40 text-slate-400 gap-2">
+              <span className="w-5 h-5 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+              Loading participant data…
+            </div>
+          ) : participants.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 text-slate-300 gap-2">
+              <span className="text-4xl">👥</span>
+              <p className="text-sm font-semibold">No participants yet</p>
+              <p className="text-xs">Participants will appear here once they join the class.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Enrolled section */}
+              {enrolled.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                    <h4 className="text-xs font-black text-green-700 uppercase tracking-wide">Enrolled Students ({enrolled.length})</h4>
+                  </div>
+                  <div className="overflow-x-auto rounded-xl border border-slate-100">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-green-50 text-green-800">
+                          <th className="text-left px-3 py-2 font-bold">Student</th>
+                          <th className="text-left px-3 py-2 font-bold">Course</th>
+                          <th className="text-left px-3 py-2 font-bold">Payment</th>
+                          <th className="text-left px-3 py-2 font-bold">Partner / Agency</th>
+                          <th className="text-left px-3 py-2 font-bold">Joined</th>
+                          <th className="text-left px-3 py-2 font-bold">Duration</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {enrolled.map((p, i) => (
+                          <tr key={p.student_id || i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                            <td className="px-3 py-2">
+                              <div className="font-semibold text-slate-900">{p.name}</div>
+                              <div className="text-slate-400 text-[10px]">{p.email || '—'}</div>
+                            </td>
+                            <td className="px-3 py-2 text-slate-700 max-w-[160px]">
+                              <span className="truncate block" title={p.course_name}>{p.course_name}</span>
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                p.payment_status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                              }`}>
+                                {p.payment_status === 'paid' ? '✅' : '⏳'} {p.payment_status}
+                              </span>
+                              {p.fee_paid > 0 && <div className="text-slate-500 text-[10px] mt-0.5">{fmt(p.fee_paid)}</div>}
+                            </td>
+                            <td className="px-3 py-2 text-slate-600">{p.agency_name}</td>
+                            <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{fmtTime(p.joined_at)}</td>
+                            <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{fmtDur(p.duration_secs)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Demo section */}
+              {demo.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-400" />
+                    <h4 className="text-xs font-black text-amber-700 uppercase tracking-wide">Demo Participants ({demo.length})</h4>
+                  </div>
+                  <div className="overflow-x-auto rounded-xl border border-slate-100">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-amber-50 text-amber-800">
+                          <th className="text-left px-3 py-2 font-bold">Name</th>
+                          <th className="text-left px-3 py-2 font-bold">Email</th>
+                          <th className="text-left px-3 py-2 font-bold">Partner / Agency</th>
+                          <th className="text-left px-3 py-2 font-bold">Joined</th>
+                          <th className="text-left px-3 py-2 font-bold">Duration</th>
+                          <th className="text-left px-3 py-2 font-bold">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {demo.map((p, i) => (
+                          <tr key={p.student_id || i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                            <td className="px-3 py-2 font-semibold text-slate-900">{p.name}</td>
+                            <td className="px-3 py-2 text-slate-400">{p.email || '—'}</td>
+                            <td className="px-3 py-2 text-slate-600">{p.agency_name}</td>
+                            <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{fmtTime(p.joined_at)}</td>
+                            <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{fmtDur(p.duration_secs)}</td>
+                            <td className="px-3 py-2">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">
+                                🎯 Demo
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-3 border-t border-slate-100 flex items-center justify-between flex-shrink-0 bg-slate-50">
+          <p className="text-[10px] text-slate-400">Auto-refreshes every 30 seconds · Data from attendance records{data?.participants?.[0]?.source === 'zoom+db' ? ' + Zoom API' : ''}</p>
+          <button onClick={onClose} className="text-xs font-semibold px-4 py-1.5 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 transition">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── CLASS INSIGHTS MODAL ─────────────────────────────────────
+function ClassInsightsModal({ classId, classTitle, onClose }) {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab]         = useState('all'); // 'all' | 'enrolled' | 'demo'
+  const [sortBy, setSortBy]   = useState('joined'); // 'joined' | 'duration' | 'progress'
+
+  const fmtDur = (secs) => {
+    if (!secs || secs < 0) return '—';
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  };
+  const fmtTime = (v) => {
+    if (!v) return '—';
+    try { return new Date(v).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }); }
+    catch { return '—'; }
+  };
+  const fmtFee = (n) => n ? '₹' + Number(n).toLocaleString('en-IN') : '—';
+
+  useEffect(() => {
+    api.get(`/admin/live-classes/${classId}/insights`)
+      .then(d => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [classId]);
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
+
+  const all      = data?.participants || [];
+  const enrolled = all.filter(p => p.is_enrolled);
+  const demo     = all.filter(p => !p.is_enrolled);
+  const visible  = tab === 'enrolled' ? enrolled : tab === 'demo' ? demo : all;
+
+  const sorted = [...visible].sort((a, b) => {
+    if (sortBy === 'duration') return b.duration_secs - a.duration_secs;
+    if (sortBy === 'progress') return (b.progress_pct ?? -1) - (a.progress_pct ?? -1);
+    return new Date(a.joined_at || 0) - new Date(b.joined_at || 0);
+  });
+
+  const avgDur = data?.avg_duration_secs || 0;
+  const completionRate = enrolled.length > 0
+    ? Math.round(enrolled.filter(p => (p.progress_pct || 0) >= 80).length / enrolled.length * 100)
+    : 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4"
+      style={{ background: 'rgba(15,23,42,0.75)', backdropFilter: 'blur(4px)' }}
+      onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+
+        {/* ── Header ── */}
+        <div className="px-6 py-4 border-b border-slate-100 flex-shrink-0"
+          style={{ background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)' }}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-lg">📊</span>
+                <h3 className="font-black text-white text-lg leading-tight truncate max-w-md">{classTitle}</h3>
+              </div>
+              {data?.course_title && data.course_title !== '—' && (
+                <p className="text-indigo-200 text-xs mb-2">📚 {data.course_title}</p>
+              )}
+              {/* Summary pills */}
+              <div className="flex flex-wrap gap-2">
+                <span className="bg-white/20 text-white text-xs font-bold px-3 py-1 rounded-full">
+                  👥 {data?.total ?? '…'} total attendees
+                </span>
+                <span className="bg-green-500/80 text-white text-xs font-bold px-3 py-1 rounded-full">
+                  ✓ {data?.enrolled ?? '…'} enrolled
+                </span>
+                <span className="bg-amber-400/80 text-white text-xs font-bold px-3 py-1 rounded-full">
+                  🎯 {data?.demo ?? '…'} demo
+                </span>
+                {avgDur > 0 && (
+                  <span className="bg-white/20 text-white text-xs font-bold px-3 py-1 rounded-full">
+                    ⏱ Avg {fmtDur(avgDur)}
+                  </span>
+                )}
+                {data?.total_batch_classes > 0 && (
+                  <span className="bg-white/20 text-white text-xs font-bold px-3 py-1 rounded-full">
+                    🏫 {data.total_batch_classes} batch classes total
+                  </span>
+                )}
+              </div>
+            </div>
+            <button onClick={onClose}
+              className="text-white/70 hover:text-white text-xl w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/20 transition flex-shrink-0">
+              ✕
+            </button>
+          </div>
+        </div>
+
+        {/* ── Stats bar ── */}
+        {!loading && data && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-slate-100 flex-shrink-0">
+            {[
+              { label: 'Total Attended', value: data.total, icon: '👥', color: 'text-slate-900' },
+              { label: 'Enrolled', value: data.enrolled, icon: '✅', color: 'text-green-700' },
+              { label: 'Demo / Free', value: data.demo, icon: '🎯', color: 'text-amber-700' },
+              { label: 'Avg Duration', value: fmtDur(avgDur), icon: '⏱', color: 'text-indigo-700' },
+            ].map(s => (
+              <div key={s.label} className="bg-white px-4 py-3 text-center">
+                <div className={`text-xl font-black ${s.color}`}>{s.icon} {s.value}</div>
+                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wide mt-0.5">{s.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── Tabs + Sort ── */}
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between flex-shrink-0 bg-white gap-4">
+          <div className="flex gap-1">
+            {[
+              { key: 'all',      label: `All (${all.length})` },
+              { key: 'enrolled', label: `✅ Enrolled (${enrolled.length})` },
+              { key: 'demo',     label: `🎯 Demo (${demo.length})` },
+            ].map(t => (
+              <button key={t.key} onClick={() => setTab(t.key)}
+                className={`text-xs font-bold px-3 py-1.5 rounded-lg transition ${tab === t.key ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <span className="hidden sm:inline">Sort:</span>
+            {[
+              { key: 'joined', label: 'Join Time' },
+              { key: 'duration', label: 'Duration' },
+              { key: 'progress', label: 'Progress' },
+            ].map(s => (
+              <button key={s.key} onClick={() => setSortBy(s.key)}
+                className={`px-2 py-1 rounded-md transition font-semibold ${sortBy === s.key ? 'bg-indigo-100 text-indigo-700' : 'hover:bg-slate-100 text-slate-500'}`}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Table ── */}
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="flex items-center justify-center h-48 text-slate-400 gap-2">
+              <span className="w-5 h-5 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" />
+              Loading insights…
+            </div>
+          ) : sorted.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-48 text-slate-300 gap-2">
+              <span className="text-4xl">👥</span>
+              <p className="text-sm font-semibold">No attendance data yet</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide text-[10px]">#</th>
+                    <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide text-[10px]">Student</th>
+                    <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide text-[10px]">Agency</th>
+                    <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide text-[10px]">Type</th>
+                    <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide text-[10px]">Joined</th>
+                    <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide text-[10px]">Left</th>
+                    <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide text-[10px]">Duration</th>
+                    <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide text-[10px]">Payment</th>
+                    <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide text-[10px] min-w-[140px]">Course Progress</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((p, i) => (
+                    <tr key={p.student_id || i}
+                      className={`border-b border-slate-50 transition-colors ${
+                        p.is_enrolled ? 'hover:bg-green-50/50' : 'hover:bg-amber-50/50'
+                      } ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}>
+                      <td className="px-4 py-2.5 text-slate-300 font-bold">{i + 1}</td>
+                      <td className="px-4 py-2.5">
+                        <div className="font-semibold text-slate-900">{p.name || '—'}</div>
+                        <div className="text-[10px] text-slate-400">{p.email || '—'}</div>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-600">{p.agency_name}</td>
+                      <td className="px-4 py-2.5">
+                        {p.is_enrolled ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-100 text-green-700">
+                            ✅ Enrolled
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">
+                            🎯 Demo
+                          </span>
+                        )}
+                        {p.still_in_class && (
+                          <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-red-100 text-red-600 animate-pulse">
+                            🔴 Live
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{fmtTime(p.joined_at)}</td>
+                      <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">
+                        {p.still_in_class
+                          ? <span className="text-red-500 font-bold animate-pulse">Still in class</span>
+                          : fmtTime(p.left_at)}
+                      </td>
+                      <td className="px-4 py-2.5 font-semibold text-slate-700 whitespace-nowrap">
+                        {fmtDur(p.duration_secs)}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {p.is_enrolled ? (
+                          <div>
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              p.payment_status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                            }`}>
+                              {p.payment_status === 'paid' ? '✅' : '⏳'} {p.payment_status}
+                            </span>
+                            {p.fee_paid > 0 && <div className="text-[10px] text-slate-400 mt-0.5">{fmtFee(p.fee_paid)}</div>}
+                          </div>
+                        ) : (
+                          <span className="text-slate-300 text-[10px]">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {p.is_enrolled && p.progress_pct !== null ? (
+                          <div className="min-w-[120px]">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-[10px] text-slate-500">
+                                {p.classes_attended}/{p.total_batch_classes} classes
+                              </span>
+                              <span className={`text-[10px] font-black ${
+                                p.progress_pct >= 80 ? 'text-green-600' :
+                                p.progress_pct >= 50 ? 'text-amber-600' : 'text-red-500'
+                              }`}>{p.progress_pct}%</span>
+                            </div>
+                            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${
+                                  p.progress_pct >= 80 ? 'bg-green-500' :
+                                  p.progress_pct >= 50 ? 'bg-amber-400' : 'bg-red-400'
+                                }`}
+                                style={{ width: `${p.progress_pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        ) : p.is_enrolled ? (
+                          <span className="text-[10px] text-slate-400">No batch data</span>
+                        ) : (
+                          <span className="text-slate-200 text-[10px]">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* ── Footer ── */}
+        <div className="px-6 py-3 border-t border-slate-100 flex items-center justify-between flex-shrink-0 bg-slate-50">
+          <p className="text-[10px] text-slate-400">
+            Attendance data from class records · Progress = classes attended in this batch
+          </p>
+          <button onClick={onClose}
+            className="text-xs font-semibold px-4 py-1.5 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 transition">
+            Close
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2004,6 +3601,11 @@ function FacultyAdmin() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', phone: '', agency_id: '' });
   const [msg, setMsg] = useState('');
+  // ── Filters ─────────────────────────────────────────
+  const [search,   setSearch]   = useState('');
+  const [agencyF,  setAgencyF]  = useState([]);
+  const [batchF,   setBatchF]   = useState([]);  // 'has','none'
+  const [joinedF,  setJoinedF]  = useState('');  // date from
 
   const load = () => api.get('/admin/faculty').then(setFaculty);
   useEffect(() => {
@@ -2022,10 +3624,33 @@ function FacultyAdmin() {
     } catch (e) { setMsg(e.message); }
   };
 
+  const agencyOptions = [...new Set(faculty.map(f => f.agency_name).filter(Boolean))].sort();
+
+  // ── Applied snapshot (only updates on Search click) ────────
+  const [applied, setApplied] = useState(null);
+  const handleSearch = () => setApplied({ search, agencyF, batchF, joinedF });
+  const handleClear  = () => { setSearch(''); setAgencyF([]); setBatchF([]); setJoinedF(''); setApplied(null); };
+  const f = applied || {};
+  const appliedCount = !applied ? 0 : [f.search, f.agencyF?.length, f.batchF?.length, f.joinedF].filter(Boolean).length;
+
+  const filtered = faculty.filter(fac => {
+    if (!applied) return true;
+    if (f.search && !fac.name?.toLowerCase().includes(f.search.toLowerCase()) && !fac.email?.toLowerCase().includes(f.search.toLowerCase()) && !fac.phone?.includes(f.search)) return false;
+    if (f.agencyF?.length && !f.agencyF.includes(fac.agency_name)) return false;
+    if (f.batchF?.length) {
+      const hasBatches = (fac.batch_count || 0) > 0;
+      if (!f.batchF.some(v => v === 'has' ? hasBatches : !hasBatches)) return false;
+    }
+    if (f.joinedF && fac.created_at < f.joinedF) return false;
+    return true;
+  });
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-black text-slate-900">Faculty <span className="text-base font-normal text-slate-400 ml-2">{faculty.length} total</span></h2>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-xl font-black text-slate-900">Faculty
+          <span className="text-base font-normal text-slate-400 ml-2">{applied ? `${filtered.length} of ${faculty.length}` : faculty.length}</span>
+        </h2>
         <button className="btn-primary" onClick={() => setShowForm(!showForm)}>+ Add Faculty</button>
       </div>
 
@@ -2063,12 +3688,25 @@ function FacultyAdmin() {
         </form>
       )}
 
+      <FilterRow onApply={handleSearch} onClear={handleClear} appliedCount={appliedCount}>
+        <SearchInput value={search} onChange={setSearch} placeholder="Name, email, phone…" width="w-48" />
+        {agencyOptions.length > 0 && (
+          <MultiSelectDropdown label="Agency" options={agencyOptions} selected={agencyF} onChange={setAgencyF} />
+        )}
+        <MultiSelectDropdown label="Batches" options={[{value:'has',label:'Has batches'},{value:'none',label:'No batches'}]} selected={batchF} onChange={setBatchF} />
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider whitespace-nowrap">Joined after</span>
+          <input type="date" value={joinedF} onChange={e => setJoinedF(e.target.value)}
+            className="text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300 w-32" />
+        </div>
+      </FilterRow>
+
       <div className="card">
         <div className="table-wrap">
           <table>
             <thead><tr><th>Name</th><th>Email</th><th>Agency</th><th>Batches</th><th>Joined</th></tr></thead>
             <tbody>
-              {faculty.map(f => (
+              {filtered.map(f => (
                 <tr key={f.id}>
                   <td>
                     <div className="flex items-center gap-2">
@@ -2085,8 +3723,8 @@ function FacultyAdmin() {
                   <td className="text-xs text-slate-400">{new Date(f.created_at).toLocaleDateString()}</td>
                 </tr>
               ))}
-              {faculty.length === 0 && (
-                <tr><td colSpan="5" className="text-center text-slate-400 py-8">No faculty members yet</td></tr>
+              {filtered.length === 0 && (
+                <tr><td colSpan="5" className="text-center text-slate-400 py-8">No faculty match the selected filters</td></tr>
               )}
             </tbody>
           </table>
@@ -2109,30 +3747,42 @@ const ROLE_LABELS = {
 };
 
 function AllUsers() {
-  const [users, setUsers]       = useState([]);
-  const [agencies, setAgencies] = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [search, setSearch]     = useState('');
-  const [roleFilter, setRole]   = useState('');
-  const [editing, setEditing]   = useState(null); // user being edited
-  const [editForm, setEditForm] = useState({});
-  const [editMsg, setEditMsg]   = useState('');
-  const [saving, setSaving]     = useState(false);
+  const [users, setUsers]         = useState([]);
+  const [agencies, setAgencies]   = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [search, setSearch]       = useState('');
+  const [roleFilter, setRole]     = useState('');
+  const [agencyFilter, setAgency] = useState('');
+  const [editing, setEditing]     = useState(null);
+  const [editForm, setEditForm]   = useState({});
+  const [editMsg, setEditMsg]     = useState('');
+  const [saving, setSaving]       = useState(false);
+  const [showPwd, setShowPwd]     = useState({}); // { [userId]: bool }
+  const [showEditPwd, setShowEditPwd] = useState(false);
+  const [assigningAgency, setAssigningAgency] = useState(null); // userId being quick-assigned
+  // Create user modal
+  const [creating, setCreating]   = useState(false);
+  const EMPTY_CREATE = { name: '', email: '', phone: '', role: 'student', agency_id: '', password: '' };
+  const [createForm, setCreateForm] = useState(EMPTY_CREATE);
+  const [createMsg, setCreateMsg] = useState('');
+  const [showCreatePwd, setShowCreatePwd] = useState(false);
 
   const load = () => {
     setLoading(true);
     const qs = new URLSearchParams();
-    if (roleFilter) qs.set('role', roleFilter);
-    if (search)     qs.set('search', search);
+    if (roleFilter)   qs.set('role', roleFilter);
+    if (agencyFilter) qs.set('agency_id', agencyFilter);
+    if (search)       qs.set('search', search);
     api.get(`/admin/users?${qs}`).then(u => { setUsers(u); setLoading(false); }).catch(() => setLoading(false));
   };
 
-  useEffect(() => { load(); api.get('/admin/agencies').then(setAgencies); }, [roleFilter]);
+  useEffect(() => { load(); api.get('/admin/agencies').then(setAgencies); }, [roleFilter, agencyFilter]);
 
   const openEdit = (u) => {
     setEditing(u);
     setEditForm({ name: u.name, email: u.email, phone: u.phone || '', role: u.role, agency_id: u.agency_id || '', password: '' });
     setEditMsg('');
+    setShowEditPwd(false);
   };
 
   const handleSave = async (e) => {
@@ -2146,11 +3796,37 @@ function AllUsers() {
     finally { setSaving(false); }
   };
 
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await api.post('/admin/users', createForm);
+      setCreating(false);
+      setCreateForm(EMPTY_CREATE);
+      setCreateMsg('');
+      load();
+    } catch (err) { setCreateMsg(err.message); }
+    finally { setSaving(false); }
+  };
+
   const handleToggle = async (u) => {
     const action = u.is_active ? 'disable' : 'enable';
     if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} "${u.name}"?`)) return;
     try {
       await api.put(`/admin/users/${u.id}/toggle-active`, {});
+      load();
+    } catch (err) { alert(err.message); }
+  };
+
+  const handleQuickAssign = async (userId, agencyId) => {
+    const u = users.find(x => x.id === userId);
+    if (!u) return;
+    try {
+      await api.put(`/admin/users/${userId}`, {
+        name: u.name, email: u.email, phone: u.phone || '',
+        role: u.role, agency_id: agencyId || null, password: ''
+      });
+      setAssigningAgency(null);
       load();
     } catch (err) { alert(err.message); }
   };
@@ -2171,21 +3847,28 @@ function AllUsers() {
             ))}
           </div>
         </div>
+        <button className="btn-primary" onClick={() => { setCreating(true); setCreateMsg(''); setCreateForm(EMPTY_CREATE); }}>
+          + Add User
+        </button>
       </div>
 
       {/* Filters */}
       <div className="card mb-4 p-4">
-        <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
           <input
-            className="input flex-1"
-            placeholder="Search by name or email…"
+            className="input flex-1 min-w-[180px]"
+            placeholder="Search by name, email or phone…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && load()}
           />
-          <select className="input sm:w-48" value={roleFilter} onChange={e => setRole(e.target.value)}>
+          <select className="input sm:w-40" value={roleFilter} onChange={e => setRole(e.target.value)}>
             <option value="">All Roles</option>
             {Object.entries(ROLE_LABELS).map(([r, l]) => <option key={r} value={r}>{l}</option>)}
+          </select>
+          <select className="input sm:w-48" value={agencyFilter} onChange={e => setAgency(e.target.value)}>
+            <option value="">All Agencies</option>
+            {agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
           <button className="btn-primary whitespace-nowrap" onClick={load}>Search</button>
         </div>
@@ -2201,6 +3884,7 @@ function AllUsers() {
                 <th>Role</th>
                 <th>Agency</th>
                 <th>Phone</th>
+                <th>Password</th>
                 <th>Joined</th>
                 <th>Status</th>
                 <th>Actions</th>
@@ -2208,11 +3892,11 @@ function AllUsers() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} className="text-center py-8 text-slate-400">Loading…</td></tr>
+                <tr><td colSpan={8} className="text-center py-8 text-slate-400">Loading…</td></tr>
               ) : users.length === 0 ? (
-                <tr><td colSpan={7} className="text-center py-8 text-slate-400">No users found</td></tr>
+                <tr><td colSpan={8} className="text-center py-8 text-slate-400">No users found</td></tr>
               ) : users.map(u => (
-                <tr key={u.id}>
+                <tr key={u.id} className={u.role === 'student' && !u.agency_id ? 'bg-amber-50/40' : ''}>
                   <td>
                     <div className="font-semibold text-slate-900">{u.name}</div>
                     <div className="text-xs text-slate-400">{u.email}</div>
@@ -2222,8 +3906,52 @@ function AllUsers() {
                       {ROLE_LABELS[u.role] || u.role}
                     </span>
                   </td>
-                  <td className="text-sm">{u.agency_name || <span className="text-slate-400">—</span>}</td>
+                  <td className="text-sm">
+                    {u.agency_name ? (
+                      <span className="text-slate-800 font-medium">{u.agency_name}</span>
+                    ) : (
+                      assigningAgency === u.id ? (
+                        <div className="flex items-center gap-1">
+                          <select
+                            className="text-xs border border-amber-300 rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
+                            defaultValue=""
+                            onChange={e => { if (e.target.value) handleQuickAssign(u.id, e.target.value); }}
+                          >
+                            <option value="">— Pick agency —</option>
+                            {agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                          </select>
+                          <button onClick={() => setAssigningAgency(null)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setAssigningAgency(u.id)}
+                          className="flex items-center gap-1 text-xs font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg hover:bg-amber-100 transition"
+                          title="No agency assigned — click to assign"
+                        >
+                          ⚠️ No Agency
+                        </button>
+                      )
+                    )}
+                  </td>
                   <td className="text-sm">{u.phone || <span className="text-slate-400">—</span>}</td>
+                  <td>
+                    {u.admin_set_password ? (
+                      <div className="flex items-center gap-1">
+                        <span className="font-mono text-xs text-slate-700 bg-slate-100 px-2 py-0.5 rounded select-all">
+                          {showPwd[u.id] ? u.admin_set_password : '••••••••'}
+                        </span>
+                        <button
+                          onClick={() => setShowPwd(p => ({ ...p, [u.id]: !p[u.id] }))}
+                          className="text-slate-400 hover:text-slate-700 text-xs p-0.5 transition"
+                          title={showPwd[u.id] ? 'Hide' : 'Show password'}
+                        >
+                          {showPwd[u.id] ? '🙈' : '👁'}
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-300 italic">not set by admin</span>
+                    )}
+                  </td>
                   <td className="text-xs text-slate-400">{new Date(u.created_at).toLocaleDateString('en-IN')}</td>
                   <td>
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${u.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
@@ -2251,17 +3979,82 @@ function AllUsers() {
         </div>
       </div>
 
-      {/* Edit Modal */}
-      {editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.6)' }}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-y-auto max-h-[90vh]">
+      {/* Create User Modal */}
+      {creating && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.6)' }} onClick={() => setCreating(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100">
-              <h3 className="font-black text-slate-900">Edit User</h3>
+              <h3 className="font-black text-slate-900">➕ Add New User</h3>
+              <button onClick={() => setCreating(false)} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+            </div>
+            <form onSubmit={handleCreate} className="p-6 space-y-4">
+              {createMsg && <p className="text-red-500 text-sm bg-red-50 px-3 py-2 rounded-lg">{createMsg}</p>}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Full Name *</label>
+                  <input className="input" required value={createForm.name} onChange={e => setCreateForm({ ...createForm, name: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Email *</label>
+                  <input type="email" className="input" required value={createForm.email} onChange={e => setCreateForm({ ...createForm, email: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Phone</label>
+                  <input className="input" placeholder="+91 98765 43210" value={createForm.phone} onChange={e => setCreateForm({ ...createForm, phone: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Role *</label>
+                  <select className="input" value={createForm.role} onChange={e => setCreateForm({ ...createForm, role: e.target.value })}>
+                    {Object.entries(ROLE_LABELS).map(([r, l]) => <option key={r} value={r}>{l}</option>)}
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="label">Agency</label>
+                  <select className="input" value={createForm.agency_id} onChange={e => setCreateForm({ ...createForm, agency_id: e.target.value })}>
+                    <option value="">— No Agency —</option>
+                    {agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="border-t border-slate-100 pt-4">
+                <label className="label">Password *</label>
+                <div className="relative">
+                  <input
+                    type={showCreatePwd ? 'text' : 'password'}
+                    className="input pr-10"
+                    required
+                    placeholder="Min 6 characters"
+                    value={createForm.password}
+                    onChange={e => setCreateForm({ ...createForm, password: e.target.value })}
+                  />
+                  <button type="button" onClick={() => setShowCreatePwd(p => !p)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-sm px-1">
+                    {showCreatePwd ? '🙈' : '👁'}
+                  </button>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">This password will be saved and visible to super admins for sharing with the user.</p>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="submit" disabled={saving} className="btn-primary flex-1">
+                  {saving ? 'Creating…' : '✅ Create User'}
+                </button>
+                <button type="button" className="btn-ghost" onClick={() => setCreating(false)}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Modal */}
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(15,23,42,0.6)' }} onClick={() => setEditing(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100">
+              <h3 className="font-black text-slate-900">✏️ Edit User</h3>
               <button onClick={() => setEditing(null)} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
             </div>
             <form onSubmit={handleSave} className="p-6 space-y-4">
               {editMsg && <p className="text-red-500 text-sm bg-red-50 px-3 py-2 rounded-lg">{editMsg}</p>}
-
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="label">Full Name *</label>
@@ -2289,18 +4082,36 @@ function AllUsers() {
                   </select>
                 </div>
               </div>
-
               <div className="border-t border-slate-100 pt-4">
+                {editing.admin_set_password && (
+                  <div className="mb-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                    <p className="text-xs font-bold text-slate-500 mb-1">Current saved password</p>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm text-slate-800 select-all">
+                        {showEditPwd ? editing.admin_set_password : '••••••••'}
+                      </span>
+                      <button type="button" onClick={() => setShowEditPwd(p => !p)}
+                        className="text-slate-400 hover:text-slate-700 text-sm">
+                        {showEditPwd ? '🙈 Hide' : '👁 Show'}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <label className="label">New Password <span className="text-slate-300 font-normal">(leave blank to keep current)</span></label>
-                <input
-                  type="password"
-                  className="input"
-                  placeholder="Min 6 characters"
-                  value={editForm.password}
-                  onChange={e => setEditForm({ ...editForm, password: e.target.value })}
-                />
+                <div className="relative">
+                  <input
+                    type={showEditPwd ? 'text' : 'password'}
+                    className="input pr-10"
+                    placeholder="Min 6 characters"
+                    value={editForm.password}
+                    onChange={e => setEditForm({ ...editForm, password: e.target.value })}
+                  />
+                  <button type="button" onClick={() => setShowEditPwd(p => !p)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-sm px-1">
+                    {showEditPwd ? '🙈' : '👁'}
+                  </button>
+                </div>
               </div>
-
               <div className="flex gap-3 pt-2">
                 <button type="submit" disabled={saving} className="btn-primary flex-1">
                   {saving ? 'Saving…' : 'Save Changes'}
@@ -2573,9 +4384,20 @@ function PaymentConfig() {
 function AdminPayments() {
   const [proofs, setProofs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all');
   const [viewing, setViewing] = useState(null);
   const [actionMsg, setActionMsg] = useState('');
+  // ── Filters ─────────────────────────────────────────
+  const [search,    setSearch]    = useState('');
+  const [statusF,   setStatusF]   = useState([]);     // multi-select: pending/verified/rejected
+  const [agencyF,   setAgencyF]   = useState([]);
+  const [courseF,   setCourseF]   = useState([]);
+  const [methodF,   setMethodF]   = useState([]);
+  const [receiptF,  setReceiptF]  = useState([]);     // 'uploaded','missing'
+  const [dateFrom,  setDateFrom]  = useState('');
+  const [dateTo,    setDateTo]    = useState('');
+  const [amtMin,    setAmtMin]    = useState('');
+  const [amtMax,    setAmtMax]    = useState('');
+  const [sortBy,    setSortBy]    = useState('newest');
 
   const load = () => {
     setLoading(true);
@@ -2593,41 +4415,100 @@ function AdminPayments() {
     } catch (e) { setActionMsg(e.message); }
   };
 
-  const methodIcon = { upi:'💳', qr:'📷', link:'🔗', mobile:'📱', other:'💸' };
+  const methodIcon  = { upi:'💳', qr:'📷', link:'🔗', mobile:'📱', other:'💸' };
   const statusColor = { pending:'badge-amber', verified:'badge-green', rejected:'badge-red' };
 
-  const filtered = filter === 'all' ? proofs : proofs.filter(p => p.status === filter);
+  // Derived filter options
+  const agencyOptions  = [...new Set(proofs.map(p => p.agency_name).filter(Boolean))].sort();
+  const courseOptions  = [...new Set(proofs.map(p => p.course_title).filter(Boolean))].sort();
+  const methodOptions  = [...new Set(proofs.map(p => p.payment_method).filter(Boolean))];
+
+  // ── Applied snapshot (only updates on Search click) ────────
+  const [applied, setApplied] = useState(null);
+  const handleSearch = () => setApplied({ search, statusF, agencyF, courseF, methodF, receiptF, amtMin, amtMax, dateFrom, dateTo });
+  const handleClear  = () => { setSearch(''); setStatusF([]); setAgencyF([]); setCourseF([]); setMethodF([]); setReceiptF([]); setAmtMin(''); setAmtMax(''); setDateFrom(''); setDateTo(''); setApplied(null); };
+  const fa = applied || {};
+  const appliedCount = !applied ? 0 : [fa.search, fa.statusF?.length, fa.agencyF?.length, fa.courseF?.length, fa.methodF?.length, fa.receiptF?.length, fa.amtMin, fa.amtMax, fa.dateFrom, fa.dateTo].filter(Boolean).length;
+
+  const filtered = proofs
+    .filter(p => {
+      if (!applied) return true;
+      if (fa.search && !p.student_name?.toLowerCase().includes(fa.search.toLowerCase()) && !p.student_email?.toLowerCase().includes(fa.search.toLowerCase())) return false;
+      if (fa.statusF?.length  && !fa.statusF.includes(p.status)) return false;
+      if (fa.agencyF?.length  && !fa.agencyF.includes(p.agency_name)) return false;
+      if (fa.courseF?.length  && !fa.courseF.includes(p.course_title)) return false;
+      if (fa.methodF?.length  && !fa.methodF.includes(p.payment_method)) return false;
+      if (fa.receiptF?.length) {
+        const has = !!p.proof_image;
+        if (!fa.receiptF.some(v => v === 'uploaded' ? has : !has)) return false;
+      }
+      if (fa.amtMin && Number(p.amount) < Number(fa.amtMin)) return false;
+      if (fa.amtMax && Number(p.amount) > Number(fa.amtMax)) return false;
+      if (fa.dateFrom && p.created_at < fa.dateFrom) return false;
+      if (fa.dateTo   && p.created_at > fa.dateTo + 'T23:59:59') return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'oldest')   return new Date(a.created_at) - new Date(b.created_at);
+      if (sortBy === 'amt_high') return Number(b.amount) - Number(a.amount);
+      if (sortBy === 'amt_low')  return Number(a.amount) - Number(b.amount);
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+
   const stats = {
-    total: proofs.length,
+    total:   proofs.length,
     pending: proofs.filter(p => p.status==='pending').length,
-    verified: proofs.filter(p => p.status==='verified').length,
-    rejected: proofs.filter(p => p.status==='rejected').length,
-    amount: proofs.filter(p => p.status==='verified').reduce((a,p) => a+Number(p.amount||0), 0),
+    verified:proofs.filter(p => p.status==='verified').length,
+    rejected:proofs.filter(p => p.status==='rejected').length,
+    amount:  proofs.filter(p => p.status==='verified').reduce((a,p) => a+Number(p.amount||0), 0),
   };
+  const filteredAmt = filtered.filter(p => p.status==='verified').reduce((a,p) => a+Number(p.amount||0), 0);
 
   return (
     <div>
-      <h2 className="text-xl font-black text-slate-900 mb-6">Payment Records</h2>
+      <h2 className="text-xl font-black text-slate-900 mb-3">Payment Records
+        <span className="text-base font-normal text-slate-400 ml-2">{applied ? `${filtered.length} of ${proofs.length}` : proofs.length}</span>
+      </h2>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
         <div className="stat-card"><p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Proofs</p><p className="text-2xl font-black">{stats.total}</p></div>
         <div className="stat-card"><p className="text-xs font-bold text-slate-400 uppercase mb-1">Pending Review</p><p className="text-2xl font-black text-amber-500">{stats.pending}</p></div>
         <div className="stat-card"><p className="text-xs font-bold text-slate-400 uppercase mb-1">Verified</p><p className="text-2xl font-black text-emerald-600">{stats.verified}</p></div>
-        <div className="stat-card"><p className="text-xs font-bold text-slate-400 uppercase mb-1">Collected</p><p className="text-2xl font-black text-blue-600">{fmt(stats.amount)}</p></div>
+        <div className="stat-card"><p className="text-xs font-bold text-slate-400 uppercase mb-1">Collected{applied?' (filtered)':''}</p><p className="text-2xl font-black text-blue-600">{fmt(applied?filteredAmt:stats.amount)}</p></div>
       </div>
 
       {actionMsg && <div className="mb-4 p-3 bg-emerald-50 text-emerald-700 rounded-xl text-sm font-semibold">{actionMsg}</div>}
 
-      {/* Filter tabs */}
-      <div className="flex gap-2 mb-4">
-        {['all','pending','verified','rejected'].map(f => (
-          <button key={f} onClick={() => setFilter(f)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition
-              ${filter===f ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-            {f} {f!=='all' && `(${stats[f]})`}
-          </button>
-        ))}
-      </div>
+      <FilterRow onApply={handleSearch} onClear={handleClear} appliedCount={appliedCount}>
+        <SearchInput value={search} onChange={setSearch} placeholder="Student name or email…" width="w-48" />
+        <MultiSelectDropdown label="Status" options={['pending','verified','rejected']} selected={statusF} onChange={setStatusF} />
+        {agencyOptions.length > 0 && (
+          <MultiSelectDropdown label="Agency" options={agencyOptions} selected={agencyF} onChange={setAgencyF} />
+        )}
+        {courseOptions.length > 0 && (
+          <MultiSelectDropdown label="Course" options={courseOptions} selected={courseF} onChange={setCourseF} />
+        )}
+        {methodOptions.length > 0 && (
+          <MultiSelectDropdown label="Method" options={methodOptions} selected={methodF} onChange={setMethodF} />
+        )}
+        <MultiSelectDropdown label="Receipt" options={[{value:'uploaded',label:'✅ Uploaded'},{value:'missing',label:'⚠️ Missing'}]} selected={receiptF} onChange={setReceiptF} />
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider whitespace-nowrap">Amt ₹</span>
+          <input type="number" value={amtMin} onChange={e => setAmtMin(e.target.value)} placeholder="Min"
+            className="w-16 text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" />
+          <span className="text-slate-300 text-xs">–</span>
+          <input type="number" value={amtMax} onChange={e => setAmtMax(e.target.value)} placeholder="Max"
+            className="w-16 text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" />
+        </div>
+        <DateRange from={dateFrom} to={dateTo} onFrom={setDateFrom} onTo={setDateTo} />
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+          className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none text-slate-600 flex-shrink-0">
+          <option value="newest">↕ Newest</option>
+          <option value="oldest">↕ Oldest</option>
+          <option value="amt_high">↕ Amt High→Low</option>
+          <option value="amt_low">↕ Amt Low→High</option>
+        </select>
+      </FilterRow>
 
       <div className="card">
         {loading ? <div className="text-center py-8 text-slate-400 text-sm">Loading...</div> : (
@@ -2636,7 +4517,7 @@ function AdminPayments() {
               <thead><tr><th>Student</th><th>Agency</th><th>Course</th><th>Amount</th><th>Method</th><th>Receipt</th><th>Date</th><th>Status</th><th>Action</th></tr></thead>
               <tbody>
                 {filtered.length === 0 && (
-                  <tr><td colSpan={9} className="text-center text-slate-400 py-6">No payment records found</td></tr>
+                  <tr><td colSpan={9} className="text-center text-slate-400 py-6">No payment records match the selected filters</td></tr>
                 )}
                 {filtered.map(p => (
                   <tr key={p.id}>
@@ -2744,6 +4625,556 @@ function AdminPayments() {
   );
 }
 
+// ── LOGIN BANNERS (admin-editable offers on login pages) ──────
+function LoginBanners() {
+  const [banners, setBanners] = useState([]);
+  const [editing, setEditing] = useState(null);   // null | {} | banner object
+  const [msg,     setMsg]     = useState('');
+  const blank = { title:'', subtitle:'', badge:'', target_role:'all', image_data:null, link_url:'', link_text:'Learn More', bg_color:'#1e40af', text_color:'#ffffff', sort_order:0, is_active:1 };
+
+  const load = () => api.get('/admin/login-banners').then(setBanners);
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    try {
+      if (editing.id) {
+        await api.put(`/admin/login-banners/${editing.id}`, editing);
+        setMsg('Banner updated!');
+      } else {
+        await api.post('/admin/login-banners', editing);
+        setMsg('Banner created!');
+      }
+      setEditing(null); load();
+    } catch (e) { setMsg(e.message); }
+  };
+
+  const del = async (id) => {
+    if (!window.confirm('Delete this banner?')) return;
+    await api.delete(`/admin/login-banners/${id}`);
+    setMsg('Deleted'); load();
+  };
+
+  const toggle = async (b) => {
+    await api.put(`/admin/login-banners/${b.id}`, { ...b, is_active: b.is_active ? 0 : 1 });
+    load();
+  };
+
+  const onImage = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setEditing(p => ({ ...p, image_data: ev.target.result }));
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-xl font-black text-slate-900">📢 Login Page Banners</h2>
+          <p className="text-sm text-slate-500 mt-0.5">Manage offers, announcements and promotions shown on Partner and Student login pages.</p>
+        </div>
+        <button className="btn-primary" onClick={() => setEditing({ ...blank })}>+ New Banner</button>
+      </div>
+
+      {msg && <div className="mb-4 p-3 bg-blue-50 text-blue-700 text-sm rounded-xl">{msg}</div>}
+
+      {/* ── Edit / Create form ── */}
+      {editing && (
+        <div className="card mb-6">
+          <h3 className="text-sm font-bold text-slate-700 mb-4">{editing.id ? 'Edit Banner' : 'Create New Banner'}</h3>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="label">Title *</label>
+              <input className="input" required placeholder="New IELTS batch starting Monday!" value={editing.title}
+                onChange={e => setEditing(p => ({ ...p, title: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Badge text <span className="font-normal text-slate-400">(optional pill)</span></label>
+              <input className="input" placeholder="🔥 Limited Seats" value={editing.badge||''}
+                onChange={e => setEditing(p => ({ ...p, badge: e.target.value }))} />
+            </div>
+            <div className="lg:col-span-2">
+              <label className="label">Subtitle / Description</label>
+              <textarea className="input" rows={2} placeholder="Additional details shown below the title…"
+                value={editing.subtitle||''} onChange={e => setEditing(p => ({ ...p, subtitle: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">CTA Link URL</label>
+              <input className="input" type="url" placeholder="https://…" value={editing.link_url||''}
+                onChange={e => setEditing(p => ({ ...p, link_url: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">CTA Button Text</label>
+              <input className="input" placeholder="Learn More" value={editing.link_text||''}
+                onChange={e => setEditing(p => ({ ...p, link_text: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label">Show On</label>
+              <select className="input" value={editing.target_role}
+                onChange={e => setEditing(p => ({ ...p, target_role: e.target.value }))}>
+                <option value="all">All login pages</option>
+                <option value="partner">Partner login only</option>
+                <option value="student">Student login only</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Sort Order <span className="font-normal text-slate-400">(lower = first)</span></label>
+              <input className="input" type="number" value={editing.sort_order||0}
+                onChange={e => setEditing(p => ({ ...p, sort_order: Number(e.target.value) }))} />
+            </div>
+            <div>
+              <label className="label">Background Color</label>
+              <div className="flex gap-2 items-center">
+                <input type="color" value={editing.bg_color||'#1e40af'} onChange={e => setEditing(p => ({ ...p, bg_color: e.target.value }))}
+                  className="w-10 h-9 rounded border border-slate-200 cursor-pointer p-0.5" />
+                <input className="input flex-1" value={editing.bg_color||''} onChange={e => setEditing(p => ({ ...p, bg_color: e.target.value }))}
+                  placeholder="#1e40af" />
+              </div>
+            </div>
+            <div>
+              <label className="label">Text Color</label>
+              <div className="flex gap-2 items-center">
+                <input type="color" value={editing.text_color||'#ffffff'} onChange={e => setEditing(p => ({ ...p, text_color: e.target.value }))}
+                  className="w-10 h-9 rounded border border-slate-200 cursor-pointer p-0.5" />
+                <input className="input flex-1" value={editing.text_color||''} onChange={e => setEditing(p => ({ ...p, text_color: e.target.value }))}
+                  placeholder="#ffffff" />
+              </div>
+            </div>
+            <div className="lg:col-span-2">
+              <label className="label">Banner Image <span className="font-normal text-slate-400">(optional, any format)</span></label>
+              <input type="file" accept="image/*" onChange={onImage} className="text-xs text-slate-500" />
+              {editing.image_data && (
+                <div className="mt-2 relative inline-block">
+                  <img src={editing.image_data} alt="Preview" className="h-20 rounded-xl object-cover border border-slate-200" />
+                  <button onClick={() => setEditing(p => ({ ...p, image_data: null }))}
+                    className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full text-[10px] font-black flex items-center justify-center">✕</button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Live preview */}
+          {editing.title && (
+            <div className="mb-4">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Preview</p>
+              <div className="rounded-2xl overflow-hidden flex items-stretch max-w-lg" style={{ background: editing.bg_color, minHeight: 80 }}>
+                {editing.image_data && (
+                  <img src={editing.image_data} alt="" className="w-24 object-cover flex-shrink-0" />
+                )}
+                <div className="flex-1 px-5 py-4 flex flex-col justify-center" style={{ color: editing.text_color }}>
+                  {editing.badge && <span className="text-[10px] font-black px-2 py-0.5 rounded-full self-start mb-1" style={{ background: 'rgba(255,255,255,0.2)' }}>{editing.badge}</span>}
+                  <p className="font-black text-sm">{editing.title}</p>
+                  {editing.subtitle && <p className="text-xs opacity-70 mt-0.5">{editing.subtitle}</p>}
+                  {editing.link_url && <span className="text-[10px] font-bold mt-1 opacity-80">{editing.link_text} →</span>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button className="btn-primary" onClick={save}>{editing.id ? 'Save Changes' : 'Create Banner'}</button>
+            <button className="btn" onClick={() => setEditing(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Banner list ── */}
+      <div className="space-y-3">
+        {banners.length === 0 && !editing && (
+          <div className="card text-center py-10 text-slate-400">
+            <div className="text-4xl mb-3">📢</div>
+            <p className="font-semibold">No banners yet</p>
+            <p className="text-sm mt-1">Create your first banner to show offers and announcements on login pages.</p>
+          </div>
+        )}
+        {banners.map(b => (
+          <div key={b.id} className={`card flex items-center gap-4 ${!b.is_active ? 'opacity-50' : ''}`}>
+            {/* Color swatch + preview */}
+            <div className="w-16 h-16 rounded-xl flex-shrink-0 overflow-hidden relative"
+              style={{ background: b.bg_color }}>
+              {b.image_data
+                ? <img src={b.image_data} alt="" className="w-full h-full object-cover" />
+                : <div className="w-full h-full flex items-center justify-center text-2xl">📢</div>
+              }
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-bold text-slate-900 text-sm">{b.title}</span>
+                {b.badge && <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{b.badge}</span>}
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${b.target_role === 'partner' ? 'bg-indigo-100 text-indigo-700' : b.target_role === 'student' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                  {b.target_role === 'all' ? '🌐 All pages' : b.target_role === 'partner' ? '🏢 Partners' : '👥 Students'}
+                </span>
+                {!b.is_active && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">Hidden</span>}
+              </div>
+              {b.subtitle && <p className="text-xs text-slate-400 mt-0.5 truncate">{b.subtitle}</p>}
+              {b.link_url && <p className="text-[10px] text-blue-500 mt-0.5 truncate">{b.link_url}</p>}
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button onClick={() => toggle(b)}
+                className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${b.is_active ? 'border-emerald-300 text-emerald-700 hover:bg-emerald-50' : 'border-slate-200 text-slate-500 hover:border-slate-400'}`}>
+                {b.is_active ? '✅ Live' : '⏸ Hidden'}
+              </button>
+              <button onClick={() => setEditing({ ...b })} className="btn text-xs py-1.5 px-3">Edit</button>
+              <button onClick={() => del(b.id)} className="text-xs font-bold px-3 py-1.5 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition-all">Delete</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── CONTACT AUDIT ─────────────────────────────────────────────
+function ContactAudit() {
+  const [data, setData]       = useState(null);
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
+  const load = (fo) => api.get(`/admin/contact-audit${fo ? '?flagged_only=1' : ''}`).then(setData);
+  useEffect(() => { load(false); }, []);
+
+  const fmtDT = (s) => {
+    const d = new Date(s.slice(0, 19));
+    return d.toLocaleDateString('en-IN', { day:'2-digit', month:'short' }) + ' ' +
+           d.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12:true });
+  };
+
+  const actionIcon = { reveal: '👁', call: '📞', email: '📧', whatsapp: '💬' };
+
+  const toggle = () => { const f = !flaggedOnly; setFlaggedOnly(f); load(f); };
+
+  const stats = data?.stats || {};
+  const logs  = data?.logs  || [];
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-xl font-black text-slate-900">🔒 Contact Access Audit</h2>
+          <p className="text-sm text-slate-500 mt-0.5">Every time anyone views, calls, emails or WhatsApps a student contact — it's logged here permanently.</p>
+        </div>
+        <button onClick={toggle}
+          className={`text-xs font-bold px-4 py-2 rounded-xl border transition-all ${flaggedOnly ? 'bg-red-600 text-white border-red-600' : 'bg-white text-slate-600 border-slate-200 hover:border-red-300'}`}>
+          {flaggedOnly ? '🚨 Flagged Only' : 'Show All'} {stats.flagged > 0 && <span className="ml-1 bg-red-100 text-red-700 px-1.5 rounded-full text-[10px] font-black">{stats.flagged}</span>}
+        </button>
+      </div>
+
+      {/* USP Banner */}
+      <div className="mb-5 p-4 rounded-2xl flex gap-4 items-start"
+        style={{ background: 'linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%)', border: '1px solid #bbf7d0' }}>
+        <span className="text-2xl flex-shrink-0">🛡️</span>
+        <div>
+          <p className="font-black text-emerald-900 text-sm">Zero Data Leakage Guarantee — Industry First</p>
+          <p className="text-emerald-800 text-xs mt-1 leading-relaxed">
+            Contact details (phone &amp; email) are <strong>masked by default</strong> across the platform. Every reveal, call, email or WhatsApp action is permanently logged below with the viewer's name, role, IP address and timestamp.
+            Agencies can see this audit for their own students in their partner dashboard — giving them full confidence that their student data is never silently accessed.
+          </p>
+          <div className="flex flex-wrap gap-3 mt-3">
+            {[['👁 Reveals', stats.reveals || 0], ['📞 Calls', stats.calls || 0], ['📧 Emails', stats.emails || 0], ['💬 WhatsApps', stats.whatsapps || 0], ['🚨 Flagged', stats.flagged || 0, true]].map(([lbl, val, red]) => (
+              <div key={lbl} className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold ${red && val > 0 ? 'bg-red-100 text-red-700' : 'bg-white text-slate-700'}`}>
+                <span>{lbl}</span><span className="font-black">{val}</span>
+              </div>
+            ))}
+            <div className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white text-xs font-semibold text-slate-700">
+              <span>Today</span><span className="font-black text-blue-700">{stats.today || 0}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        {!data ? <div className="text-slate-400 text-sm py-6 text-center">Loading audit log…</div> : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Action</th><th>Viewer</th><th>Role</th><th>Agency</th><th>Student</th><th>Student Agency</th><th>IP Address</th><th>Time</th><th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.length === 0 && <tr><td colSpan={9} className="text-center text-slate-400 py-8 text-sm">No contact access events recorded yet.</td></tr>}
+                {logs.map(l => (
+                  <tr key={l.id} className={l.is_flagged ? 'bg-red-50' : ''}>
+                    <td>
+                      <span className="text-base" title={l.action_type}>{actionIcon[l.action_type] || '👁'}</span>
+                      <span className="text-xs text-slate-500 ml-1">{l.action_type}</span>
+                    </td>
+                    <td className="font-semibold text-sm">{l.viewer_name}</td>
+                    <td><span className={`badge ${l.viewer_role === 'super_admin' ? 'badge-red' : 'badge-blue'}`}>{l.viewer_role?.replace('_', ' ')}</span></td>
+                    <td className="text-xs text-slate-500">{l.viewer_agency_id ? `Agency #${l.viewer_agency_id}` : <span className="text-red-600 font-semibold">Platform</span>}</td>
+                    <td className="font-medium text-sm">{l.target_student_name}</td>
+                    <td className="text-xs text-slate-500">{l.target_agency_name || '—'}</td>
+                    <td><span className="font-mono text-xs text-slate-400">{l.viewer_ip || '—'}</span></td>
+                    <td className="text-xs text-slate-400 whitespace-nowrap">{fmtDT(l.created_at)}</td>
+                    <td>
+                      {l.is_flagged
+                        ? <div><span className="badge badge-red">🚨 Flagged</span><div className="text-[10px] text-red-600 mt-0.5 max-w-[160px]">{l.flag_reason}</div></div>
+                        : <span className="badge badge-green">✅ Normal</span>
+                      }
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── SUPPORT ADMIN ─────────────────────────────────────────────
+const DEPT_META = [
+  { id:'account_manager', icon:'👤', label:'Account Manager',    color:'#3b82f6', bg:'#eff6ff' },
+  { id:'commission',      icon:'💰', label:'Commission Team',     color:'#f59e0b', bg:'#fffbeb' },
+  { id:'academic',        icon:'🎓', label:'Academic Support',    color:'#10b981', bg:'#f0fdf4' },
+  { id:'tech',            icon:'⚙️', label:'Tech Support',        color:'#8b5cf6', bg:'#f5f3ff' },
+];
+const STATUS_META = {
+  open:        { label:'Open',        color:'#ef4444', bg:'#fef2f2' },
+  in_progress: { label:'In Progress', color:'#f59e0b', bg:'#fffbeb' },
+  resolved:    { label:'Resolved',    color:'#10b981', bg:'#f0fdf4' },
+  closed:      { label:'Closed',      color:'#64748b', bg:'#f8fafc' },
+};
+
+function SupportAdmin() {
+  const [tab, setTab] = useState('contacts');
+  const [contacts, setContacts] = useState([]);
+  const [editDept, setEditDept] = useState(null); // { id, contact_name, email, phone, whatsapp, working_hours, notes }
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState('');
+
+  const [tickets, setTickets] = useState([]);
+  const [ticketFilter, setTicketFilter] = useState({ status:'', dept:'', search:'' });
+  const [replyTicket, setReplyTicket] = useState(null);
+  const [replyForm, setReplyForm] = useState({ admin_reply:'', status:'in_progress' });
+  const [replySaving, setReplySaving] = useState(false);
+
+  const loadContacts = () => api.get('/support/contacts').then(setContacts).catch(() => {});
+  const loadTickets  = () => {
+    const q = new URLSearchParams();
+    if (ticketFilter.status) q.set('status', ticketFilter.status);
+    if (ticketFilter.dept)   q.set('dept',   ticketFilter.dept);
+    if (ticketFilter.search) q.set('search', ticketFilter.search);
+    api.get(`/admin/support/tickets?${q}`).then(setTickets).catch(() => {});
+  };
+
+  useEffect(() => { loadContacts(); }, []);
+  useEffect(() => { if (tab === 'tickets') loadTickets(); }, [tab, ticketFilter]);
+
+  const saveContact = async () => {
+    setSaving(true); setSaveMsg('');
+    try {
+      await api.put(`/admin/support/contacts/${editDept.department}`, editDept);
+      setSaveMsg('✅ Saved!');
+      loadContacts();
+      setTimeout(() => { setSaveMsg(''); setEditDept(null); }, 1500);
+    } catch (e) { setSaveMsg('❌ ' + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const saveReply = async () => {
+    setReplySaving(true);
+    try {
+      await api.put(`/admin/support/tickets/${replyTicket.id}`, replyForm);
+      setReplyTicket(null);
+      loadTickets();
+    } catch (e) { alert(e.message); }
+    finally { setReplySaving(false); }
+  };
+
+  const quickStatus = async (id, status) => {
+    await api.patch(`/admin/support/tickets/${id}/status`, { status }).catch(() => {});
+    loadTickets();
+  };
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-black text-slate-900">Help & Support</h2>
+          <p className="text-sm text-slate-500">Manage contact details and resolve support queries</p>
+        </div>
+        <div className="flex gap-2">
+          {['contacts','tickets'].map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              className={`px-4 py-2 rounded-xl text-sm font-bold transition ${tab===t ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              {t === 'contacts' ? '📋 Contact Details' : `🎫 Tickets ${tickets.length > 0 && tab !== 'tickets' ? `(${tickets.filter(x=>x.status==='open').length} open)` : ''}`}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── CONTACTS TAB ── */}
+      {tab === 'contacts' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {DEPT_META.map(d => {
+            const c = contacts.find(x => x.department === d.id) || {};
+            return (
+              <div key={d.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold" style={{ background: d.bg, color: d.color }}>{d.icon}</div>
+                    <div>
+                      <p className="font-black text-slate-900 text-sm">{d.label}</p>
+                      <p className="text-xs text-slate-400">{c.working_hours || 'Hours not set'}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setEditDept({ ...c, department: d.id })}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 transition">✏️ Edit</button>
+                </div>
+                <div className="space-y-2 text-sm">
+                  {c.contact_name && <div className="flex items-center gap-2"><span className="text-slate-400 w-20 flex-shrink-0">Name</span><span className="font-semibold text-slate-800">{c.contact_name}</span></div>}
+                  {c.email        && <div className="flex items-center gap-2"><span className="text-slate-400 w-20 flex-shrink-0">Email</span><a href={`mailto:${c.email}`} className="text-blue-600 hover:underline font-semibold truncate">{c.email}</a></div>}
+                  {c.phone        && <div className="flex items-center gap-2"><span className="text-slate-400 w-20 flex-shrink-0">Phone</span><span className="font-semibold text-slate-800">{c.phone}</span></div>}
+                  {c.whatsapp     && <div className="flex items-center gap-2"><span className="text-slate-400 w-20 flex-shrink-0">WhatsApp</span><a href={`https://wa.me/${c.whatsapp.replace(/\D/g,'')}`} target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline font-semibold">{c.whatsapp}</a></div>}
+                  {c.notes        && <div className="mt-2 text-xs text-slate-500 italic border-t border-slate-100 pt-2">{c.notes}</div>}
+                  {!c.contact_name && !c.email && !c.phone && <p className="text-xs text-slate-400 italic">No contact details added yet. Click Edit.</p>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── TICKETS TAB ── */}
+      {tab === 'tickets' && (
+        <div className="space-y-4">
+          {/* Filters */}
+          <div className="flex flex-wrap gap-2 items-center bg-white border border-slate-200 rounded-xl p-3">
+            <input placeholder="Search name / subject / agency…" value={ticketFilter.search}
+              onChange={e => setTicketFilter(f=>({...f, search:e.target.value}))}
+              className="flex-1 min-w-[200px] text-sm px-3 py-1.5 border border-slate-200 rounded-lg" />
+            <select value={ticketFilter.status} onChange={e => setTicketFilter(f=>({...f,status:e.target.value}))}
+              className="text-sm px-3 py-1.5 border border-slate-200 rounded-lg">
+              <option value="">All Status</option>
+              {Object.entries(STATUS_META).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+            <select value={ticketFilter.dept} onChange={e => setTicketFilter(f=>({...f,dept:e.target.value}))}
+              className="text-sm px-3 py-1.5 border border-slate-200 rounded-lg">
+              <option value="">All Depts</option>
+              {DEPT_META.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+            </select>
+            <button onClick={loadTickets} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold">🔍</button>
+          </div>
+
+          {/* Ticket list */}
+          {tickets.length === 0 ? (
+            <div className="text-center py-16 text-slate-400 bg-white rounded-2xl border border-slate-200">
+              <p className="text-4xl mb-3">🎫</p>
+              <p className="font-bold">No tickets found</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {tickets.map(t => {
+                const sm = STATUS_META[t.status] || STATUS_META.open;
+                const dm = DEPT_META.find(d=>d.id===t.department);
+                return (
+                  <div key={t.id} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="text-xs font-mono font-bold text-slate-400">{t.ticket_no}</span>
+                          <span className="px-2 py-0.5 rounded-full text-xs font-bold" style={{ background: sm.bg, color: sm.color }}>{sm.label}</span>
+                          {dm && <span className="px-2 py-0.5 rounded-full text-xs font-bold" style={{ background: dm.bg, color: dm.color }}>{dm.icon} {dm.label}</span>}
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${t.submitted_by_role==='partner_admin' ? 'bg-blue-50 text-blue-700' : 'bg-purple-50 text-purple-700'}`}>
+                            {t.submitted_by_role==='partner_admin' ? '🏢 Partner' : '👤 Student'}
+                          </span>
+                        </div>
+                        <p className="font-black text-slate-900 text-sm truncate">{t.subject}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">{t.submitted_by_name} · {t.submitted_by_email}{t.agency_name ? ` · ${t.agency_name}` : ''}</p>
+                        <p className="text-xs text-slate-600 mt-2 line-clamp-2">{t.message}</p>
+                        {t.admin_reply && (
+                          <div className="mt-2 p-2.5 bg-blue-50 rounded-xl border border-blue-100 text-xs text-blue-800">
+                            <span className="font-bold">Admin reply:</span> {t.admin_reply}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-1.5 flex-shrink-0">
+                        <button onClick={() => { setReplyTicket(t); setReplyForm({ admin_reply: t.admin_reply||'', status: t.status }); }}
+                          className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700">
+                          💬 Reply
+                        </button>
+                        <select value={t.status} onChange={e => quickStatus(t.id, e.target.value)}
+                          className="text-xs px-2 py-1.5 border border-slate-200 rounded-lg font-semibold" style={{ color: sm.color }}>
+                          {Object.entries(STATUS_META).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+                        </select>
+                        <p className="text-xs text-slate-400 text-right">{new Date(t.created_at).toLocaleDateString('en-IN')}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── EDIT CONTACT MODAL ── */}
+      {editDept && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setEditDept(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-black text-slate-900">{DEPT_META.find(d=>d.id===editDept.department)?.icon} Edit {DEPT_META.find(d=>d.id===editDept.department)?.label}</h3>
+              <button onClick={() => setEditDept(null)} className="text-slate-400 hover:text-slate-700 text-2xl">&times;</button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="label">Contact Name</label><input value={editDept.contact_name||''} onChange={e=>setEditDept(d=>({...d,contact_name:e.target.value}))} placeholder="e.g. Rahul Sharma" /></div>
+                <div><label className="label">Email</label><input type="email" value={editDept.email||''} onChange={e=>setEditDept(d=>({...d,email:e.target.value}))} placeholder="email@company.com" /></div>
+                <div><label className="label">Phone</label><input value={editDept.phone||''} onChange={e=>setEditDept(d=>({...d,phone:e.target.value}))} placeholder="+91 98765 43210" /></div>
+                <div><label className="label">WhatsApp</label><input value={editDept.whatsapp||''} onChange={e=>setEditDept(d=>({...d,whatsapp:e.target.value}))} placeholder="+91 98765 43210" /></div>
+                <div className="col-span-2"><label className="label">Working Hours</label><input value={editDept.working_hours||''} onChange={e=>setEditDept(d=>({...d,working_hours:e.target.value}))} placeholder="Mon–Fri 9am–6pm" /></div>
+                <div className="col-span-2"><label className="label">Notes / Description</label><textarea rows={2} value={editDept.notes||''} onChange={e=>setEditDept(d=>({...d,notes:e.target.value}))} placeholder="Short description of this department…" className="w-full" /></div>
+              </div>
+              {saveMsg && <p className={`text-sm font-semibold ${saveMsg.startsWith('✅') ? 'text-emerald-600' : 'text-red-600'}`}>{saveMsg}</p>}
+              <div className="flex gap-2 pt-2 border-t border-slate-100">
+                <button onClick={saveContact} disabled={saving} className="btn-primary">{saving ? 'Saving…' : '💾 Save Contact'}</button>
+                <button onClick={() => setEditDept(null)} className="btn-ghost">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── REPLY MODAL ── */}
+      {replyTicket && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setReplyTicket(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-black text-slate-900 text-sm">Reply to Ticket</h3>
+                <p className="text-xs text-slate-500">{replyTicket.ticket_no} · {replyTicket.submitted_by_name}{replyTicket.agency_name ? ` · ${replyTicket.agency_name}` : ''}</p>
+              </div>
+              <button onClick={() => setReplyTicket(null)} className="text-slate-400 hover:text-slate-700 text-2xl">&times;</button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-sm">
+                <p className="font-bold text-slate-800 mb-1">{replyTicket.subject}</p>
+                <p className="text-slate-600 text-xs">{replyTicket.message}</p>
+              </div>
+              <div>
+                <label className="label">Your Reply</label>
+                <textarea rows={4} value={replyForm.admin_reply}
+                  onChange={e => setReplyForm(f=>({...f, admin_reply:e.target.value}))}
+                  placeholder="Type your reply here…" className="w-full" />
+              </div>
+              <div>
+                <label className="label">Update Status</label>
+                <select value={replyForm.status} onChange={e => setReplyForm(f=>({...f,status:e.target.value}))}>
+                  {Object.entries(STATUS_META).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+              </div>
+              <div className="flex gap-2 pt-2 border-t border-slate-100">
+                <button onClick={saveReply} disabled={replySaving} className="btn-primary">{replySaving ? 'Sending…' : '📨 Send Reply & Update'}</button>
+                <button onClick={() => setReplyTicket(null)} className="btn-ghost">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MAIN DASHBOARD ────────────────────────────────────────────
 const SECTIONS = [
   { id: 'overview',    icon: '📊', label: 'Overview' },
@@ -2761,6 +5192,9 @@ const SECTIONS = [
   { id: 'lms',            icon: '🔗', label: 'LMS Bridge' },
   { id: 'paymentconfig',  icon: '⚙️', label: 'Payment Config' },
   { id: 'payments',       icon: '💸', label: 'All Payments' },
+  { id: 'contactaudit',   icon: '🔒', label: 'Contact Audit' },
+  { id: 'loginbanners',   icon: '📢', label: 'Login Banners' },
+  { id: 'support',        icon: '🎧', label: 'Help & Support' },
 ];
 
 export default function AdminDashboard() {
@@ -2782,6 +5216,9 @@ export default function AdminDashboard() {
     lms: <LmsBridge />,
     paymentconfig: <PaymentConfig />,
     payments: <AdminPayments />,
+    contactaudit: <ContactAudit />,
+    loginbanners: <LoginBanners />,
+    support:      <SupportAdmin />,
   };
 
   return (

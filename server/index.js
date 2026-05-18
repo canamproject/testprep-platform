@@ -1,5 +1,6 @@
 // ============================================================
 // TestPrepGPT White-Label Platform - Express API Server
+// v2.1 — course curriculum modules + lectures (2026-05-18)
 // ============================================================
 require('dotenv').config();
 const express = require('express');
@@ -125,9 +126,9 @@ app.get('/api/health', async (req, res) => {
     if (!p) throw new Error('No DB config');
     await p.query('SELECT 1');
     dbConnected = true;
-    res.json({ status: 'ok', db: 'connected' });
+    res.json({ status: 'ok', db: 'connected', version: '2.1', features: ['curriculum'] });
   } catch (e) {
-    res.json({ status: 'ok', db: 'disconnected', message: 'DB not configured yet' });
+    res.json({ status: 'ok', db: 'disconnected', version: '2.1', features: ['curriculum'], message: 'DB not configured yet' });
   }
 });
 
@@ -374,6 +375,34 @@ app.put('/api/admin/agencies/:id/reset-edits', authMiddleware(['super_admin']), 
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// Admin: get partner admin user for an agency
+app.get('/api/admin/agencies/:id/partner-user', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [[user]] = await getPool().query(
+      "SELECT id, name, email FROM users WHERE agency_id=? AND role='partner_admin' LIMIT 1",
+      [req.params.id]
+    );
+    if (!user) return res.json({ user: null });
+    res.json({ user });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: reset partner admin password
+app.put('/api/admin/agencies/:id/partner-password', authMiddleware(['super_admin']), async (req, res) => {
+  const { password } = req.body;
+  if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  try {
+    const [[user]] = await getPool().query(
+      "SELECT id FROM users WHERE agency_id=? AND role='partner_admin' LIMIT 1",
+      [req.params.id]
+    );
+    if (!user) return res.status(404).json({ error: 'No partner admin found for this agency' });
+    const hash = await bcrypt.hash(password, 10);
+    await getPool().query('UPDATE users SET password_hash=? WHERE id=?', [hash, user.id]);
+    res.json({ message: 'Password updated successfully' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // ─── ADMIN: OVERVIEW STATS ────────────────────────────────────
 app.get('/api/admin/stats', authMiddleware(['super_admin']), async (req, res) => {
   const [[revenue]] = await getPool().query('SELECT COALESCE(SUM(fee_paid),0) as total FROM enrollments WHERE payment_status="paid"');
@@ -453,6 +482,175 @@ app.post('/api/admin/courses', authMiddleware(['super_admin']), async (req, res)
     [title, category, description, price, duration_weeks || 12]
   );
   res.json({ id: result.insertId });
+});
+
+// ─── COURSE CURRICULUM ────────────────────────────────────────
+
+// Public: get full curriculum for a course (no auth needed)
+app.get('/api/courses/:id/curriculum', async (req, res) => {
+  try {
+    const [[course]] = await getPool().query(
+      'SELECT id, title, category, description, price, duration_weeks FROM courses WHERE id=? AND is_active=1',
+      [req.params.id]
+    );
+    if (!course) return res.status(404).json(null);
+
+    const [modules] = await getPool().query(
+      'SELECT * FROM course_modules WHERE course_id=? AND is_active=1 ORDER BY sort_order ASC, id ASC',
+      [req.params.id]
+    );
+    for (const mod of modules) {
+      const [lectures] = await getPool().query(
+        'SELECT * FROM course_lectures WHERE module_id=? AND is_active=1 ORDER BY sort_order ASC, id ASC',
+        [mod.id]
+      );
+      mod.lectures = lectures;
+    }
+    const totalLectures = modules.reduce((s, m) => s + (m.lectures?.length || 0), 0);
+    const totalDuration  = modules.reduce((s, m) => s + m.lectures.reduce((ls, l) => ls + (l.duration_minutes || 0), 0), 0);
+    res.json({ ...course, modules, totalLectures, totalDuration });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: list modules (with their lectures) for a course
+app.get('/api/admin/courses/:id/modules', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [modules] = await getPool().query(
+      'SELECT * FROM course_modules WHERE course_id=? ORDER BY sort_order ASC, id ASC',
+      [req.params.id]
+    );
+    for (const mod of modules) {
+      const [lectures] = await getPool().query(
+        'SELECT * FROM course_lectures WHERE module_id=? ORDER BY sort_order ASC, id ASC',
+        [mod.id]
+      );
+      mod.lectures = lectures;
+    }
+    res.json(modules);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: get ALL modules from all courses (for library/copy picker)
+app.get('/api/admin/all-modules', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [modules] = await getPool().query(`
+      SELECT cm.*, c.title as course_title, c.category
+      FROM course_modules cm
+      JOIN courses c ON cm.course_id = c.id
+      ORDER BY c.category ASC, c.title ASC, cm.sort_order ASC
+    `);
+    for (const mod of modules) {
+      const [lectures] = await getPool().query(
+        'SELECT id, title, duration_minutes FROM course_lectures WHERE module_id=? ORDER BY sort_order ASC',
+        [mod.id]
+      );
+      mod.lectures = lectures;
+    }
+    res.json(modules);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: create a module for a course
+app.post('/api/admin/courses/:id/modules', authMiddleware(['super_admin']), async (req, res) => {
+  const { title, description, sort_order, price, is_free_preview } = req.body;
+  if (!title) return res.status(400).json({ error: 'Title required' });
+  try {
+    const [r] = await getPool().query(
+      'INSERT INTO course_modules (course_id, title, description, sort_order, price, is_free_preview) VALUES (?,?,?,?,?,?)',
+      [req.params.id, title, description || '', sort_order || 0, price || null, is_free_preview ? 1 : 0]
+    );
+    res.json({ id: r.insertId, message: 'Module created' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: update a module
+app.put('/api/admin/modules/:id', authMiddleware(['super_admin']), async (req, res) => {
+  const { title, description, sort_order, price, is_free_preview } = req.body;
+  try {
+    await getPool().query(
+      'UPDATE course_modules SET title=?, description=?, sort_order=?, price=?, is_free_preview=?, updated_at=NOW() WHERE id=?',
+      [title, description || '', sort_order || 0, price || null, is_free_preview ? 1 : 0, req.params.id]
+    );
+    res.json({ message: 'Module updated' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: delete a module (cascade deletes its lectures)
+app.delete('/api/admin/modules/:id', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    await getPool().query('DELETE FROM course_lectures WHERE module_id=?', [req.params.id]);
+    await getPool().query('DELETE FROM course_modules WHERE id=?', [req.params.id]);
+    res.json({ message: 'Module deleted' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: create a lecture inside a module
+app.post('/api/admin/modules/:moduleId/lectures', authMiddleware(['super_admin']), async (req, res) => {
+  const { title, description, duration_minutes, sort_order, price, is_free_preview, course_id, lesson_type } = req.body;
+  if (!title) return res.status(400).json({ error: 'Title required' });
+  try {
+    const [r] = await getPool().query(
+      'INSERT INTO course_lectures (module_id, course_id, title, description, duration_minutes, lesson_type, sort_order, price, is_free_preview) VALUES (?,?,?,?,?,?,?,?,?)',
+      [req.params.moduleId, course_id || null, title, description || '', duration_minutes || 60, lesson_type || 'video', sort_order || 0, price || null, is_free_preview ? 1 : 0]
+    );
+    res.json({ id: r.insertId, message: 'Lecture created' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: update a lecture
+app.put('/api/admin/lectures/:id', authMiddleware(['super_admin']), async (req, res) => {
+  const { title, description, duration_minutes, sort_order, price, is_free_preview, lesson_type } = req.body;
+  try {
+    await getPool().query(
+      'UPDATE course_lectures SET title=?, description=?, duration_minutes=?, lesson_type=?, sort_order=?, price=?, is_free_preview=?, updated_at=NOW() WHERE id=?',
+      [title, description || '', duration_minutes || 60, lesson_type || 'video', sort_order || 0, price || null, is_free_preview ? 1 : 0, req.params.id]
+    );
+    res.json({ message: 'Lecture updated' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: delete a lecture
+app.delete('/api/admin/lectures/:id', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    await getPool().query('DELETE FROM course_lectures WHERE id=?', [req.params.id]);
+    res.json({ message: 'Lecture deleted' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: deep-copy selected modules (with all their lectures) into a target course
+app.post('/api/admin/courses/:id/import-modules', authMiddleware(['super_admin']), async (req, res) => {
+  const { module_ids } = req.body;
+  if (!module_ids?.length) return res.status(400).json({ error: 'No modules selected' });
+  try {
+    let copied = 0;
+    for (const modId of module_ids) {
+      const [[srcMod]] = await getPool().query('SELECT * FROM course_modules WHERE id=?', [modId]);
+      if (!srcMod) continue;
+      const [[maxOrd]] = await getPool().query(
+        'SELECT COALESCE(MAX(sort_order),0) as m FROM course_modules WHERE course_id=?', [req.params.id]
+      );
+      const [newMod] = await getPool().query(
+        'INSERT INTO course_modules (course_id, title, description, sort_order, price, is_free_preview) VALUES (?,?,?,?,?,?)',
+        [req.params.id, srcMod.title, srcMod.description, maxOrd.m + 1, srcMod.price, srcMod.is_free_preview]
+      );
+      const [srcLecs] = await getPool().query(
+        'SELECT * FROM course_lectures WHERE module_id=? ORDER BY sort_order ASC', [modId]
+      );
+      for (const lec of srcLecs) {
+        await getPool().query(
+          'INSERT INTO course_lectures (module_id, course_id, title, description, duration_minutes, lesson_type, sort_order, price, is_free_preview) VALUES (?,?,?,?,?,?,?,?,?)',
+          [newMod.insertId, req.params.id, lec.title, lec.description, lec.duration_minutes, lec.lesson_type, lec.sort_order, lec.price, lec.is_free_preview]
+        );
+      }
+      copied++;
+    }
+    res.json({ message: `Copied ${copied} module(s) with all lectures`, copied });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Student: get their purchased modules/lectures (stub — future granular purchasing)
+app.get('/api/student/my-purchases', authMiddleware(['student']), async (req, res) => {
+  res.json({ modulePurchases: [], lecturePurchases: [] });
 });
 
 // ─── PARTNER: DASHBOARD ───────────────────────────────────────
@@ -666,11 +864,60 @@ app.post('/api/student/sso/:enrollmentId', authMiddleware(['student']), async (r
 // ─── TENANT IDENTIFICATION ────────────────────────────────────
 app.get('/api/tenant/:slug', async (req, res) => {
   const [rows] = await getPool().query(
-    'SELECT id, name, slug, brand_color, logo_initials, email, phone, city, status FROM agencies WHERE slug=? AND status="active"',
+    'SELECT id, name, slug, brand_color, logo_initials, logo_url, logo_fit, logo_bg, logo_padding, logo_shape, email, phone, city, status FROM agencies WHERE slug=? AND status="active"',
     [req.params.slug]
   );
   if (!rows.length) return res.status(404).json({ error: 'Tenant not found' });
   res.json(rows[0]);
+});
+
+// ─── PUBLIC LANDING PAGE APIs (no auth) ───────────────────────
+app.get('/api/public/:slug/courses', async (req, res) => {
+  try {
+    // Return all active courses (courses are platform-wide, not per-agency)
+    const [rows] = await getPool().query(
+      'SELECT id, title, category, description, price, duration_weeks FROM courses WHERE is_active=1 ORDER BY category, title'
+    );
+    res.json(rows);
+  } catch (e) { res.json([]); }
+});
+
+app.get('/api/public/:slug/batches', async (req, res) => {
+  try {
+    const [[agency]] = await getPool().query('SELECT id FROM agencies WHERE slug=?', [req.params.slug]);
+    if (!agency) return res.json([]);
+    const [rows] = await getPool().query(
+      `SELECT b.id, b.name, b.start_date, b.schedule_days, b.schedule_time, b.max_students,
+        c.title as course_title, c.category,
+        COUNT(be.id) as enrolled
+       FROM batches b
+       JOIN courses c ON b.course_id = c.id
+       LEFT JOIN batch_enrollments be ON b.id = be.batch_id AND be.status='active'
+       WHERE b.agency_id=? AND b.status='active'
+       GROUP BY b.id ORDER BY b.start_date ASC LIMIT 20`,
+      [agency.id]
+    );
+    res.json(rows);
+  } catch (e) { res.json([]); }
+});
+
+app.get('/api/public/:slug/live-classes', async (req, res) => {
+  try {
+    const [[agency]] = await getPool().query('SELECT id FROM agencies WHERE slug=?', [req.params.slug]);
+    if (!agency) return res.json([]);
+    const [rows] = await getPool().query(
+      `SELECT lc.id, lc.title, lc.scheduled_at, lc.duration_minutes, lc.status,
+        c.title as course_title, c.category,
+        u.name as instructor_name
+       FROM live_classes lc
+       LEFT JOIN courses c ON lc.course_id = c.id
+       LEFT JOIN users u ON lc.instructor_id = u.id
+       WHERE lc.agency_id=? AND lc.status IN ('scheduled','live')
+       ORDER BY lc.scheduled_at ASC LIMIT 10`,
+      [agency.id]
+    );
+    res.json(rows);
+  } catch (e) { res.json([]); }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1234,51 +1481,23 @@ app.get('/api/live-classes', authMiddleware(), async (req, res) => {
   } else if (isAdmin) {
     query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
         a.name as agency_name,
-        u.name as faculty_name,
-        (SELECT COUNT(DISTINCT ca.student_id)
-         FROM class_attendance ca
-         JOIN enrollments e ON e.student_id = ca.student_id
-           AND e.course_id = (SELECT bx.course_id FROM batches bx WHERE bx.id = lc.batch_id)
-           AND e.status = 'active'
-         WHERE ca.live_class_id = lc.id AND ca.left_at IS NULL) as enrolled_live_count,
-        (SELECT COUNT(DISTINCT ca.student_id)
-         FROM class_attendance ca
-         WHERE ca.live_class_id = lc.id AND ca.left_at IS NULL
-           AND ca.student_id NOT IN (
-             SELECT e2.student_id FROM enrollments e2
-             WHERE e2.course_id = (SELECT bx2.course_id FROM batches bx2 WHERE bx2.id = lc.batch_id)
-             AND e2.status = 'active'
-           )) as demo_live_count
+        u.name as faculty_name
        FROM live_classes lc
        JOIN batches b ON lc.batch_id = b.id
        JOIN courses c ON b.course_id = c.id
        JOIN agencies a ON lc.agency_id = a.id
        LEFT JOIN users u ON lc.faculty_id = u.id
-       ORDER BY lc.status = 'live' DESC, lc.scheduled_at DESC`;
+       ORDER BY lc.scheduled_at DESC`;
     params = [];
   } else {
     query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
-        u.name as faculty_name,
-        (SELECT COUNT(DISTINCT ca.student_id)
-         FROM class_attendance ca
-         JOIN enrollments e ON e.student_id = ca.student_id
-           AND e.course_id = (SELECT bx.course_id FROM batches bx WHERE bx.id = lc.batch_id)
-           AND e.status = 'active'
-         WHERE ca.live_class_id = lc.id AND ca.left_at IS NULL) as enrolled_live_count,
-        (SELECT COUNT(DISTINCT ca.student_id)
-         FROM class_attendance ca
-         WHERE ca.live_class_id = lc.id AND ca.left_at IS NULL
-           AND ca.student_id NOT IN (
-             SELECT e2.student_id FROM enrollments e2
-             WHERE e2.course_id = (SELECT bx2.course_id FROM batches bx2 WHERE bx2.id = lc.batch_id)
-             AND e2.status = 'active'
-           )) as demo_live_count
+        u.name as faculty_name
        FROM live_classes lc
        JOIN batches b ON lc.batch_id = b.id
        JOIN courses c ON b.course_id = c.id
        LEFT JOIN users u ON lc.faculty_id = u.id
        WHERE lc.agency_id = ?
-       ORDER BY lc.status = 'live' DESC, lc.scheduled_at DESC`;
+       ORDER BY lc.scheduled_at DESC`;
     params = [agencyId];
   }
 
@@ -1497,173 +1716,6 @@ app.post('/api/faculty/live-classes', authMiddleware(['faculty']), async (req, r
   }
 });
 
-// ── Real-time participant count for a live class ──────────────────────────────
-// Strategy: DB attendance (primary, always available) + Zoom API (supplement if scopes allow)
-app.get('/api/admin/live-classes/:id/zoom-participants', authMiddleware(['super_admin', 'partner_admin']), async (req, res) => {
-  const classId = req.params.id;
-  try {
-    const [[lc]] = await getPool().query(
-      `SELECT lc.zoom_meeting_id, lc.agency_id, b.course_id
-       FROM live_classes lc JOIN batches b ON b.id = lc.batch_id
-       WHERE lc.id = ?`, [classId]
-    );
-    if (!lc) return res.json({ enrolled: 0, demo: 0, total: 0, source: 'not_found' });
-    if (req.user.role === 'partner_admin' && lc.agency_id !== req.user.agency_id) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-
-    // ── 1. Always get DB attendance count (primary, most reliable) ────────────
-    const [dbRows] = await getPool().query(`
-      SELECT ca.student_id, u.email as user_email, u.name,
-             (SELECT e.id FROM enrollments e
-              WHERE e.student_id = ca.student_id AND e.course_id = ? AND e.status = 'active' LIMIT 1) as is_enrolled
-      FROM class_attendance ca
-      JOIN users u ON u.id = ca.student_id
-      WHERE ca.live_class_id = ? AND ca.left_at IS NULL
-    `, [lc.course_id, classId]);
-
-    const dbEnrolled = dbRows.filter(r => r.is_enrolled).length;
-    const dbDemo     = dbRows.filter(r => !r.is_enrolled).length;
-
-    // ── 2. Try Zoom API as supplemental (if meeting_id exists + token works) ──
-    let zoomParticipants = null;
-    let zoomApiError = null;
-    let zoomApiSource = null;
-
-    if (lc.zoom_meeting_id) {
-      // Find Zoom config: try agency-specific first, then global (id=1)
-      let zoomCfg = null;
-      const [[agencyCfg]] = await getPool().query(
-        'SELECT active_zoom_config_id FROM live_platform_config WHERE agency_id=?', [lc.agency_id]
-      ).catch(() => [[null]]);
-      const cfgId = agencyCfg?.active_zoom_config_id;
-      if (cfgId) {
-        const [[cfg]] = await getPool().query('SELECT * FROM zoom_configs WHERE id=?', [cfgId]);
-        zoomCfg = cfg;
-      }
-      // Fallback: global config
-      if (!zoomCfg) {
-        const [[globalCfg]] = await getPool().query(
-          'SELECT lpc.active_zoom_config_id FROM live_platform_config lpc WHERE lpc.id=1'
-        ).catch(() => [[null]]);
-        if (globalCfg?.active_zoom_config_id) {
-          const [[cfg]] = await getPool().query('SELECT * FROM zoom_configs WHERE id=?', [globalCfg.active_zoom_config_id]);
-          zoomCfg = cfg;
-        }
-      }
-
-      if (zoomCfg) {
-        const token = await getZoomToken(zoomCfg).catch(() => null);
-        if (token) {
-          const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-          const meetingId = lc.zoom_meeting_id;
-
-          // Attempt 1: In-meeting participants API (requires meeting:read:admin)
-          try {
-            const r1 = await fetch(`https://api.zoom.us/v2/meetings/${meetingId}/participants?page_size=300`, { headers });
-            const d1 = await r1.json();
-            if (r1.ok && Array.isArray(d1.participants)) {
-              zoomParticipants = d1.participants;
-              zoomApiSource = 'zoom_inmeet';
-            } else {
-              zoomApiError = `meetings API: ${d1.message || d1.code || r1.status}`;
-            }
-          } catch (e) { zoomApiError = `meetings API: ${e.message}`; }
-
-          // Attempt 2: Dashboard metrics API (requires dashboard:read:admin)
-          if (!zoomParticipants || zoomParticipants.length === 0) {
-            try {
-              const r2 = await fetch(`https://api.zoom.us/v2/metrics/meetings/${meetingId}/participants?type=live&page_size=300`, { headers });
-              const d2 = await r2.json();
-              if (r2.ok && Array.isArray(d2.participants)) {
-                zoomParticipants = d2.participants;
-                zoomApiSource = 'zoom_dashboard';
-              } else {
-                zoomApiError = (zoomApiError ? zoomApiError + '; ' : '') + `dashboard API: ${d2.message || d2.code || r2.status}`;
-              }
-            } catch (e) { zoomApiError = (zoomApiError || '') + `; dashboard: ${e.message}`; }
-          }
-        } else {
-          zoomApiError = 'Token fetch failed';
-        }
-      } else {
-        zoomApiError = 'No Zoom config found for this agency';
-      }
-    }
-
-    // ── 3. Decide what to show ────────────────────────────────────────────────
-    if (zoomParticipants && zoomParticipants.length > 0) {
-      // Filter only in-meeting (leave_time empty = still in meeting)
-      const activeParts = zoomParticipants.filter(p =>
-        !p.leave_time || p.leave_time === '' || p.status === 'in_meeting'
-      );
-      const parts = activeParts.length > 0 ? activeParts : zoomParticipants;
-
-      // Cross-ref with enrollments by email OR name (free Zoom accounts omit emails)
-      const [enrolledRows] = await getPool().query(
-        `SELECT u.email, u.name FROM users u JOIN enrollments e ON e.student_id=u.id
-         WHERE e.course_id=? AND e.status='active'`, [lc.course_id]
-      );
-      const enrolledEmails = new Set(enrolledRows.map(r => r.email.toLowerCase()));
-      // Name-based fallback: first-name match against enrolled students
-      const enrolledNames = new Set(
-        enrolledRows.map(r => r.name.split(' ')[0].toLowerCase())
-      );
-
-      let zEnrolled = 0, zDemo = 0;
-      const details = parts.map(p => {
-        const em  = (p.user_email || p.email || '').toLowerCase();
-        const nm  = (p.name || p.user_name || '').split(' ')[0].toLowerCase();
-        const isE = (em && enrolledEmails.has(em)) || (!em && nm && enrolledNames.has(nm));
-        if (isE) zEnrolled++; else zDemo++;
-        return {
-          name: p.name || p.user_name || 'Unknown',
-          email: p.user_email || p.email || '',
-          enrolled: isE,
-          join_time: p.join_time
-        };
-      });
-
-      return res.json({
-        enrolled: zEnrolled, demo: zDemo, total: parts.length,
-        source: zoomApiSource,
-        db_enrolled: dbEnrolled, db_demo: dbDemo,
-        participants: details
-      });
-    }
-
-    // Zoom API unavailable or returned empty — use DB counts (always accurate now)
-    return res.json({
-      enrolled: dbEnrolled, demo: dbDemo, total: dbEnrolled + dbDemo,
-      source: 'db_attendance',
-      zoom_api_error: zoomApiError,
-      participants: dbRows.map(r => ({ name: r.name, email: r.user_email, enrolled: !!r.is_enrolled }))
-    });
-
-  } catch (e) {
-    console.error('zoom-participants error:', e.message);
-    res.json({ enrolled: 0, demo: 0, total: 0, source: 'error', error: e.message });
-  }
-});
-
-// Admin starts a live class (sets status='live', records started_at)
-app.put('/api/admin/live-classes/:id/start', authMiddleware(['super_admin', 'partner_admin']), async (req, res) => {
-  const classId = req.params.id;
-  try {
-    const [[lc]] = await getPool().query('SELECT agency_id, status FROM live_classes WHERE id=?', [classId]);
-    if (!lc) return res.status(404).json({ error: 'Class not found' });
-    if (req.user.role === 'partner_admin' && lc.agency_id !== req.user.agency_id) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-    await getPool().query(
-      `UPDATE live_classes SET status='live', started_at=NOW() WHERE id=?`, [classId]
-    );
-    res.json({ message: 'Class is now live' });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // Admin ends a live class
 app.put('/api/admin/live-classes/:id/end', authMiddleware(['super_admin', 'partner_admin']), async (req, res) => {
   const classId = req.params.id;
@@ -1676,11 +1728,6 @@ app.put('/api/admin/live-classes/:id/end', authMiddleware(['super_admin', 'partn
     await getPool().query(
       `UPDATE live_classes SET status='ended', ended_at=NOW() WHERE id=?`, [classId]
     );
-    // Mark all still-in-class attendees as left (covers Zoom students who kept web page open)
-    await getPool().query(
-      `UPDATE class_attendance SET left_at=NOW(), updated_at=NOW()
-       WHERE live_class_id=? AND left_at IS NULL`, [classId]
-    ).catch(() => {});
     res.json({ message: 'Class ended' });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1875,9 +1922,9 @@ app.get('/api/live-classes/:id/join', authMiddleware(), async (req, res) => {
 
     try {
       await getPool().query(`
-        INSERT INTO class_attendance (live_class_id, student_id, batch_id, joined_at, attendance_status, left_at)
-        VALUES (?, ?, ?, NOW(), 'present', NULL)
-        ON DUPLICATE KEY UPDATE joined_at = NOW(), attendance_status = 'present', left_at = NULL
+        INSERT INTO class_attendance (live_class_id, student_id, batch_id, joined_at, attendance_status)
+        VALUES (?, ?, ?, NOW(), 'present')
+        ON DUPLICATE KEY UPDATE joined_at = NOW(), attendance_status = 'present'
       `, [classId, userId, liveClass.batch_id]);
     } catch (_) { /* attendance table may not exist yet */ }
 
@@ -1957,16 +2004,10 @@ app.get('/api/student/all-classes', authMiddleware(['student']), async (req, res
       JOIN agencies a ON b.agency_id = a.id
       WHERE (
           lc.status = 'live'
-          OR lc.started_at IS NOT NULL
-          OR (lc.status = 'scheduled' AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 4 HOUR) AND lc.scheduled_at <= DATE_ADD(NOW(), INTERVAL 14 DAY))
+          OR (lc.status = 'scheduled' AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 30 MINUTE))
         )
-        AND lc.status != 'ended'
-      ORDER BY
-        is_enrolled IS NOT NULL DESC,
-        lc.status = 'live' DESC,
-        (lc.started_at IS NOT NULL) DESC,
-        lc.scheduled_at ASC
-      LIMIT 100
+      ORDER BY lc.status = 'live' DESC, lc.scheduled_at ASC
+      LIMIT 50
     `, [studentId]);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2947,11 +2988,403 @@ async function runMigrations() {
       )
     `).catch(() => {});
 
+    // ── COURSE CURRICULUM ──────────────────────────────────────────
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS course_modules (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        course_id INT NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        sort_order INT DEFAULT 0,
+        price DECIMAL(10,2),
+        is_free_preview TINYINT(1) DEFAULT 0,
+        is_active TINYINT(1) DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
+      )
+    `).catch(() => {});
+    // backfill missing columns using information_schema (compatible with MySQL 5.7+)
+    const DB = process.env.MYSQLDATABASE || process.env.DB_NAME || 'railway';
+    const safeAddCol = async (table, col, def) => {
+      const [[row]] = await getPool().query(
+        `SELECT COUNT(*) as n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND COLUMN_NAME=?`,
+        [DB, table, col]
+      ).catch(() => [[{n:1}]]);
+      if (!row || row.n > 0) return;
+      await getPool().query(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`).catch(() => {});
+    };
+    await safeAddCol('course_modules','is_active','TINYINT(1) DEFAULT 1');
+    await safeAddCol('course_modules','is_free_preview','TINYINT(1) DEFAULT 0');
+    await safeAddCol('course_modules','price','DECIMAL(10,2)');
+    await safeAddCol('course_modules','description','TEXT');
+
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS course_lectures (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        module_id INT NOT NULL,
+        course_id INT,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        duration_minutes INT DEFAULT 60,
+        lesson_type ENUM('video','live','quiz','reading','assignment') DEFAULT 'video',
+        sort_order INT DEFAULT 0,
+        price DECIMAL(10,2),
+        is_free_preview TINYINT(1) DEFAULT 0,
+        is_active TINYINT(1) DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (module_id) REFERENCES course_modules(id) ON DELETE CASCADE
+      )
+    `).catch(() => {});
+    await safeAddCol('course_lectures','is_active','TINYINT(1) DEFAULT 1');
+    await safeAddCol('course_lectures','is_free_preview','TINYINT(1) DEFAULT 0');
+    await safeAddCol('course_lectures','price','DECIMAL(10,2)');
+    await safeAddCol('course_lectures','course_id','INT');
+    await safeAddCol('course_lectures','lesson_type',"ENUM('video','live','quiz','reading','assignment') DEFAULT 'video'");
+    await safeAddCol('course_lectures','duration_minutes','INT DEFAULT 60');
+    await safeAddCol('course_lectures','description','TEXT');
+
+    // ── SUPPORT SYSTEM ──────────────────────────────────────────────
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS support_contacts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        department ENUM('account_manager','commission','academic','tech') NOT NULL UNIQUE,
+        contact_name VARCHAR(200),
+        email VARCHAR(200),
+        phone VARCHAR(50),
+        whatsapp VARCHAR(50),
+        working_hours VARCHAR(200),
+        notes TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `).catch(() => {});
+
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        ticket_no VARCHAR(20) UNIQUE,
+        submitted_by_user_id INT NOT NULL,
+        submitted_by_name VARCHAR(200),
+        submitted_by_email VARCHAR(200),
+        submitted_by_role ENUM('student','partner_admin') NOT NULL,
+        agency_id INT,
+        agency_name VARCHAR(200),
+        department ENUM('account_manager','commission','academic','tech','general') NOT NULL DEFAULT 'general',
+        subject VARCHAR(500) NOT NULL,
+        message TEXT NOT NULL,
+        status ENUM('open','in_progress','resolved','closed') DEFAULT 'open',
+        admin_reply TEXT,
+        admin_replied_at TIMESTAMP NULL,
+        admin_replied_by VARCHAR(200),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_st_user (submitted_by_user_id),
+        INDEX idx_st_agency (agency_id),
+        INDEX idx_st_status (status)
+      )
+    `).catch(() => {});
+
+    // Seed default support contact rows if empty
+    const [[{ cnt }]] = await getPool().query('SELECT COUNT(*) as cnt FROM support_contacts');
+    if (cnt === 0) {
+      await getPool().query(`
+        INSERT INTO support_contacts (department, contact_name, email, phone, working_hours, notes) VALUES
+        ('account_manager','Account Manager','account@testprep.com','','Mon–Fri 9am–6pm','Your dedicated account manager for all business queries.'),
+        ('commission','Commission Team','commission@testprep.com','','Mon–Fri 10am–5pm','For commission payouts and earnings related queries.'),
+        ('academic','Academic Support','academic@testprep.com','','Mon–Sat 9am–7pm','Course content, study plans, and exam guidance.'),
+        ('tech','Tech Support','tech@testprep.com','','24×7','Platform issues, login problems, and technical help.')
+      `).catch(() => {});
+    }
+
     console.log('✅ Migrations applied');
   } catch (e) {
     console.log('⚠️  Migration warning:', e.message);
   }
 }
+
+// ─── VIDEO RECORDINGS ────────────────────────────────────────────────────────
+
+// Auto-create video_recordings table
+(async () => {
+  try {
+    await getPool().query(`
+      CREATE TABLE IF NOT EXISTS video_recordings (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        agency_id INT,
+        batch_id INT,
+        live_class_id INT,
+        title VARCHAR(255),
+        zoom_meeting_id VARCHAR(100),
+        recording_date DATE,
+        duration_minutes INT,
+        bunny_video_id VARCHAR(100),
+        bunny_embed_url TEXT,
+        thumbnail_url TEXT,
+        status ENUM('processing','ready','failed') DEFAULT 'processing',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE SET NULL,
+        FOREIGN KEY (batch_id) REFERENCES batches(id) ON DELETE SET NULL
+      )
+    `);
+  } catch(e) { /* table exists */ }
+})();
+
+// GET recordings for a student (only batches they are enrolled in)
+app.get('/api/student/recordings', authMiddleware(['student']), async (req, res) => {
+  try {
+    const { id: userId } = req.user;
+    const [rows] = await getPool().query(`
+      SELECT vr.id, vr.title, vr.batch_id, vr.recording_date, vr.duration_minutes,
+             vr.bunny_embed_url, vr.thumbnail_url, vr.status,
+             b.name AS batch_name, a.name AS agency_name
+      FROM video_recordings vr
+      JOIN batches b ON vr.batch_id = b.id
+      JOIN agencies a ON vr.agency_id = a.id
+      JOIN batch_enrollments be ON be.batch_id = vr.batch_id
+      WHERE be.student_id = ? AND vr.status = 'ready'
+      ORDER BY vr.recording_date DESC
+    `, [userId]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET recordings for partner (all their agency recordings)
+app.get('/api/partner/recordings', authMiddleware(['partner_admin']), async (req, res) => {
+  try {
+    const { agency_id } = req.user;
+    const [rows] = await getPool().query(`
+      SELECT vr.*, b.name AS batch_name
+      FROM video_recordings vr
+      LEFT JOIN batches b ON vr.batch_id = b.id
+      WHERE vr.agency_id = ?
+      ORDER BY vr.recording_date DESC
+    `, [agency_id]);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET all recordings (admin)
+app.get('/api/admin/recordings', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [rows] = await getPool().query(`
+      SELECT vr.*, b.name AS batch_name, a.name AS agency_name
+      FROM video_recordings vr
+      LEFT JOIN batches b ON vr.batch_id = b.id
+      LEFT JOIN agencies a ON vr.agency_id = a.id
+      ORDER BY vr.created_at DESC
+    `);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST create recording manually (admin/partner)
+app.post('/api/admin/recordings', authMiddleware(['super_admin','partner_admin']), async (req, res) => {
+  try {
+    const { agency_id, batch_id, live_class_id, title, recording_date,
+            duration_minutes, bunny_embed_url, thumbnail_url } = req.body;
+    const agId = req.user.role === 'partner_admin' ? req.user.agency_id : agency_id;
+    const [result] = await getPool().query(
+      `INSERT INTO video_recordings (agency_id, batch_id, live_class_id, title,
+        recording_date, duration_minutes, bunny_embed_url, thumbnail_url, status)
+       VALUES (?,?,?,?,?,?,?,?,'ready')`,
+      [agId, batch_id, live_class_id || null, title, recording_date,
+       duration_minutes || null, bunny_embed_url, thumbnail_url || null]
+    );
+    res.json({ id: result.insertId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE recording (admin)
+app.delete('/api/admin/recordings/:id', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    await getPool().query('DELETE FROM video_recordings WHERE id=?', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Zoom webhook — auto-process recording when class ends
+app.post('/api/webhooks/zoom', async (req, res) => {
+  try {
+    const crypto = require('crypto');
+    const event = req.body;
+
+    // Zoom URL validation challenge
+    if (event.event === 'endpoint.url_validation') {
+      const hash = crypto
+        .createHmac('sha256', process.env.ZOOM_WEBHOOK_SECRET || '')
+        .update(event.payload.plainToken)
+        .digest('hex');
+      return res.json({ plainToken: event.payload.plainToken, encryptedToken: hash });
+    }
+
+    if (event.event === 'recording.completed') {
+      res.sendStatus(200); // Respond immediately; process in background
+      const { object } = event.payload;
+      const meetingId = object.id?.toString();
+      const mp4 = (object.recording_files || []).find(
+        f => f.file_type === 'MP4' && f.recording_type === 'shared_screen_with_speaker_view'
+      ) || (object.recording_files || []).find(f => f.file_type === 'MP4');
+
+      if (!mp4 || !meetingId) return;
+
+      // Find matching live class
+      const pool = getPool();
+      const [[lc]] = await pool.query(
+        `SELECT lc.*, b.agency_id, b.name AS batch_name, b.id AS batch_id
+         FROM live_classes lc JOIN batches b ON lc.batch_id = b.id
+         WHERE lc.zoom_meeting_id = ?`, [meetingId]
+      );
+      if (!lc) return;
+
+      // Build Bunny embed URL (you must set env vars)
+      const libId = process.env.BUNNY_LIBRARY_ID;
+      const apiKey = process.env.BUNNY_API_KEY;
+      const recDate = new Date(object.start_time || Date.now()).toISOString().split('T')[0];
+      const title = `${lc.title || lc.batch_name} — ${recDate}`;
+
+      try {
+        if (libId && apiKey) {
+          // Create video entry in Bunny
+          const createRes = await fetch(
+            `https://video.bunnycdn.com/library/${libId}/videos`,
+            { method:'POST', headers:{'AccessKey':apiKey,'Content-Type':'application/json'},
+              body: JSON.stringify({ title }) }
+          );
+          const bVideo = await createRes.json();
+          const embedUrl = `https://iframe.mediadelivery.net/embed/${libId}/${bVideo.guid}?autoplay=false&preload=true`;
+
+          // Tell Bunny to pull the file from Zoom download URL
+          const dlUrl = `${mp4.download_url}?access_token=${process.env.ZOOM_DOWNLOAD_TOKEN || ''}`;
+          await fetch(
+            `https://video.bunnycdn.com/library/${libId}/videos/${bVideo.guid}/fetch`,
+            { method:'POST', headers:{'AccessKey':apiKey,'Content-Type':'application/json'},
+              body: JSON.stringify({ url: dlUrl }) }
+          );
+
+          await pool.query(
+            `INSERT INTO video_recordings (agency_id,batch_id,live_class_id,title,zoom_meeting_id,
+              recording_date,duration_minutes,bunny_video_id,bunny_embed_url,status)
+             VALUES (?,?,?,?,?,?,?,?,?,'ready')`,
+            [lc.agency_id, lc.batch_id, lc.id, title, meetingId, recDate,
+             Math.round((object.duration||0)), bVideo.guid, embedUrl]
+          );
+          console.log(`✅ Auto-saved recording: ${title}`);
+        } else {
+          // Bunny not configured — save as placeholder so admin can add URL later
+          await pool.query(
+            `INSERT INTO video_recordings (agency_id,batch_id,live_class_id,title,zoom_meeting_id,
+              recording_date,duration_minutes,status)
+             VALUES (?,?,?,?,?,?,?,'processing')`,
+            [lc.agency_id, lc.batch_id, lc.id, title, meetingId, recDate,
+             Math.round((object.duration||0))]
+          );
+        }
+      } catch(uploadErr) {
+        console.error('Recording upload failed:', uploadErr.message);
+      }
+    } else {
+      res.sendStatus(200);
+    }
+  } catch (e) { console.error('Zoom webhook error:', e); res.sendStatus(500); }
+});
+
+// ─── SUPPORT SYSTEM ──────────────────────────────────────────────────────────
+
+// GET all support contacts (admin / partner / student — public read)
+app.get('/api/support/contacts', authMiddleware(['super_admin','partner_admin','student','faculty']), async (req, res) => {
+  try {
+    const [rows] = await getPool().query('SELECT * FROM support_contacts ORDER BY FIELD(department,"account_manager","commission","academic","tech")');
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: update a support contact
+app.put('/api/admin/support/contacts/:dept', authMiddleware(['super_admin']), async (req, res) => {
+  const { contact_name, email, phone, whatsapp, working_hours, notes } = req.body;
+  try {
+    await getPool().query(
+      `INSERT INTO support_contacts (department,contact_name,email,phone,whatsapp,working_hours,notes)
+       VALUES (?,?,?,?,?,?,?)
+       ON DUPLICATE KEY UPDATE contact_name=VALUES(contact_name),email=VALUES(email),phone=VALUES(phone),
+         whatsapp=VALUES(whatsapp),working_hours=VALUES(working_hours),notes=VALUES(notes)`,
+      [req.params.dept, contact_name||'', email||'', phone||'', whatsapp||'', working_hours||'', notes||'']
+    );
+    res.json({ message: 'Contact updated' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Submit a support ticket (partner or student)
+app.post('/api/support/tickets', authMiddleware(['partner_admin','student']), async (req, res) => {
+  const { department, subject, message } = req.body;
+  if (!subject || !message) return res.status(400).json({ error: 'Subject and message required' });
+  try {
+    const ticketNo = 'TK' + Date.now().toString().slice(-8);
+    let agencyId = req.user.agency_id || null;
+    let agencyName = null;
+    if (agencyId) {
+      const [[ag]] = await getPool().query('SELECT name FROM agencies WHERE id=?', [agencyId]);
+      agencyName = ag?.name || null;
+    }
+    await getPool().query(
+      `INSERT INTO support_tickets (ticket_no,submitted_by_user_id,submitted_by_name,submitted_by_email,submitted_by_role,agency_id,agency_name,department,subject,message)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [ticketNo, req.user.id, req.user.name, req.user.email, req.user.role, agencyId, agencyName, department||'general', subject, message]
+    );
+    res.json({ message: 'Ticket submitted', ticket_no: ticketNo });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Get my tickets (partner or student)
+app.get('/api/support/tickets/mine', authMiddleware(['partner_admin','student']), async (req, res) => {
+  try {
+    let q, params;
+    if (req.user.role === 'partner_admin') {
+      q = 'SELECT * FROM support_tickets WHERE agency_id=? ORDER BY created_at DESC';
+      params = [req.user.agency_id];
+    } else {
+      q = 'SELECT * FROM support_tickets WHERE submitted_by_user_id=? ORDER BY created_at DESC';
+      params = [req.user.id];
+    }
+    const [rows] = await getPool().query(q, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: get all tickets (with filters)
+app.get('/api/admin/support/tickets', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const { status, dept, search } = req.query;
+    let q = 'SELECT * FROM support_tickets WHERE 1=1';
+    const p = [];
+    if (status) { q += ' AND status=?'; p.push(status); }
+    if (dept)   { q += ' AND department=?'; p.push(dept); }
+    if (search) { q += ' AND (subject LIKE ? OR submitted_by_name LIKE ? OR agency_name LIKE ?)'; const s = `%${search}%`; p.push(s,s,s); }
+    q += ' ORDER BY created_at DESC LIMIT 200';
+    const [rows] = await getPool().query(q, p);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: reply to a ticket + update status
+app.put('/api/admin/support/tickets/:id', authMiddleware(['super_admin']), async (req, res) => {
+  const { admin_reply, status } = req.body;
+  try {
+    await getPool().query(
+      `UPDATE support_tickets SET admin_reply=?, status=?, admin_replied_at=NOW(), admin_replied_by=? WHERE id=?`,
+      [admin_reply||'', status||'in_progress', req.user.name||'Admin', req.params.id]
+    );
+    res.json({ message: 'Updated' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: update ticket status only
+app.patch('/api/admin/support/tickets/:id/status', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    await getPool().query('UPDATE support_tickets SET status=? WHERE id=?', [req.body.status, req.params.id]);
+    res.json({ message: 'Status updated' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
 
 // ─── ZOOM API HELPER ─────────────────────────────────────────────────────────
 async function getZoomToken(cfg) {

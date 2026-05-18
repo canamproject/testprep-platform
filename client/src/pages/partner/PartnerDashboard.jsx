@@ -1,14 +1,76 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
 import DashLayout, { NavItem } from '../../components/DashLayout';
 import { logoShapeStyle } from '../admin/AdminDashboard';
+import MaskedContact, { maskEmail, maskPhone } from '../../components/MaskedContact';
+import LogoDisplay from '../../components/LogoDisplay';
 
 const fmt = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 
 function Badge({ status }) {
   const map = { active: 'badge-green', paid: 'badge-green', approved: 'badge-blue', pending: 'badge-amber', on_hold: 'badge-amber', completed: 'badge-purple', cancelled: 'badge-gray', new: 'badge-blue', contacted: 'badge-amber', demo_done: 'badge-purple', enrolled: 'badge-green', lost: 'badge-red' };
   return <span className={`badge ${map[status] || 'badge-gray'}`}>{status?.replace('_', ' ')}</span>;
+}
+
+// ── SHARED FILTER COMPONENTS ─────────────────────────────────
+function MultiSelectDropdown({ label, options, selected, onChange }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+  const toggle = (v) => onChange(selected.includes(v) ? selected.filter(x => x !== v) : [...selected, v]);
+  const count = selected.length;
+  return (
+    <div ref={ref} className="relative flex-shrink-0">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border font-semibold transition-all whitespace-nowrap
+          ${count > 0 ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-400'}`}>
+        {label}
+        {count > 0 && <span className="bg-blue-600 text-white text-[9px] font-black px-1 rounded-full min-w-[16px] text-center leading-none">{count}</span>}
+        <span className="text-[10px] opacity-40 ml-0.5">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-200 rounded-xl shadow-2xl min-w-[160px] max-h-52 overflow-y-auto py-1.5">
+          {options.length === 0 && <div className="px-3 py-2 text-xs text-slate-400 italic">No options</div>}
+          {options.map(opt => {
+            const val = typeof opt === 'string' ? opt : opt.value;
+            const lbl = typeof opt === 'string' ? opt : opt.label;
+            const checked = selected.includes(val);
+            return (
+              <label key={val} className={`flex items-center gap-2.5 px-3 py-1.5 cursor-pointer text-xs transition-colors ${checked ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
+                <input type="checkbox" checked={checked} onChange={() => toggle(val)} className="accent-blue-600 w-3.5 h-3.5 flex-shrink-0" />
+                <span className={checked ? 'font-bold text-blue-700' : 'text-slate-700'}>{lbl}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FilterRow({ onApply, onClear, appliedCount, children }) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2 px-3 py-2 bg-white rounded-xl border border-slate-200 shadow-sm">
+      {children}
+      <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
+        {appliedCount > 0 && (
+          <button type="button" onClick={onClear}
+            className="flex items-center gap-1 text-xs font-semibold text-red-500 hover:text-red-700 px-2.5 py-1.5 rounded-lg hover:bg-red-50 transition-all">
+            ✕ Clear
+          </button>
+        )}
+        <button type="button" onClick={onApply}
+          className="flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-700 transition-all">
+          🔍 Search
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // ── OVERVIEW ────────────────────────────────────────────────
@@ -78,7 +140,7 @@ function Students({ accent, partnerPhone, agencyName, slug }) {
   useEffect(() => { load(); }, []);
 
   const base = window.location.origin;
-  const signupUrl = `${base}/${slug}/signup`;
+  const signupUrl = `${base}/${slug}`;
 
   const waStudent = (s, text) => {
     if (!s.phone) return alert('No phone number for this student.');
@@ -174,12 +236,35 @@ function Enrollments({ accent, partnerPhone }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ student_id: '', course_id: '', fee_paid: '', coupon_code: '' });
   const [msg, setMsg] = useState('');
+
+  // ── Filters ──────────────────────────────────────────────────
+  const [search, setSearch]       = useState('');
+  const [catF,   setCatF]         = useState([]);
+  const [statusF, setStatusF]     = useState([]);
+  const [applied, setApplied]     = useState(null);
+
+  const handleSearch = () => setApplied({ search, catF, statusF });
+  const handleClear  = () => { setSearch(''); setCatF([]); setStatusF([]); setApplied(null); };
+  const appliedCount = applied ? (applied.search ? 1 : 0) + applied.catF.length + applied.statusF.length : 0;
+
+  const CAT_OPTIONS    = ['IELTS','PTE','TOEFL','GERMAN','FRENCH','SPOKEN_ENGLISH','OTHER'];
+  const STATUS_OPTIONS = ['paid','pending'];
+
   const load = () => api.get('/partner/enrollments').then(setEnrollments);
   useEffect(() => {
     load();
     api.get('/partner/students').then(setStudents);
     api.get('/courses').then(setCourses);
   }, []);
+
+  const filtered = enrollments.filter(e => {
+    if (!applied) return true;
+    if (applied.search && !e.student_name?.toLowerCase().includes(applied.search.toLowerCase()) &&
+        !e.course_title?.toLowerCase().includes(applied.search.toLowerCase())) return false;
+    if (applied.catF.length    && !applied.catF.includes(e.category))        return false;
+    if (applied.statusF.length && !applied.statusF.includes(e.payment_status)) return false;
+    return true;
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -211,6 +296,23 @@ function Enrollments({ accent, partnerPhone }) {
         <button className="btn-primary" style={{ background: accent }} onClick={() => setShowForm(!showForm)}>+ Enroll Student</button>
       </div>
       {msg && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-sm">{msg}</div>}
+
+      {/* ── Filter bar ── */}
+      <FilterRow onApply={handleSearch} onClear={handleClear} appliedCount={appliedCount}>
+        <input
+          type="text" placeholder="Search student / course…" value={search}
+          onChange={e => setSearch(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleSearch()}
+          className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 bg-white w-44" />
+        <MultiSelectDropdown label="Category"       options={CAT_OPTIONS}    selected={catF}    onChange={setCatF} />
+        <MultiSelectDropdown label="Payment Status" options={STATUS_OPTIONS} selected={statusF} onChange={setStatusF} />
+        {applied && (
+          <span className="text-[11px] text-slate-400 font-medium">
+            {filtered.length} of {enrollments.length} shown
+          </span>
+        )}
+      </FilterRow>
+
       {showForm && (
         <div className="card mb-6">
           <h3 className="text-sm font-bold text-slate-700 mb-4">New Enrollment</h3>
@@ -246,7 +348,12 @@ function Enrollments({ accent, partnerPhone }) {
           <table>
             <thead><tr><th>Student</th><th>Course</th><th>Category</th><th>Fee</th><th>Discount</th><th>Payment</th><th>Progress</th><th>Enrolled</th><th>Action</th></tr></thead>
             <tbody>
-              {enrollments.map(e => (
+              {filtered.length === 0 && (
+                <tr><td colSpan={9} className="text-center text-slate-400 text-sm py-8">
+                  {applied ? 'No enrollments match your filters.' : 'No enrollments yet.'}
+                </td></tr>
+              )}
+              {filtered.map(e => (
                 <tr key={e.id}>
                   <td className="font-semibold">{e.student_name}</td>
                   <td className="text-xs max-w-40"><div className="truncate font-medium">{e.course_title}</div></td>
@@ -594,76 +701,210 @@ function Coupons({ accent }) {
 }
 
 // ── BRANDING ─────────────────────────────────────────────────
-function Branding({ user, accent, logoUrl, onLogoChange }) {
-  const slug = user?.slug || user?.agency_slug || '';
-  const commRate = user?.commission_rate || 0;
-  const [uploading, setUploading] = useState(false);
-  const [uploadMsg, setUploadMsg] = useState('');
+const FIT_OPTIONS_P = [
+  { value: 'contain', label: 'Contain', desc: 'Show full logo', icon: '⬜' },
+  { value: 'cover',   label: 'Cover',   desc: 'Fill & crop', icon: '🔳' },
+  { value: 'fill',    label: 'Fill',    desc: 'Stretch', icon: '▬' },
+];
+const BG_OPTIONS_P = [
+  { value: 'white',       label: 'White',       desc: 'White background' },
+  { value: 'transparent', label: 'Transparent', desc: 'No background' },
+  { value: 'brand',       label: 'Brand Color', desc: 'Your brand color' },
+  { value: 'light',       label: 'Light Tint',  desc: 'Subtle color wash' },
+];
+const PAD_OPTIONS_P = [{ value:0,label:'None' },{ value:6,label:'Small' },{ value:12,label:'Medium' },{ value:18,label:'Large' }];
+const SHAPE_OPTIONS_P = [
+  { id:'rounded',label:'Rounded' },{ id:'circle',label:'Circle' },{ id:'square',label:'Square' },{ id:'oval',label:'Oval' },
+];
 
-  const handleLogoFile = (e) => {
-    const file = e.target.files[0];
+function Branding({ user, accent, logoUrl, onLogoChange }) {
+  const slug     = user?.slug || user?.agency_slug || '';
+  const commRate = user?.commission_rate || 0;
+  const initials = user?.logo_initials || user?.agency_name?.slice(0,2).toUpperCase() || 'P';
+
+  const [uploading, setUploading] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [dragging, setDragging] = useState(false);
+
+  // Local logo appearance state (loaded from user, editable)
+  const [fit,     setFit]     = useState(user?.logo_fit     || 'contain');
+  const [bg,      setBg]      = useState(user?.logo_bg      || 'white');
+  const [padding, setPadding] = useState(user?.logo_padding != null ? Number(user.logo_padding) : 8);
+  const [shape,   setShape]   = useState(user?.logo_shape   || 'rounded');
+  const [saving,  setSaving]  = useState(false);
+
+  const uploadFile = (file) => {
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) { setUploadMsg('Image must be under 2MB'); return; }
-    setUploading(true); setUploadMsg('');
+    if (file.size > 2 * 1024 * 1024) { setMsg('❌ Image must be under 2 MB'); return; }
+    setUploading(true); setMsg('');
     const reader = new FileReader();
     reader.onload = async (ev) => {
-      const dataUrl = ev.target.result;
       try {
-        const res = await api.post('/partner/logo', { logo_url: dataUrl });
+        const res = await api.post('/partner/logo', { logo_url: ev.target.result });
         onLogoChange(res.logo_url);
-        setUploadMsg('Logo updated!');
-      } catch (err) {
-        setUploadMsg(err.message);
-      } finally { setUploading(false); }
+        setMsg('✅ Logo uploaded!');
+      } catch (e) { setMsg('❌ ' + e.message); }
+      finally { setUploading(false); }
     };
     reader.readAsDataURL(file);
   };
+
+  const saveAppearance = async () => {
+    setSaving(true); setMsg('');
+    try {
+      await api.post('/partner/logo', { logo_fit: fit, logo_bg: bg, logo_padding: padding });
+      setMsg('✅ Appearance saved!');
+      setTimeout(() => setMsg(''), 2500);
+    } catch (e) { setMsg('❌ ' + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const PREVIEW_SIZES = [{ label: 'Sidebar', size: 64 }, { label: 'Nav', size: 40 }, { label: 'Badge', size: 28 }];
 
   return (
     <div>
       <h2 className="text-xl font-black text-slate-900 mb-6">Branding Configuration</h2>
 
-      {/* Logo Upload */}
+      {/* ── Logo Editor ── */}
       <div className="card mb-6">
-        <h3 className="text-sm font-bold text-slate-700 mb-3">Institute Logo</h3>
-        <div className="flex items-center gap-5">
-          <div className="w-20 h-20 rounded-2xl flex items-center justify-center overflow-hidden border-2 border-dashed border-slate-200 flex-shrink-0"
-            style={{ background: accent + '10' }}>
-            {logoUrl
-              ? <img src={logoUrl} alt="logo" className="w-full h-full object-contain p-1" />
-              : <span className="text-2xl font-black text-white w-full h-full flex items-center justify-center rounded-2xl" style={{ background: accent }}>{user?.logo_initials || 'P'}</span>
-            }
+        <h3 className="font-black text-slate-900 mb-1">🖼 Institute Logo</h3>
+        <p className="text-sm text-slate-400 mb-5">PNG or SVG with transparent background works best. Adjust how it looks below.</p>
+
+        {/* Upload drop zone */}
+        <div
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={e => { e.preventDefault(); setDragging(false); uploadFile(e.dataTransfer.files[0]); }}
+          className={`relative rounded-2xl border-2 border-dashed p-6 transition mb-5 flex flex-col items-center gap-3
+            ${dragging ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-blue-300 bg-slate-50/60'}`}>
+
+          {/* Live preview at multiple sizes */}
+          <div className="flex items-end gap-5 mb-1">
+            {PREVIEW_SIZES.map(p => (
+              <div key={p.label} className="flex flex-col items-center gap-1.5">
+                <LogoDisplay logoUrl={logoUrl} fit={fit} bg={bg} padding={padding}
+                  brandColor={accent} initials={initials} shape={shape} size={p.size} />
+                <span className="text-[10px] text-slate-400 font-medium">{p.label}</span>
+              </div>
+            ))}
+            {/* Dark sidebar context preview */}
+            <div className="flex flex-col items-center gap-1.5">
+              <div className="rounded-xl p-2 flex items-center justify-center"
+                style={{ background: accent, width: 64, height: 64 }}>
+                <LogoDisplay logoUrl={logoUrl} fit={fit} bg={bg} padding={padding}
+                  brandColor={accent} initials={initials} shape={shape} size={44} />
+              </div>
+              <span className="text-[10px] text-slate-400 font-medium">On Brand</span>
+            </div>
           </div>
-          <div className="flex-1">
-            <p className="text-sm text-slate-500 mb-3">Upload a PNG, JPG or SVG logo (max 2 MB). It appears in the sidebar and top bar across the entire app.</p>
-            <label className="inline-block cursor-pointer px-4 py-2 rounded-xl text-sm font-bold text-white transition hover:opacity-90"
-              style={{ background: accent }}>
-              {uploading ? 'Uploading…' : logoUrl ? 'Change Logo' : 'Upload Logo'}
-              <input type="file" accept="image/*" className="hidden" onChange={handleLogoFile} disabled={uploading} />
-            </label>
-            {logoUrl && (
-              <button className="ml-2 px-4 py-2 rounded-xl text-sm font-semibold border border-red-200 text-red-500 hover:bg-red-50 transition"
-                onClick={async () => {
-                  await api.post('/partner/logo', { logo_url: '' });
-                  onLogoChange(null); setUploadMsg('Logo removed.');
-                }}>
-                Remove
-              </button>
-            )}
-            {uploadMsg && <p className={`mt-2 text-xs ${uploadMsg.includes('!') ? 'text-emerald-600' : 'text-red-500'}`}>{uploadMsg}</p>}
+
+          <label className={`cursor-pointer px-5 py-2 rounded-xl text-sm font-bold text-white transition hover:opacity-90 ${uploading ? 'opacity-60' : ''}`}
+            style={{ background: accent }}>
+            {uploading ? '⏳ Uploading…' : logoUrl ? '🔄 Change Logo' : '📁 Upload Logo'}
+            <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp"
+              className="hidden" disabled={uploading}
+              onChange={e => uploadFile(e.target.files[0])} />
+          </label>
+          <p className="text-xs text-slate-400">PNG, SVG or JPG · Max 2 MB · Drag & drop supported</p>
+          {logoUrl && (
+            <button onClick={async () => {
+              await api.post('/partner/logo', { logo_url: '' });
+              onLogoChange(null); setMsg('Logo removed.');
+            }} className="text-xs text-red-500 hover:text-red-700 font-semibold underline">
+              Remove logo
+            </button>
+          )}
+        </div>
+
+        {/* Appearance controls */}
+        <div className="space-y-5">
+          {/* Background */}
+          <div>
+            <p className="text-sm font-bold text-slate-700 mb-2">Logo Background</p>
+            <div className="grid grid-cols-2 gap-2">
+              {BG_OPTIONS_P.map(opt => {
+                const preview = opt.value === 'white' ? '#fff' : opt.value === 'brand' ? accent
+                  : opt.value === 'light' ? accent + '1a'
+                  : 'repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 0 0 / 10px 10px';
+                return (
+                  <button key={opt.value} onClick={() => setBg(opt.value)}
+                    className={`flex items-center gap-3 p-3 rounded-xl border-2 text-left transition
+                      ${bg === opt.value ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}>
+                    <div className="w-8 h-8 rounded-lg flex-shrink-0 border border-slate-200" style={{ background: preview }} />
+                    <div>
+                      <p className={`text-xs font-bold ${bg === opt.value ? 'text-blue-700' : 'text-slate-700'}`}>{opt.label}</p>
+                      <p className="text-[10px] text-slate-400">{opt.desc}</p>
+                    </div>
+                    {bg === opt.value && <span className="ml-auto text-blue-600">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
           </div>
+
+          {/* Fit */}
+          <div>
+            <p className="text-sm font-bold text-slate-700 mb-2">Logo Fit</p>
+            <div className="flex gap-2">
+              {FIT_OPTIONS_P.map(opt => (
+                <button key={opt.value} onClick={() => setFit(opt.value)}
+                  className={`flex-1 p-3 rounded-xl border-2 text-center transition
+                    ${fit === opt.value ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}>
+                  <div className="text-base mb-0.5">{opt.icon}</div>
+                  <p className={`text-xs font-bold ${fit === opt.value ? 'text-blue-700' : 'text-slate-700'}`}>{opt.label}</p>
+                  <p className="text-[10px] text-slate-400">{opt.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Padding */}
+          <div>
+            <p className="text-sm font-bold text-slate-700 mb-2">Inner Padding</p>
+            <div className="flex gap-2">
+              {PAD_OPTIONS_P.map(opt => (
+                <button key={opt.value} onClick={() => setPadding(opt.value)}
+                  className={`flex-1 py-2 rounded-xl border-2 text-xs font-bold transition
+                    ${padding === opt.value ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Shape */}
+          <div>
+            <p className="text-sm font-bold text-slate-700 mb-2">Logo Shape</p>
+            <div className="grid grid-cols-4 gap-2">
+              {SHAPE_OPTIONS_P.map(s => (
+                <button key={s.id} onClick={() => setShape(s.id)}
+                  className={`flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition
+                    ${shape === s.id ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}>
+                  <LogoDisplay logoUrl={logoUrl} fit={fit} bg={bg} padding={padding}
+                    brandColor={accent} initials={initials} shape={s.id} size={36} />
+                  <span className={`text-[10px] font-bold ${shape === s.id ? 'text-blue-600' : 'text-slate-500'}`}>{s.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {msg && <p className={`text-sm font-semibold ${msg.includes('✅') ? 'text-emerald-600' : 'text-red-500'}`}>{msg}</p>}
+          <button onClick={saveAppearance} disabled={saving}
+            className="w-full py-2.5 rounded-xl font-black text-white text-sm transition hover:opacity-90 disabled:opacity-50"
+            style={{ background: accent }}>
+            {saving ? 'Saving…' : '💾 Save Logo Appearance'}
+          </button>
         </div>
       </div>
 
+      {/* Agency Profile Card */}
       <div className="card mb-6">
-        <div className="flex items-center gap-4 p-4 rounded-xl mb-6" style={{ background: accent + '10', border: `1px solid ${accent}30` }}>
-          {logoUrl
-            ? <img src={logoUrl} alt="logo" className="w-16 h-16 rounded-2xl object-contain p-1" style={{ background: accent + '20' }} />
-            : <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-black text-white" style={{ background: accent }}>{user?.logo_initials}</div>
-          }
+        <div className="flex items-center gap-4 p-4 rounded-xl mb-5" style={{ background: accent + '10', border: `1px solid ${accent}30` }}>
+          <LogoDisplay logoUrl={logoUrl} fit={fit} bg={bg} padding={padding}
+            brandColor={accent} initials={initials} shape={shape} size={64} />
           <div>
             <div className="text-xl font-black text-slate-900">{user?.agency_name}</div>
-            <div className="text-sm font-mono" style={{ color: accent }}>testprep.com/{slug}</div>
+            <div className="text-sm font-mono" style={{ color: accent }}>{window.location.hostname}/{slug}</div>
             <div className="text-sm text-slate-400 mt-1">{user?.agency_email}</div>
           </div>
         </div>
@@ -825,7 +1066,7 @@ function PartnerPaymentConfig({ accent }) {
 function SignupLinkBox({ slug, accent, agencyName }) {
   const [copied, setCopied] = useState(false);
   const base = window.location.origin;
-  const signupUrl = `${base}/${slug}/signup`;
+  const signupUrl = `${base}/${slug}`;
   const shareMsg = `Take the first step toward your dream career today.\n👉 Sign up / log in to our online coaching academy and get started instantly.\n🚀 Learn, grow, and achieve your goals with ${agencyName || 'our Academy'}\n🔗 Click here to begin: ${signupUrl}`;
   const copy = () => { navigator.clipboard.writeText(signupUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); };
   const shareWA = () => window.open(`https://wa.me/?text=${encodeURIComponent(shareMsg)}`, '_blank');
@@ -1910,6 +2151,270 @@ function StudentProgressOverview({ accent }) {
   );
 }
 
+// ── DATA PRIVACY AUDIT ───────────────────────────────────────
+function DataPrivacyAudit({ accent }) {
+  const [data, setData]         = useState(null);
+  const [flaggedOnly, setFO]    = useState(false);
+  const load = (fo) => api.get(`/admin/contact-audit${fo ? '?flagged_only=1' : ''}`).then(setData).catch(() => {});
+  useEffect(() => { load(false); }, []);
+
+  const fmtDT = (s) => {
+    const d = new Date(s.slice(0, 19));
+    return d.toLocaleDateString('en-IN', { day:'2-digit', month:'short' }) + ' ' +
+           d.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12:true });
+  };
+  const actionIcon = { reveal: '👁', call: '📞', email: '📧', whatsapp: '💬' };
+  const stats = data?.stats || {};
+  const logs  = data?.logs  || [];
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-xl font-black text-slate-900">🔒 Your Data Privacy Audit</h2>
+          <p className="text-sm text-slate-500 mt-0.5">Every time anyone on the platform views your students' contact details — you see it here.</p>
+        </div>
+        <button onClick={() => { const f = !flaggedOnly; setFO(f); load(f); }}
+          className={`text-xs font-bold px-4 py-2 rounded-xl border transition-all ${flaggedOnly ? 'bg-red-600 text-white border-red-600' : 'bg-white text-slate-600 border-slate-200 hover:border-red-300'}`}>
+          {flaggedOnly ? '🚨 Flagged Only' : 'All Access'} {stats.flagged > 0 && <span className="ml-1 bg-red-100 text-red-700 px-1.5 rounded-full text-[10px] font-black">{stats.flagged}</span>}
+        </button>
+      </div>
+
+      {/* Trust banner */}
+      <div className="mb-5 rounded-2xl overflow-hidden">
+        <div className="p-5 flex gap-4 items-start"
+          style={{ background: `linear-gradient(135deg, ${accent}15 0%, ${accent}08 100%)`, border: `1px solid ${accent}30` }}>
+          <span className="text-3xl flex-shrink-0">🛡️</span>
+          <div className="flex-1">
+            <p className="font-black text-slate-900 text-base mb-1">Your Student Data is 100% Protected</p>
+            <p className="text-slate-600 text-sm leading-relaxed mb-3">
+              Contact details (phone &amp; email) are <strong>masked everywhere</strong> on this platform. Nobody can see them without it being permanently logged below — including the platform team itself.
+              This is a first-of-its-kind data privacy guarantee in EdTech.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {[
+                ['🎨 White-Label', 'Your brand everywhere'],
+                ['🔒 Contact Masking', 'All access is audited'],
+                ['⚡ Instant Payments', 'UPI · QR · Link'],
+                ['📊 Live Analytics', 'Real-time dashboards'],
+              ].map(([title, sub]) => (
+                <div key={title} className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 shadow-sm border border-slate-100">
+                  <span className="text-xs font-bold text-slate-800">{title}</span>
+                  <span className="text-[10px] text-slate-400">{sub}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
+        {[['👁 Reveals', stats.reveals||0], ['📞 Calls', stats.calls||0], ['📧 Emails', stats.emails||0], ['💬 WhatsApp', stats.whatsapps||0], ['Today', stats.today||0], ['🚨 Flagged', stats.flagged||0, true]].map(([lbl, val, red]) => (
+          <div key={lbl} className="stat-card text-center" style={red && val>0 ? {borderColor:'#fca5a5',background:'#fff1f2'} : {}}>
+            <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">{lbl}</p>
+            <p className={`text-xl font-black ${red && val>0 ? 'text-red-600' : 'text-slate-900'}`}>{val}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="card">
+        <h3 className="text-sm font-bold text-slate-700 mb-3">Contact Access Log — your students only</h3>
+        {!data ? <div className="text-slate-400 text-sm py-4">Loading…</div> : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Action</th><th>Accessed By</th><th>Role</th><th>Your Student</th><th>Time</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                {logs.length === 0 && <tr><td colSpan={6} className="text-center text-slate-400 py-8 text-sm">No contact access events yet — your data is safe!</td></tr>}
+                {logs.map(l => (
+                  <tr key={l.id} className={l.is_flagged ? 'bg-red-50' : ''}>
+                    <td><span className="text-lg">{actionIcon[l.action_type]||'👁'}</span><span className="text-xs text-slate-500 ml-1">{l.action_type}</span></td>
+                    <td>
+                      <div className="font-semibold text-sm">{l.viewer_name}</div>
+                      <div className="text-[10px] text-slate-400 font-mono">{l.viewer_ip}</div>
+                    </td>
+                    <td><span className={`badge ${l.viewer_role === 'super_admin' ? 'badge-red' : 'badge-blue'}`}>{l.viewer_role?.replace('_',' ')}</span></td>
+                    <td className="font-medium text-sm">{l.target_student_name}</td>
+                    <td className="text-xs text-slate-400 whitespace-nowrap">{fmtDT(l.created_at)}</td>
+                    <td>
+                      {l.is_flagged
+                        ? <div><span className="badge badge-red">🚨 Flagged</span><div className="text-[10px] text-red-600 mt-0.5">{l.flag_reason}</div></div>
+                        : <span className="badge badge-green">✅ Normal</span>
+                      }
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── HELP & SUPPORT (Partner) ─────────────────────────────────
+const DEPT_META_P = [
+  { id:'account_manager', icon:'👤', label:'Account Manager',  color:'#3b82f6', bg:'#eff6ff' },
+  { id:'commission',      icon:'💰', label:'Commission Team',   color:'#f59e0b', bg:'#fffbeb' },
+  { id:'academic',        icon:'🎓', label:'Academic Support',  color:'#10b981', bg:'#f0fdf4' },
+  { id:'tech',            icon:'⚙️', label:'Tech Support',      color:'#8b5cf6', bg:'#f5f3ff' },
+];
+const STATUS_COLORS_P = {
+  open:        { label:'Open',        color:'#ef4444', bg:'#fef2f2' },
+  in_progress: { label:'In Progress', color:'#f59e0b', bg:'#fffbeb' },
+  resolved:    { label:'Resolved',    color:'#10b981', bg:'#f0fdf4' },
+  closed:      { label:'Closed',      color:'#64748b', bg:'#f8fafc' },
+};
+
+function PartnerSupport({ accent, user }) {
+  const [tab, setTab]           = useState('contacts');
+  const [contacts, setContacts] = useState([]);
+  const [tickets, setTickets]   = useState([]);
+  const [form, setForm]         = useState({ department:'general', subject:'', message:'' });
+  const [submitting, setSubmitting] = useState(false);
+  const [submitMsg, setSubmitMsg]   = useState('');
+
+  useEffect(() => { api.get('/support/contacts').then(setContacts).catch(() => {}); }, []);
+  useEffect(() => { if (tab==='tickets') api.get('/support/tickets/mine').then(setTickets).catch(() => {}); }, [tab]);
+
+  const submitTicket = async (e) => {
+    e.preventDefault();
+    setSubmitting(true); setSubmitMsg('');
+    try {
+      const r = await api.post('/support/tickets', form);
+      setSubmitMsg(`✅ Ticket submitted! Reference: ${r.ticket_no}`);
+      setForm({ department:'general', subject:'', message:'' });
+      setTimeout(() => setSubmitMsg(''), 5000);
+    } catch (e) { setSubmitMsg('❌ ' + e.message); }
+    finally { setSubmitting(false); }
+  };
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex items-center gap-3 mb-2">
+        <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl" style={{ background: accent + '22', color: accent }}>🎧</div>
+        <div>
+          <h2 className="text-xl font-black text-slate-900">Help & Support</h2>
+          <p className="text-xs text-slate-500">Contact our team or raise a support ticket</p>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-2">
+        {[['contacts','📋 Contact Details'],['submit','✉️ Submit Query'],['tickets','🎫 My Tickets']].map(([t,l]) => (
+          <button key={t} onClick={() => setTab(t)}
+            className="px-4 py-2 rounded-xl text-sm font-bold transition"
+            style={tab===t ? {background:accent, color:'#fff'} : {background:'#f1f5f9',color:'#475569'}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* Contact Details */}
+      {tab === 'contacts' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {DEPT_META_P.map(d => {
+            const c = contacts.find(x => x.department === d.id) || {};
+            return (
+              <div key={d.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg" style={{ background: d.bg, color: d.color }}>{d.icon}</div>
+                  <div>
+                    <p className="font-black text-slate-900 text-sm">{d.label}</p>
+                    {c.working_hours && <p className="text-xs text-slate-400">🕐 {c.working_hours}</p>}
+                  </div>
+                </div>
+                <div className="space-y-1.5 text-sm">
+                  {c.contact_name && <p className="font-semibold text-slate-800">👤 {c.contact_name}</p>}
+                  {c.email && <a href={`mailto:${c.email}`} className="flex items-center gap-1.5 text-blue-600 hover:underline font-medium">📧 {c.email}</a>}
+                  {c.phone && <p className="text-slate-700">📞 {c.phone}</p>}
+                  {c.whatsapp && <a href={`https://wa.me/${c.whatsapp.replace(/\D/g,'')}`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-emerald-600 hover:underline font-medium">💬 {c.whatsapp}</a>}
+                  {c.notes && <p className="text-xs text-slate-500 italic mt-2 border-t border-slate-100 pt-2">{c.notes}</p>}
+                  {!c.email && !c.phone && !c.contact_name && <p className="text-xs text-slate-400 italic">Contact details not set yet.</p>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Submit Query */}
+      {tab === 'submit' && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-2xl">
+          <h3 className="font-black text-slate-900 mb-4">✉️ Submit a Support Query</h3>
+          <form onSubmit={submitTicket} className="space-y-4">
+            <div>
+              <label className="label">Department</label>
+              <select value={form.department} onChange={e => setForm(f=>({...f,department:e.target.value}))}>
+                <option value="general">General</option>
+                {DEPT_META_P.map(d => <option key={d.id} value={d.id}>{d.icon} {d.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Subject</label>
+              <input required value={form.subject} onChange={e => setForm(f=>({...f,subject:e.target.value}))}
+                placeholder="Brief description of your query" />
+            </div>
+            <div>
+              <label className="label">Message</label>
+              <textarea required rows={5} value={form.message}
+                onChange={e => setForm(f=>({...f,message:e.target.value}))}
+                placeholder={`Agency: ${user?.agency_name || ''}\n\nDescribe your query in detail…`}
+                className="w-full" />
+            </div>
+            {submitMsg && <p className={`text-sm font-semibold ${submitMsg.startsWith('✅') ? 'text-emerald-600' : 'text-red-600'}`}>{submitMsg}</p>}
+            <button type="submit" disabled={submitting} className="btn-primary"
+              style={{'--btn-bg': accent}}>
+              {submitting ? 'Submitting…' : '📨 Submit Query'}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* My Tickets */}
+      {tab === 'tickets' && (
+        <div className="space-y-3">
+          {tickets.length === 0 ? (
+            <div className="text-center py-16 text-slate-400 bg-white rounded-2xl border border-slate-200">
+              <p className="text-4xl mb-3">🎫</p>
+              <p className="font-bold">No tickets yet</p>
+              <p className="text-sm">Submit a query to see it here</p>
+            </div>
+          ) : tickets.map(t => {
+            const sm = STATUS_COLORS_P[t.status] || STATUS_COLORS_P.open;
+            const dm = DEPT_META_P.find(d=>d.id===t.department);
+            return (
+              <div key={t.id} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className="text-xs font-mono font-bold text-slate-400">{t.ticket_no}</span>
+                      <span className="px-2 py-0.5 rounded-full text-xs font-bold" style={{ background: sm.bg, color: sm.color }}>{sm.label}</span>
+                      {dm && <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background: dm.bg, color: dm.color }}>{dm.icon} {dm.label}</span>}
+                    </div>
+                    <p className="font-black text-slate-900 text-sm">{t.subject}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{new Date(t.created_at).toLocaleDateString('en-IN')}</p>
+                    <p className="text-xs text-slate-600 mt-1 line-clamp-2">{t.message}</p>
+                    {t.admin_reply && (
+                      <div className="mt-2 p-2.5 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-800">
+                        <span className="font-bold">Reply from Admin:</span> {t.admin_reply}
+                        {t.admin_replied_at && <span className="text-blue-400 ml-2">· {new Date(t.admin_replied_at).toLocaleDateString('en-IN')}</span>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MAIN ─────────────────────────────────────────────────────
 const ALL_SECTIONS = [
   { id: 'overview', icon: '📊', label: 'Overview' },
@@ -1927,6 +2432,8 @@ const ALL_SECTIONS = [
   { id: 'branding', icon: '🎨', label: 'Branding' },
   { id: 'agencyprofile', icon: '🏢', label: 'Agency Profile' },
   { id: 'paymentconfig', icon: '💳', label: 'Payment Config' },
+  { id: 'dataprivacy',   icon: '🔒', label: 'Data Privacy' },
+  { id: 'support',       icon: '🎧', label: 'Help & Support' },
 ];
 
 async function extractDominantColor(src) {
@@ -2021,6 +2528,8 @@ export default function PartnerDashboard() {
     branding: <Branding user={user} accent={accent} logoUrl={logoUrl} onLogoChange={setLogoUrl} />,
     agencyprofile: <AgencyProfile accent={accent} user={user} />,
     paymentconfig: <PartnerPaymentConfig accent={accent} />,
+    dataprivacy:   <DataPrivacyAudit accent={accent} />,
+    support:       <PartnerSupport accent={accent} user={user} />,
   };
 
   // Logo shape + size
@@ -2031,10 +2540,18 @@ export default function PartnerDashboard() {
   const nameColor = layoutType === 2 ? 'text-slate-800 font-black text-base' : 'text-white font-bold text-sm';
   const subColor = layoutType === 2 ? 'text-slate-400' : 'text-white/50';
 
+  const signupUrl = `${window.location.origin}/${slug}`;
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(signupUrl).then(() => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    });
+  };
+
   const shareLink = () => {
-    const base = window.location.origin;
-    const url = `${base}/${slug}/signup`;
-    const msg = `Take the first step toward your dream career today.\n👉 Sign up / log in to our online coaching academy and get started instantly.\n🚀 Learn, grow, and achieve your goals with ${user?.agency_name || 'us'}\n🔗 Click here to begin: ${url}`;
+    const msg = `🎓 Join ${user?.agency_name || 'our academy'} and kickstart your exam prep!\n\nEnrol now 👇\n${signupUrl}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
@@ -2049,19 +2566,34 @@ export default function PartnerDashboard() {
         logo: (
           <div>
             {/* Logo with shape */}
-            <div style={{ width: logoPx, height: logoPx, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 10, flexShrink: 0, ...logoShapeSt, ...logoBorder }}>
-              {logoUrl
-                ? <img src={logoUrl} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 4 }} />
-                : <span style={{ fontWeight: 900, fontSize: 20, color: layoutType === 2 ? accent : 'white' }}>{user?.logo_initials || 'P'}</span>
-              }
+            <div style={{ marginBottom: 10 }}>
+              <LogoDisplay
+                logoUrl={logoUrl}
+                fit={user?.logo_fit || 'contain'}
+                bg={user?.logo_bg || 'white'}
+                padding={user?.logo_padding != null ? Number(user.logo_padding) : 8}
+                brandColor={accent}
+                initials={user?.logo_initials || user?.agency_name?.slice(0,2).toUpperCase() || 'P'}
+                shape={user?.logo_shape || 'rounded'}
+                size={logoPx}
+              />
             </div>
             <div className={`font-bold truncate mb-0.5 ${nameColor}`}>{user?.agency_name}</div>
-            <div className={`text-xs font-mono mb-2 ${subColor}`}>{window.location.hostname}/{slug}</div>
-            <button onClick={shareLink}
-              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold transition hover:opacity-90"
-              style={{ background: 'rgba(37,211,102,0.9)', color: '#fff' }}>
-              📱 Share My Link
-            </button>
+            <div className={`text-xs font-mono mb-1.5 ${subColor}`}>{window.location.hostname}/{slug}</div>
+            {/* Copy + Share buttons */}
+            <div className="flex gap-1.5 w-full">
+              <button onClick={copyLink}
+                className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-bold transition"
+                style={{ background: linkCopied ? 'rgba(22,163,74,0.9)' : 'rgba(255,255,255,0.18)', color: '#fff' }}>
+                {linkCopied ? '✅ Copied!' : '🔗 Copy Link'}
+              </button>
+              <button onClick={shareLink}
+                className="flex items-center justify-center px-2.5 py-1.5 rounded-lg text-xs font-bold transition"
+                style={{ background: 'rgba(37,211,102,0.85)', color: '#fff' }}
+                title="Share via WhatsApp">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+              </button>
+            </div>
           </div>
         ),
         items: SECTIONS.map(s => (

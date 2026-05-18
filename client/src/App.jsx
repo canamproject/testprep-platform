@@ -10,6 +10,7 @@ import StudentDashboard from './pages/student/StudentDashboard';
 import FacultyDashboard from './pages/faculty/FacultyDashboard';
 import LiveClassRoom from './pages/LiveClassRoom';
 import PublicLiveClass from './pages/PublicLiveClass';
+import StudentLandingPage from './pages/StudentLandingPage';
 
 function studentHome(user) {
   const slug = user?.slug || user?.agency_slug;
@@ -49,6 +50,12 @@ function TenantSignup() {
   return <Login tenantSlug={slug} defaultMode="signup" />;
 }
 
+// Landing page for /:slug — shows agency branding, courses, sign in/up buttons
+function TenantLanding() {
+  const { slug } = useParams();
+  return <StudentLandingPage tenantSlug={slug} />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -84,10 +91,10 @@ export default function App() {
           <Route path="/agent/:slug/login" element={<TenantEntry />} />
           <Route path="/agent/:slug/signup" element={<TenantSignup />} />
 
-          {/* Clean partner URLs: /:slug, /:slug/login, /:slug/signup */}
+          {/* Clean partner URLs: /:slug shows landing page, /login and /signup go to auth */}
           <Route path="/:slug/login" element={<TenantEntry />} />
           <Route path="/:slug/signup" element={<TenantSignup />} />
-          <Route path="/:slug" element={<TenantEntry />} />
+          <Route path="/:slug" element={<TenantLanding />} />
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
