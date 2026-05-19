@@ -1216,13 +1216,17 @@ function EnrollStudentModal({ batch, accent, students, onClose, onSuccess }) {
           <div>
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-2">Access Type</label>
             <div className="flex gap-3">
-              {[['full', 'Full'], ['demo', 'Demo'], ['trial', 'Trial']].map(([v, l]) => (
-                <label key={v} className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer transition flex-1 justify-center text-sm font-bold
+              {[
+                { v: 'full', l: '✅ Full', desc: 'Permanent enrolled access' },
+                { v: 'demo', l: '🎯 Demo', desc: 'Full trial access to all classes' },
+              ].map(({ v, l, desc }) => (
+                <label key={v} className={`flex flex-col items-center gap-1 px-4 py-3 rounded-xl border-2 cursor-pointer transition flex-1 justify-center text-sm font-bold
                   ${accessType === v ? 'border-current text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
                   style={accessType === v ? { background: accent, borderColor: accent } : {}}>
                   <input type="radio" name="access_type" value={v} checked={accessType === v}
                     onChange={() => setAccessType(v)} className="hidden" />
-                  {l}
+                  <span>{l}</span>
+                  <span className={`text-[10px] font-medium leading-tight text-center ${accessType === v ? 'text-white/80' : 'text-slate-400'}`}>{desc}</span>
                 </label>
               ))}
             </div>

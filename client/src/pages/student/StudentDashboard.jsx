@@ -510,29 +510,10 @@ function LiveClassLink({ batchId, accent, classTime, accessType }) {
   if (loading) return null;
   if (!info) return null;
 
-  // Non-enrolled students show nothing here (they join via enrollment)
-  // accessType: 'full' | 'trial' | 'demo' — if undefined treat as full (legacy)
-  const isDemo = accessType === 'demo';
-  const isEnrolled = !isDemo; // full or trial
+  // Demo = full trial access (no restriction), same as full/trial enrolled
+  // accessType: 'full' | 'trial' | 'demo' — all get the same green join button
 
   if (info.available) {
-    if (isDemo) {
-      return (
-        <>
-          <button
-            onClick={() => setShowDemoModal(true)}
-            className="mt-3 flex items-center justify-center gap-2 w-full py-2.5 rounded-xl font-black text-white text-sm transition hover:opacity-90 shadow-sm"
-            style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
-            <span className="w-2 h-2 rounded-full bg-white inline-block" />
-            🎯 Join Demo (5 min)
-          </button>
-          {showDemoModal && (
-            <DemoJoinModal link={info.link} onClose={() => setShowDemoModal(false)} />
-          )}
-        </>
-      );
-    }
-    // Full / trial enrolled students
     return (
       <a
         href={info.link}
