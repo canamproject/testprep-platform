@@ -1606,12 +1606,10 @@ export default function StudentProgress({ initialTab = 'plan', accent = '#1e40af
   const loadProgress = useCallback(async () => {
     setLoading(true);
     try {
-      const [prog, hist, attDetail] = await Promise.all([
-        api.get('/student/progress'),
-        api.get('/student/tests/history'),
-        api.get('/student/my-attendance').catch(() => ({})),
-      ]);
-      setProgress({ ...prog, testHistory: hist, ...attDetail });
+      // Single request — server now returns testHistory, dailyActivity,
+      // batchBreakdown and dailyTests all in one parallelised query batch
+      const prog = await api.get('/student/progress');
+      setProgress(prog);
     } catch (e) { console.error(e); }
     setLoading(false);
   }, []);
@@ -1619,11 +1617,18 @@ export default function StudentProgress({ initialTab = 'plan', accent = '#1e40af
   useEffect(() => { loadProgress(); }, [loadProgress]);
 
   if (loading) return (
-    <div className="flex items-center justify-center py-20">
-      <div className="text-center">
-        <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-3" />
-        <p className="text-slate-400 text-sm">Loading your progress...</p>
+    <div className="space-y-4 animate-pulse">
+      {/* Tabs skeleton */}
+      <div className="flex gap-2 mb-2">
+        {[...Array(4)].map((_,i) => <div key={i} className="h-9 w-24 rounded-xl bg-slate-200" style={{ animationDelay:`${i*50}ms` }} />)}
       </div>
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[...Array(4)].map((_,i) => <div key={i} className="h-20 rounded-2xl bg-slate-100" />)}
+      </div>
+      {/* Chart area */}
+      <div className="h-48 rounded-2xl bg-slate-100" />
+      <div className="h-32 rounded-2xl bg-slate-100" />
     </div>
   );
 

@@ -912,8 +912,6 @@ app.get('/api/public/:slug/batches', async (req, res) => {
       [req.params.slug]
     );
     if (!agency) return res.json([]);
-    const [rows] = await getPool().query(
-    if (!agency) return res.json([]);
 
     // Respect batch access control
     let batchWhere = 'b.agency_id=? AND b.status=\'active\'';
@@ -2598,6 +2596,59 @@ app.get('/api/student/today-live-link/:batchId', authMiddleware(['student']), as
   }
 });
 
+// ─── STUDENT: BULK TODAY-LIVE-LINKS (eliminates N+1) ──────────
+// Returns { [batchId]: { available, link, is_live, starts_at, starts_today, next_class } }
+app.get('/api/student/today-live-links', authMiddleware(['student']), async (req, res) => {
+  try {
+    const [batches] = await getPool().query(`
+      SELECT b.id, b.class_time, b.schedule_days, b.duration_minutes,
+             b.jitsi_room_prefix, b.jitsi_meeting_id
+      FROM batch_enrollments be
+      JOIN batches b ON be.batch_id = b.id
+      WHERE be.student_id = ? AND be.status = 'active' AND b.status = 'active'
+    `, [req.user.id]);
+
+    const now = new Date();
+    const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const todayDay = dayNames[now.getDay()];
+    const todayStr = now.toISOString().split('T')[0];
+
+    const result = {};
+    for (const batch of batches) {
+      const scheduledDays = (batch.schedule_days || 'Mon,Tue,Wed,Thu,Fri').split(',').map(d => d.trim());
+      const isScheduledToday = scheduledDays.includes(todayDay);
+      const [classHour, classMin] = (batch.class_time || '09:00').split(':').map(Number);
+      const classDateTime = new Date(now);
+      classDateTime.setHours(classHour, classMin, 0, 0);
+      const msUntilClass = classDateTime - now;
+      const minUntilClass = msUntilClass / 60000;
+      const classEndMs = classDateTime.getTime() + (batch.duration_minutes || 60) * 60000;
+      const isLiveNow = now.getTime() >= classDateTime.getTime() && now.getTime() < classEndMs;
+      const isWithin60Min = minUntilClass >= 0 && minUntilClass <= 60;
+      const jitsiPrefix = batch.jitsi_room_prefix || batch.jitsi_meeting_id?.split('-')[0] || 'class';
+      const jitsiUrl = `https://meet.jit.si/${jitsiPrefix}-${todayStr}`;
+
+      if (isScheduledToday && (isLiveNow || isWithin60Min)) {
+        result[batch.id] = { available: true, link: jitsiUrl, starts_at: classDateTime.toISOString(), is_live: isLiveNow };
+      } else {
+        let nextClassDate = null;
+        for (let i = 1; i <= 7; i++) {
+          const d = new Date(now); d.setDate(d.getDate() + i);
+          if (scheduledDays.includes(dayNames[d.getDay()])) {
+            d.setHours(classHour, classMin, 0, 0); nextClassDate = d; break;
+          }
+        }
+        if (isScheduledToday && minUntilClass > 60) {
+          result[batch.id] = { available: false, starts_at: classDateTime.toISOString(), starts_today: true, next_class: classDateTime.toISOString() };
+        } else {
+          result[batch.id] = { available: false, starts_at: nextClassDate?.toISOString() || null, starts_today: false, next_class: nextClassDate?.toISOString() || null };
+        }
+      }
+    }
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── PARTNER: STUDENT SELF-PURCHASES ──────────────────────────
 app.get('/api/partner/purchases', authMiddleware(['partner_admin']), async (req, res) => {
   try {
@@ -3779,91 +3830,140 @@ app.get('/api/student/tests/history', authMiddleware(['student']), async (req, r
 app.get('/api/student/progress', authMiddleware(['student']), async (req, res) => {
   const sid = req.user.id;
   try {
-    const [[attStats]] = await getPool().query(`
-      SELECT COUNT(*) as total_classes,
-        SUM(CASE WHEN ca.attendance_status='present' THEN 1 ELSE 0 END) as attended,
-        AVG(ca.time_in_class_percent) as avg_duration_pct,
-        COALESCE(SUM(ca.duration_seconds),0) as total_seconds
-      FROM class_attendance ca
-      JOIN live_classes lc ON ca.live_class_id = lc.id
-      WHERE ca.student_id=?`, [sid]);
+    // Run ALL queries in parallel — eliminates sequential latency (~6-10 round trips → 1)
+    const [
+      [[attStats]],
+      [testScores],
+      [recentAttempts],
+      [weeklyProgress],
+      [[target]],
+      [enrolledCourses],
+      [recentClasses],
+      [testHistory],
+      [dailyActivity],
+      [batchBreakdown],
+      [dailyTests],
+    ] = await Promise.all([
+      getPool().query(`
+        SELECT COUNT(*) as total_classes,
+          SUM(CASE WHEN ca.attendance_status='present' THEN 1 ELSE 0 END) as attended,
+          AVG(ca.time_in_class_percent) as avg_duration_pct,
+          COALESCE(SUM(ca.duration_seconds),0) as total_seconds
+        FROM class_attendance ca
+        JOIN live_classes lc ON ca.live_class_id = lc.id
+        WHERE ca.student_id=?`, [sid]),
 
-    const [testScores] = await getPool().query(`
-      SELECT module_name, exam_type, ROUND(AVG(score_percent),1) as avg_score,
-             MAX(score_percent) as best_score, COUNT(*) as attempts, MAX(created_at) as last_attempt
-      FROM test_attempts WHERE student_id=?
-      GROUP BY module_name, exam_type ORDER BY last_attempt DESC`, [sid]);
+      getPool().query(`
+        SELECT module_name, exam_type, ROUND(AVG(score_percent),1) as avg_score,
+               MAX(score_percent) as best_score, COUNT(*) as attempts, MAX(created_at) as last_attempt
+        FROM test_attempts WHERE student_id=?
+        GROUP BY module_name, exam_type ORDER BY last_attempt DESC`, [sid]),
 
-    const [recentAttempts] = await getPool().query(
-      'SELECT id, exam_type, module_name, test_type, score_percent, band_score, total_questions, correct_answers, time_taken_seconds, created_at FROM test_attempts WHERE student_id=? ORDER BY created_at DESC LIMIT 30',
-      [sid]);
+      getPool().query(
+        'SELECT id, exam_type, module_name, test_type, score_percent, band_score, total_questions, correct_answers, time_taken_seconds, created_at FROM test_attempts WHERE student_id=? ORDER BY created_at DESC LIMIT 30',
+        [sid]),
 
-    const [weeklyProgress] = await getPool().query(`
-      SELECT YEAR(created_at) yr, WEEK(created_at) wk,
-        ROUND(AVG(score_percent),1) avg_score, COUNT(*) tests_taken, MIN(created_at) week_start
-      FROM test_attempts WHERE student_id=? AND created_at >= DATE_SUB(NOW(), INTERVAL 10 WEEK)
-      GROUP BY YEAR(created_at), WEEK(created_at) ORDER BY yr, wk`, [sid]);
+      getPool().query(`
+        SELECT YEAR(created_at) yr, WEEK(created_at) wk,
+          ROUND(AVG(score_percent),1) avg_score, COUNT(*) tests_taken, MIN(created_at) week_start
+        FROM test_attempts WHERE student_id=? AND created_at >= DATE_SUB(NOW(), INTERVAL 10 WEEK)
+        GROUP BY YEAR(created_at), WEEK(created_at) ORDER BY yr, wk`, [sid]),
 
-    const [[target]] = await getPool().query('SELECT * FROM student_targets WHERE student_id=?', [sid]);
+      getPool().query('SELECT * FROM student_targets WHERE student_id=?', [sid]),
 
-    const [enrolledCourses] = await getPool().query(`
-      SELECT e.id, e.status, c.title, c.category, c.id as course_id
-      FROM enrollments e JOIN courses c ON e.course_id = c.id
-      WHERE e.student_id=? AND e.status='active'`, [sid]);
+      getPool().query(`
+        SELECT e.id, e.status, c.title, c.category, c.id as course_id
+        FROM enrollments e JOIN courses c ON e.course_id = c.id
+        WHERE e.student_id=? AND e.status='active'`, [sid]),
 
-    const [recentClasses] = await getPool().query(`
-      SELECT lc.title, lc.scheduled_at, lc.platform, ca.attendance_status, ca.duration_seconds, ca.time_in_class_percent
-      FROM class_attendance ca
-      JOIN live_classes lc ON ca.live_class_id = lc.id
-      WHERE ca.student_id=? ORDER BY lc.scheduled_at DESC LIMIT 20`, [sid]);
+      getPool().query(`
+        SELECT lc.title, lc.scheduled_at, lc.platform, ca.attendance_status, ca.duration_seconds, ca.time_in_class_percent
+        FROM class_attendance ca
+        JOIN live_classes lc ON ca.live_class_id = lc.id
+        WHERE ca.student_id=? ORDER BY lc.scheduled_at DESC LIMIT 20`, [sid]),
 
-    res.json({ attendance: attStats, testScores, recentAttempts, weeklyProgress, target, enrolledCourses, recentClasses });
+      // test history (merged from /student/tests/history)
+      getPool().query(
+        'SELECT * FROM test_attempts WHERE student_id=? ORDER BY created_at DESC LIMIT 100',
+        [sid]),
+
+      // daily activity last 30 days (merged from /student/my-attendance)
+      getPool().query(`
+        SELECT DATE(lc.scheduled_at) as date,
+          ROUND(SUM(ca.duration_seconds) / 60) as minutes,
+          COUNT(*) as classes
+        FROM class_attendance ca
+        JOIN live_classes lc ON ca.live_class_id = lc.id
+        WHERE ca.student_id = ?
+          AND ca.attendance_status = 'present'
+          AND lc.scheduled_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        GROUP BY DATE(lc.scheduled_at)
+        ORDER BY date ASC`, [sid]),
+
+      // per-batch breakdown (merged from /student/my-attendance)
+      getPool().query(`
+        SELECT b.id as batch_id, b.name as batch_name, c.title as course_title,
+          b.start_date, b.end_date,
+          COUNT(DISTINCT lc.id) as total_classes,
+          COUNT(DISTINCT CASE WHEN ca2.attendance_status='present' THEN lc.id END) as attended,
+          COALESCE(SUM(ca2.duration_seconds), 0) as total_seconds
+        FROM batch_enrollments be
+        JOIN batches b ON be.batch_id = b.id
+        JOIN courses c ON b.course_id = c.id
+        LEFT JOIN live_classes lc ON lc.batch_id = b.id AND lc.status = 'ended'
+        LEFT JOIN class_attendance ca2 ON ca2.live_class_id = lc.id AND ca2.student_id = ?
+        WHERE be.student_id = ? AND be.status = 'active'
+        GROUP BY b.id
+        ORDER BY b.start_date DESC`, [sid, sid]),
+
+      // daily tests last 30 days (merged from /student/my-attendance)
+      getPool().query(`
+        SELECT DATE(created_at) as date, COUNT(*) as tests_taken,
+          ROUND(AVG(score_percent), 1) as avg_score
+        FROM test_attempts
+        WHERE student_id = ?
+          AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC`, [sid]),
+    ]);
+
+    res.json({
+      attendance: attStats, testScores, recentAttempts, weeklyProgress,
+      target, enrolledCourses, recentClasses,
+      // merged fields (previously separate endpoints)
+      testHistory, dailyActivity, batchBreakdown, dailyTests,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// STUDENT: daily activity + per-batch attendance breakdown (last 30 days)
+// STUDENT: daily activity — kept for backwards compat, now delegates to /progress data
 app.get('/api/student/my-attendance', authMiddleware(['student']), async (req, res) => {
   const sid = req.user.id;
   try {
-    // Daily time in class for last 30 days
-    const [dailyActivity] = await getPool().query(`
-      SELECT DATE(lc.scheduled_at) as date,
-        ROUND(SUM(ca.duration_seconds) / 60) as minutes,
-        COUNT(*) as classes
-      FROM class_attendance ca
-      JOIN live_classes lc ON ca.live_class_id = lc.id
-      WHERE ca.student_id = ?
-        AND ca.attendance_status = 'present'
-        AND lc.scheduled_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-      GROUP BY DATE(lc.scheduled_at)
-      ORDER BY date ASC`, [sid]);
-
-    // Per-batch breakdown
-    const [batchBreakdown] = await getPool().query(`
-      SELECT b.id as batch_id, b.name as batch_name, c.title as course_title,
-        b.start_date, b.end_date,
-        COUNT(DISTINCT lc.id) as total_classes,
-        COUNT(DISTINCT CASE WHEN ca2.attendance_status='present' THEN lc.id END) as attended,
-        COALESCE(SUM(ca2.duration_seconds), 0) as total_seconds
-      FROM batch_enrollments be
-      JOIN batches b ON be.batch_id = b.id
-      JOIN courses c ON b.course_id = c.id
-      LEFT JOIN live_classes lc ON lc.batch_id = b.id AND lc.status = 'ended'
-      LEFT JOIN class_attendance ca2 ON ca2.live_class_id = lc.id AND ca2.student_id = ?
-      WHERE be.student_id = ? AND be.status = 'active'
-      GROUP BY b.id
-      ORDER BY b.start_date DESC`, [sid, sid]);
-
-    // Daily test/assignment completions for last 30 days
-    const [dailyTests] = await getPool().query(`
-      SELECT DATE(created_at) as date, COUNT(*) as tests_taken,
-        ROUND(AVG(score_percent), 1) as avg_score
-      FROM test_attempts
-      WHERE student_id = ?
-        AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-      GROUP BY DATE(created_at)
-      ORDER BY date ASC`, [sid]);
-
+    const [[dailyActivity], [batchBreakdown], [dailyTests]] = await Promise.all([
+      getPool().query(`
+        SELECT DATE(lc.scheduled_at) as date,
+          ROUND(SUM(ca.duration_seconds) / 60) as minutes, COUNT(*) as classes
+        FROM class_attendance ca JOIN live_classes lc ON ca.live_class_id = lc.id
+        WHERE ca.student_id=? AND ca.attendance_status='present'
+          AND lc.scheduled_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        GROUP BY DATE(lc.scheduled_at) ORDER BY date ASC`, [sid]),
+      getPool().query(`
+        SELECT b.id as batch_id, b.name as batch_name, c.title as course_title,
+          b.start_date, b.end_date,
+          COUNT(DISTINCT lc.id) as total_classes,
+          COUNT(DISTINCT CASE WHEN ca2.attendance_status='present' THEN lc.id END) as attended,
+          COALESCE(SUM(ca2.duration_seconds), 0) as total_seconds
+        FROM batch_enrollments be JOIN batches b ON be.batch_id=b.id JOIN courses c ON b.course_id=c.id
+        LEFT JOIN live_classes lc ON lc.batch_id=b.id AND lc.status='ended'
+        LEFT JOIN class_attendance ca2 ON ca2.live_class_id=lc.id AND ca2.student_id=?
+        WHERE be.student_id=? AND be.status='active'
+        GROUP BY b.id ORDER BY b.start_date DESC`, [sid, sid]),
+      getPool().query(`
+        SELECT DATE(created_at) as date, COUNT(*) as tests_taken, ROUND(AVG(score_percent),1) as avg_score
+        FROM test_attempts WHERE student_id=? AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        GROUP BY DATE(created_at) ORDER BY date ASC`, [sid]),
+    ]);
     res.json({ dailyActivity, batchBreakdown, dailyTests });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3895,29 +3995,28 @@ app.get('/api/partner/students/:id/progress', authMiddleware(['partner_admin']),
     const [[student]] = await getPool().query('SELECT id,name,email,phone,created_at FROM users WHERE id=? AND agency_id=? AND role="student"', [studentId, agencyId]);
     if (!student) return res.status(404).json({ error: 'Student not found' });
 
-    const [testScores] = await getPool().query(`
-      SELECT module_name, exam_type, ROUND(AVG(score_percent),1) avg_score, MAX(score_percent) best_score, COUNT(*) attempts, MAX(created_at) last_attempt
-      FROM test_attempts WHERE student_id=? GROUP BY module_name, exam_type ORDER BY last_attempt DESC`, [studentId]);
-
-    const [recentAttempts] = await getPool().query(
-      'SELECT id, exam_type, module_name, test_type, score_percent, band_score, total_questions, correct_answers, created_at FROM test_attempts WHERE student_id=? ORDER BY created_at DESC LIMIT 20', [studentId]);
-
-    const [[attStats]] = await getPool().query(`
-      SELECT COUNT(*) total, SUM(CASE WHEN attendance_status='present' THEN 1 ELSE 0 END) attended,
-             ROUND(AVG(time_in_class_percent),1) avg_pct
-      FROM class_attendance WHERE student_id=?`, [studentId]);
-
-    const [[target]] = await getPool().query('SELECT * FROM student_targets WHERE student_id=?', [studentId]);
-
-    const [weeklyProgress] = await getPool().query(`
-      SELECT YEAR(created_at) yr, WEEK(created_at) wk, ROUND(AVG(score_percent),1) avg_score, COUNT(*) tests_taken, MIN(created_at) week_start
-      FROM test_attempts WHERE student_id=? AND created_at >= DATE_SUB(NOW(), INTERVAL 8 WEEK)
-      GROUP BY YEAR(created_at), WEEK(created_at) ORDER BY yr, wk`, [studentId]);
-
-    const [recentClasses] = await getPool().query(`
-      SELECT lc.title, lc.scheduled_at, lc.platform, ca.attendance_status, ca.duration_seconds
-      FROM class_attendance ca JOIN live_classes lc ON ca.live_class_id=lc.id
-      WHERE ca.student_id=? ORDER BY lc.scheduled_at DESC LIMIT 15`, [studentId]);
+    const [
+      [testScores], [recentAttempts], [[attStats]], [[target]], [weeklyProgress], [recentClasses]
+    ] = await Promise.all([
+      getPool().query(`
+        SELECT module_name, exam_type, ROUND(AVG(score_percent),1) avg_score, MAX(score_percent) best_score, COUNT(*) attempts, MAX(created_at) last_attempt
+        FROM test_attempts WHERE student_id=? GROUP BY module_name, exam_type ORDER BY last_attempt DESC`, [studentId]),
+      getPool().query(
+        'SELECT id, exam_type, module_name, test_type, score_percent, band_score, total_questions, correct_answers, created_at FROM test_attempts WHERE student_id=? ORDER BY created_at DESC LIMIT 20', [studentId]),
+      getPool().query(`
+        SELECT COUNT(*) total, SUM(CASE WHEN attendance_status='present' THEN 1 ELSE 0 END) attended,
+               ROUND(AVG(time_in_class_percent),1) avg_pct
+        FROM class_attendance WHERE student_id=?`, [studentId]),
+      getPool().query('SELECT * FROM student_targets WHERE student_id=?', [studentId]),
+      getPool().query(`
+        SELECT YEAR(created_at) yr, WEEK(created_at) wk, ROUND(AVG(score_percent),1) avg_score, COUNT(*) tests_taken, MIN(created_at) week_start
+        FROM test_attempts WHERE student_id=? AND created_at >= DATE_SUB(NOW(), INTERVAL 8 WEEK)
+        GROUP BY YEAR(created_at), WEEK(created_at) ORDER BY yr, wk`, [studentId]),
+      getPool().query(`
+        SELECT lc.title, lc.scheduled_at, lc.platform, ca.attendance_status, ca.duration_seconds
+        FROM class_attendance ca JOIN live_classes lc ON ca.live_class_id=lc.id
+        WHERE ca.student_id=? ORDER BY lc.scheduled_at DESC LIMIT 15`, [studentId]),
+    ]);
 
     res.json({ student, testScores, recentAttempts, attendance: attStats, target, weeklyProgress, recentClasses });
   } catch (e) { res.status(500).json({ error: e.message }); }

@@ -97,7 +97,14 @@ function CourseCatalog({ accent, user, onEnrolled }) {
   const categories = ['ALL', ...new Set(courses.map(c => c.category))];
   const visible = filter === 'ALL' ? courses : courses.filter(c => c.category === filter);
 
-  if (loading) return <div className="text-slate-400 text-sm">Loading courses...</div>;
+  if (loading) return (
+    <div className="space-y-4 animate-pulse">
+      <div className="h-8 w-48 rounded-xl bg-slate-200" />
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {[...Array(6)].map((_,i) => <div key={i} className="h-40 rounded-2xl bg-slate-100" style={{ animationDelay:`${i*60}ms` }} />)}
+      </div>
+    </div>
+  );
 
   return (
     <div>
@@ -211,6 +218,7 @@ function BatchBrowser({ accent, user }) {
   const [batches, setBatches]   = useState([]);
   const [myBatches, setMyBatches] = useState([]);
   const [courses, setCourses]   = useState([]);
+  const [liveLinks, setLiveLinks] = useState({}); // bulk live-link info keyed by batchId
   const [loading, setLoading]   = useState(true);
   const [joining, setJoining]   = useState(null);
   const [msg, setMsg]           = useState('');
@@ -218,13 +226,24 @@ function BatchBrowser({ accent, user }) {
   const [availSubTab, setAvailSubTab] = useState('live'); // live | online
 
   const load = useCallback(() => {
+    // Fetch available batches, enrolled batches, and ALL live links in one parallel shot
     Promise.all([
       api.get('/student/available-batches'),
       api.get('/student/my-batches'),
-      api.get('/catalog').catch(() => []),
-    ]).then(([avail, mine, cats]) => {
+      api.get('/student/today-live-links').catch(() => ({})),
+    ]).then(([avail, mine, links]) => {
       setBatches(avail);
       setMyBatches(mine);
+      setLiveLinks(links);
+      // Derive unique courses from batch data for any course-filter UI
+      const seen = new Set();
+      const cats = [];
+      avail.forEach(b => {
+        if (b.course_id && !seen.has(b.course_id)) {
+          seen.add(b.course_id);
+          cats.push({ id: b.course_id, title: b.course_title, category: b.category });
+        }
+      });
       setCourses(cats);
     }).finally(() => setLoading(false));
   }, []);
@@ -245,7 +264,12 @@ function BatchBrowser({ accent, user }) {
     }
   };
 
-  if (loading) return <div className="text-slate-400 text-sm">Loading batches...</div>;
+  if (loading) return (
+    <div className="space-y-3 animate-pulse">
+      <div className="h-8 w-48 rounded-xl bg-slate-200" />
+      {[...Array(4)].map((_,i) => <div key={i} className="h-14 rounded-2xl bg-slate-100" style={{ animationDelay:`${i*60}ms` }} />)}
+    </div>
+  );
 
   // Split available batches
   const liveBatches = batches.filter(b => b.start_date && b.class_time);
@@ -438,8 +462,8 @@ function BatchBrowser({ accent, user }) {
                     {b.demo_expires_at && (
                       <p className="text-xs text-amber-600 mt-2 font-medium">⚠️ Demo expires: {new Date(b.demo_expires_at).toLocaleDateString()}</p>
                     )}
-                    {/* Live class link widget */}
-                    <LiveClassLink batchId={b.batch_id || b.id} accent={color} classTime={b.class_time} accessType={b.access_type} />
+                    {/* Live class link widget — uses pre-fetched bulk data (no per-batch request) */}
+                    <LiveClassLink batchId={b.batch_id || b.id} accent={color} classTime={b.class_time} accessType={b.access_type} liveInfo={liveLinks[b.batch_id || b.id]} />
                   </div>
                 </div>
               </div>
@@ -488,18 +512,20 @@ function DemoJoinModal({ link, onClose }) {
 }
 
 // ── LIVE CLASS LINK WIDGET ────────────────────────────────────
-function LiveClassLink({ batchId, accent, classTime, accessType }) {
-  const [info, setInfo] = useState(null);
-  const [loading, setLoading] = useState(true);
+// Pass `liveInfo` prop (pre-fetched) to skip the per-batch HTTP round-trip
+function LiveClassLink({ batchId, accent, classTime, accessType, liveInfo: prefetched }) {
+  const [info, setInfo] = useState(prefetched || null);
+  const [loading, setLoading] = useState(!prefetched);
   const [now, setNow] = useState(new Date());
   const [showDemoModal, setShowDemoModal] = useState(false);
 
   useEffect(() => {
+    if (prefetched) { setInfo(prefetched); setLoading(false); return; }
     api.get(`/student/today-live-link/${batchId}`)
       .then(setInfo)
       .catch(() => setInfo(null))
       .finally(() => setLoading(false));
-  }, [batchId]);
+  }, [batchId, prefetched]);
 
   // Tick every 30s to update countdown
   useEffect(() => {
@@ -832,6 +858,7 @@ function motivation(pct) {
 // ── MY COURSES (Dashboard) ───────────────────────────────────
 function Dashboard({ enrollments, accent, user, onNavigate }) {
   const [myBatches, setMyBatches] = useState([]);
+  const [liveLinks, setLiveLinks] = useState({}); // { [batchId]: liveInfo }
   const paidCount   = enrollments.filter(e => e.payment_status === 'paid').length;
   const pendingCount = enrollments.filter(e => e.payment_status !== 'paid').length;
   const avgProgress = enrollments.length
@@ -839,7 +866,14 @@ function Dashboard({ enrollments, accent, user, onNavigate }) {
     : 0;
 
   useEffect(() => {
-    api.get('/student/my-batches').then(setMyBatches).catch(() => {});
+    // Fetch my batches + all live links in parallel — eliminates N+1 per-batch requests
+    Promise.all([
+      api.get('/student/my-batches').catch(() => []),
+      api.get('/student/today-live-links').catch(() => ({})),
+    ]).then(([batches, links]) => {
+      setMyBatches(batches);
+      setLiveLinks(links);
+    });
   }, []);
 
   const myCategories = [...new Set(enrollments.map(e => e.category).filter(Boolean))];
@@ -1431,7 +1465,36 @@ export default function StudentDashboard() {
   const agencyName    = enrollments[0]?.agency_name || user?.agency_name || 'TestPrep';
   const enrichedUser  = { ...user, brand_color: accent, agency_logo: agencyLogo, agency_name: agencyName };
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-400">Loading...</div>;
+  if (loading) return (
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      {/* Skeleton top bar */}
+      <div className="h-14 bg-white border-b border-slate-100 flex items-center px-6 gap-4">
+        <div className="w-8 h-8 rounded-full bg-slate-200 animate-pulse" />
+        <div className="w-32 h-4 rounded bg-slate-200 animate-pulse" />
+        <div className="flex-1" />
+        <div className="w-20 h-4 rounded bg-slate-200 animate-pulse" />
+      </div>
+      <div className="flex flex-1">
+        {/* Skeleton sidebar */}
+        <div className="hidden md:flex w-56 bg-white border-r border-slate-100 flex-col gap-2 p-4">
+          {[...Array(7)].map((_,i) => (
+            <div key={i} className="h-9 rounded-xl bg-slate-100 animate-pulse" style={{ animationDelay: `${i*60}ms` }} />
+          ))}
+        </div>
+        {/* Skeleton main */}
+        <div className="flex-1 p-6 space-y-4">
+          <div className="h-8 w-48 rounded-xl bg-slate-200 animate-pulse" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[...Array(4)].map((_,i) => (
+              <div key={i} className="h-24 rounded-2xl bg-white border border-slate-100 animate-pulse" style={{ animationDelay: `${i*80}ms` }} />
+            ))}
+          </div>
+          <div className="h-48 rounded-2xl bg-white border border-slate-100 animate-pulse" />
+          <div className="h-32 rounded-2xl bg-white border border-slate-100 animate-pulse" style={{ animationDelay: '120ms' }} />
+        </div>
+      </div>
+    </div>
+  );
 
   const panels = {
     dashboard:   <Dashboard enrollments={enrollments} accent={accent} user={enrichedUser} onNavigate={setSection} />,
