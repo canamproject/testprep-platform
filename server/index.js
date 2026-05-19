@@ -874,6 +874,11 @@ app.get('/api/tenant/:slug', async (req, res) => {
   res.json(rows[0]);
 });
 
+// ─── LOGIN BANNERS (returns empty array if none configured) ───
+app.get('/api/login-banners', async (req, res) => {
+  res.json([]);
+});
+
 // ─── PUBLIC LANDING PAGE APIs (no auth) ───────────────────────
 app.get('/api/public/:slug/courses', async (req, res) => {
   try {
@@ -901,7 +906,7 @@ app.get('/api/public/:slug/courses', async (req, res) => {
     }
 
     const [rows] = await getPool().query(
-      `SELECT id, title, category, price, duration_weeks, description, thumbnail_url, is_live_class FROM courses WHERE status='active'${whereExtra} ORDER BY category, title`,
+      `SELECT id, title, category, price, duration_weeks, description, thumbnail_url, is_live_class FROM courses WHERE is_active=1${whereExtra} ORDER BY category, title`,
       params
     );
     return res.json(rows);
@@ -928,7 +933,7 @@ app.get('/api/public/:slug/batches', async (req, res) => {
     }
 
     const [rows] = await getPool().query(
-      `SELECT b.id, b.name, b.description, b.start_date, b.end_date,
+      `SELECT b.id, b.course_id, b.name, b.description, b.start_date, b.end_date,
         b.schedule_days, b.class_time, b.duration_minutes,
         b.trainer_name, b.max_students,
         c.title as course_title, c.category, c.price as course_price,
@@ -2787,7 +2792,7 @@ app.get('/api/admin/agencies/:id/access', authMiddleware(['super_admin']), async
     const parse = (v) => { try { return v ? (typeof v === 'string' ? JSON.parse(v) : v) : []; } catch { return []; } };
     agency.course_access_data = parse(agency.course_access_data);
     agency.batch_access_data  = parse(agency.batch_access_data);
-    const [allCourses] = await getPool().query(`SELECT id, title, category FROM courses WHERE status='active' ORDER BY category, title`);
+    const [allCourses] = await getPool().query(`SELECT id, title, category FROM courses WHERE is_active=1 ORDER BY category, title`);
     const [allBatches] = await getPool().query(`SELECT b.id, b.name, b.start_date, b.class_time, c.category FROM batches b JOIN courses c ON b.course_id=c.id WHERE b.status='active' ORDER BY b.start_date DESC LIMIT 100`);
     res.json({ ...agency, allCourses, allBatches });
   } catch (e) { res.status(500).json({ error: e.message }); }
