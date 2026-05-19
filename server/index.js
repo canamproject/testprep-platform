@@ -887,8 +887,10 @@ app.get('/api/public/:slug/batches', async (req, res) => {
     const [[agency]] = await getPool().query('SELECT id FROM agencies WHERE slug=?', [req.params.slug]);
     if (!agency) return res.json([]);
     const [rows] = await getPool().query(
-      `SELECT b.id, b.name, b.start_date, b.schedule_days, b.schedule_time, b.max_students,
-        c.title as course_title, c.category,
+      `SELECT b.id, b.name, b.description, b.start_date, b.end_date,
+        b.schedule_days, b.class_time, b.duration_minutes,
+        b.trainer_name, b.max_students,
+        c.title as course_title, c.category, c.price as course_price,
         COUNT(be.id) as enrolled
        FROM batches b
        JOIN courses c ON b.course_id = c.id
@@ -3820,6 +3822,77 @@ app.get('/api/partner/students/:id/progress', authMiddleware(['partner_admin']),
 
     res.json({ student, testScores, recentAttempts, attendance: attStats, target, weeklyProgress, recentClasses });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── ONE-TIME SEED: create demo batch ────────────────────────
+// Call: GET /api/seed/brightpath-batch?secret=testprep_seed_2026
+app.get('/api/seed/brightpath-batch', async (req, res) => {
+  if (req.query.secret !== 'testprep_seed_2026') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const pool = getPool();
+
+    // 1. Find or create brightpath agency
+    let [[agency]] = await pool.query(`SELECT id FROM agencies WHERE slug='brightpath'`);
+    if (!agency) {
+      const [r] = await pool.query(
+        `INSERT INTO agencies (name, slug, email, brand_color, logo_initials, status)
+         VALUES ('BrightPath Academy','brightpath','admin@brightpath.in','#2563eb','BP','active')
+         ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)`
+      );
+      agency = { id: r.insertId };
+    }
+    const agencyId = agency.id;
+
+    // 2. Find any IELTS course, or create one
+    let [[course]] = await pool.query(`SELECT id FROM courses WHERE category='IELTS' LIMIT 1`);
+    if (!course) {
+      const [r] = await pool.query(
+        `INSERT INTO courses (title, category, description, price, duration_weeks, status, is_live_class, agency_id)
+         VALUES ('IELTS Academic Masterclass','IELTS','Complete IELTS Academic preparation with live classes',15000,12,'active',1,?)`,
+        [agencyId]
+      );
+      course = { id: r.insertId };
+    }
+
+    // 3. Check if batch already exists
+    const [[existing]] = await pool.query(
+      `SELECT id FROM batches WHERE agency_id=? AND name='Morning Live IELTS Class' LIMIT 1`,
+      [agencyId]
+    );
+    if (existing) return res.json({ message: 'Batch already exists', batch_id: existing.id });
+
+    // 4. Create the batch (Mon–Fri, 10:00–12:00 = 120 min)
+    const today = new Date().toISOString().slice(0, 10);
+    const endDate = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const roomPrefix = 'brightpath-morning-ielts';
+    const meetingId = `${roomPrefix}-${Date.now()}`;
+
+    const [result] = await pool.query(
+      `INSERT INTO batches (agency_id, course_id, name, description, start_date, end_date,
+        schedule_days, class_time, duration_minutes, timezone, trainer_name,
+        max_students, jitsi_room_prefix, jitsi_meeting_id, created_by, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active')`,
+      [agencyId, course.id,
+       'Morning Live IELTS Class',
+       'Daily live IELTS coaching — Listening, Reading, Writing & Speaking with expert feedback.',
+       today, endDate,
+       'Mon,Tue,Wed,Thu,Fri', '10:00:00', 120,
+       'Asia/Kolkata', 'Expert IELTS Trainer',
+       30, roomPrefix, meetingId]
+    );
+
+    res.json({
+      message: '✅ Batch created successfully!',
+      batch_id: result.insertId,
+      agency_id: agencyId,
+      batch_name: 'Morning Live IELTS Class',
+      schedule: 'Mon–Fri 10:00–12:00',
+      start_date: today,
+      end_date: endDate,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── START ────────────────────────────────────────────────────

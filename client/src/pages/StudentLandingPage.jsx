@@ -666,30 +666,45 @@ export default function StudentLandingPage({ tenantSlug }) {
       </section>
 
       {/* ── ACTIVE BATCHES ────────────────────────────────────────── */}
-      {batches.length > 0 && (
-        <section ref={batchesRef} className="py-20 px-4 scroll-mt-16 bg-white">
-          <div className="max-w-6xl mx-auto">
-            <div className="text-center mb-12">
-              <span className="text-xs font-black uppercase tracking-widest px-3 py-1.5 rounded-full mb-4 inline-block"
-                style={{ background: brandColor + '15', color: brandColor }}>Running Batches</span>
-              <h2 className="text-3xl sm:text-4xl font-black text-slate-900 mt-2">Join an Active Batch</h2>
-              <p className="text-slate-500 mt-3">Live, structured programs with expert faculty and cohort learning.</p>
+      <section ref={batchesRef} className="py-20 px-4 scroll-mt-16 bg-white">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-12">
+            <span className="text-xs font-black uppercase tracking-widest px-3 py-1.5 rounded-full mb-4 inline-block"
+              style={{ background: brandColor + '15', color: brandColor }}>Running Batches</span>
+            <h2 className="text-3xl sm:text-4xl font-black text-slate-900 mt-2">Join an Active Batch</h2>
+            <p className="text-slate-500 mt-3">Live, structured programs with expert faculty and cohort learning.</p>
+          </div>
+
+          {batches.length === 0 ? (
+            <div className="text-center py-16 rounded-3xl border-2 border-dashed border-slate-200">
+              <div className="text-5xl mb-4">📅</div>
+              <p className="font-black text-slate-700 text-lg mb-2">Batches Starting Soon</p>
+              <p className="text-slate-400 text-sm max-w-xs mx-auto">New live batch programs are being scheduled. Sign up to get notified when enrollment opens.</p>
+              <button onClick={() => navigate(`/${tenantSlug}/login`)}
+                className="mt-6 px-6 py-2.5 rounded-xl text-white text-sm font-black shadow hover:opacity-90 transition"
+                style={{ background: brandColor }}>
+                🔔 Get Notified →
+              </button>
             </div>
+          ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {batches.map(b => {
                 const col = CAT_COLORS[b.category] || brandColor;
+                const enrolledSeats = parseInt(b.enrolled) || 0;
                 return (
                   <div key={b.id}
                     className="bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 overflow-hidden flex flex-col">
                     {/* Top accent bar */}
-                    <div className="h-1 w-full" style={{ background: CAT_GRAD[b.category] || `linear-gradient(90deg, ${brandColor}, ${brandColor}88)` }} />
+                    <div className="h-1.5 w-full" style={{ background: CAT_GRAD[b.category] || `linear-gradient(90deg, ${brandColor}, ${brandColor}88)` }} />
                     <div className="p-5 flex flex-col flex-1">
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-[11px] font-black px-2.5 py-1 rounded-full"
                           style={{ background: col + '15', color: col }}>
                           {CAT_ICONS[b.category] || '📚'} {b.category}
                         </span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">● Live</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"/>Live
+                        </span>
                       </div>
                       <h3 className="font-black text-slate-900 text-base mb-1 leading-snug">{b.name}</h3>
                       <p className="text-xs text-slate-500 font-medium mb-3">{b.course_title}</p>
@@ -697,22 +712,24 @@ export default function StudentLandingPage({ tenantSlug }) {
                       <div className="space-y-1.5 mb-4">
                         {[
                           ['🗓', `${fmtDate(b.start_date)} — ${b.end_date ? fmtDate(b.end_date) : 'Ongoing'}`],
-                          ['⏰', `${b.class_time || '—'} · ${b.duration_minutes || 60} min`],
-                          ['📆', parseDays(b.schedule_days).join(' · ')],
+                          ['⏰', `${b.class_time ? b.class_time.slice(0,5) : '—'} · ${b.duration_minutes || 60} min`],
+                          ['📆', parseDays(b.schedule_days).join(' · ') || 'Daily'],
                           b.trainer_name && ['👨‍🏫', b.trainer_name],
-                          b.max_students && ['👥', `${b.enrolled_count || 0} / ${b.max_students} seats`],
+                          b.max_students && ['👥', `${enrolledSeats} / ${b.max_students} seats`],
                         ].filter(Boolean).map(([icon, val]) => (
                           <div key={icon} className="flex items-center gap-2 text-xs text-slate-600">
-                            <span>{icon}</span><span>{val}</span>
+                            <span className="flex-shrink-0">{icon}</span><span>{val}</span>
                           </div>
                         ))}
                       </div>
                       <div className="mt-auto flex items-center justify-between pt-4 border-t border-slate-100">
                         <div>
-                          <div className="text-lg font-black text-slate-900">{fmt(b.course_price)}</div>
-                          <div className="text-[10px] text-slate-400 font-semibold">course fee</div>
+                          {b.course_price > 0
+                            ? <><div className="text-lg font-black text-slate-900">{fmt(b.course_price)}</div><div className="text-[10px] text-slate-400 font-semibold">course fee</div></>
+                            : <span className="text-sm font-black text-emerald-600">Free to Join</span>
+                          }
                         </div>
-                        <button onClick={() => openEnroll({ title: b.name })}
+                        <button onClick={() => navigate(`/${tenantSlug}/login`)}
                           className="px-4 py-2 rounded-xl text-xs font-black text-white hover:opacity-90 hover:shadow-md transition-all"
                           style={{ background: col }}>
                           Join Batch →
@@ -722,11 +739,11 @@ export default function StudentLandingPage({ tenantSlug }) {
                         <div className="mt-3">
                           <div className="flex justify-between text-[10px] text-slate-400 mb-1">
                             <span>Seats filling fast</span>
-                            <span>{Math.round((b.enrolled_count||0)/b.max_students*100)}%</span>
+                            <span>{Math.min(100, Math.round(enrolledSeats / b.max_students * 100))}%</span>
                           </div>
                           <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
                             <div className="h-full rounded-full transition-all"
-                              style={{ width: `${Math.min(100,Math.round((b.enrolled_count||0)/b.max_students*100))}%`, background: CAT_GRAD[b.category] || brandColor }} />
+                              style={{ width: `${Math.min(100, Math.round(enrolledSeats / b.max_students * 100))}%`, background: CAT_GRAD[b.category] || brandColor }} />
                           </div>
                         </div>
                       )}
@@ -735,9 +752,9 @@ export default function StudentLandingPage({ tenantSlug }) {
                 );
               })}
             </div>
-          </div>
-        </section>
-      )}
+          )}
+        </div>
+      </section>
 
       {/* ── UPCOMING LIVE CLASSES ──────────────────────────────────── */}
       {liveClasses.length > 0 && (
