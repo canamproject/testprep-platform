@@ -439,7 +439,7 @@ function BatchBrowser({ accent, user }) {
                       <p className="text-xs text-amber-600 mt-2 font-medium">⚠️ Demo expires: {new Date(b.demo_expires_at).toLocaleDateString()}</p>
                     )}
                     {/* Live class link widget */}
-                    <LiveClassLink batchId={b.batch_id || b.id} accent={color} classTime={b.class_time} />
+                    <LiveClassLink batchId={b.batch_id || b.id} accent={color} classTime={b.class_time} accessType={b.access_type} />
                   </div>
                 </div>
               </div>
@@ -451,11 +451,48 @@ function BatchBrowser({ accent, user }) {
   );
 }
 
+// ── DEMO JOIN MODAL ───────────────────────────────────────────
+function DemoJoinModal({ link, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-4 text-center">
+          <div className="text-3xl mb-1">⚠️</div>
+          <h3 className="text-lg font-black text-white">Demo Access — 5 Minutes Only</h3>
+        </div>
+        <div className="p-6">
+          <p className="text-slate-700 text-sm mb-5 leading-relaxed">
+            You are joining as a demo student. You will be <strong className="text-red-600">automatically removed after 5 minutes</strong>.
+            After removal, you can pay to get full access to all classes.
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="flex-1 py-2.5 rounded-xl border-2 border-slate-200 text-slate-600 text-sm font-bold hover:bg-slate-50 transition">
+              Cancel
+            </button>
+            <a
+              href={link}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={onClose}
+              className="flex-1 py-2.5 rounded-xl text-white text-sm font-black text-center transition hover:opacity-90 shadow-sm"
+              style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
+              🎯 Join 5-Min Demo
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── LIVE CLASS LINK WIDGET ────────────────────────────────────
-function LiveClassLink({ batchId, accent, classTime }) {
+function LiveClassLink({ batchId, accent, classTime, accessType }) {
   const [info, setInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
+  const [showDemoModal, setShowDemoModal] = useState(false);
 
   useEffect(() => {
     api.get(`/student/today-live-link/${batchId}`)
@@ -473,7 +510,29 @@ function LiveClassLink({ batchId, accent, classTime }) {
   if (loading) return null;
   if (!info) return null;
 
+  // Non-enrolled students show nothing here (they join via enrollment)
+  // accessType: 'full' | 'trial' | 'demo' — if undefined treat as full (legacy)
+  const isDemo = accessType === 'demo';
+  const isEnrolled = !isDemo; // full or trial
+
   if (info.available) {
+    if (isDemo) {
+      return (
+        <>
+          <button
+            onClick={() => setShowDemoModal(true)}
+            className="mt-3 flex items-center justify-center gap-2 w-full py-2.5 rounded-xl font-black text-white text-sm transition hover:opacity-90 shadow-sm"
+            style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
+            <span className="w-2 h-2 rounded-full bg-white inline-block" />
+            🎯 Join Demo (5 min)
+          </button>
+          {showDemoModal && (
+            <DemoJoinModal link={info.link} onClose={() => setShowDemoModal(false)} />
+          )}
+        </>
+      );
+    }
+    // Full / trial enrolled students
     return (
       <a
         href={info.link}

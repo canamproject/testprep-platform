@@ -3720,6 +3720,53 @@ app.get('/api/student/progress', authMiddleware(['student']), async (req, res) =
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// STUDENT: daily activity + per-batch attendance breakdown (last 30 days)
+app.get('/api/student/my-attendance', authMiddleware(['student']), async (req, res) => {
+  const sid = req.user.id;
+  try {
+    // Daily time in class for last 30 days
+    const [dailyActivity] = await getPool().query(`
+      SELECT DATE(lc.scheduled_at) as date,
+        ROUND(SUM(ca.duration_seconds) / 60) as minutes,
+        COUNT(*) as classes
+      FROM class_attendance ca
+      JOIN live_classes lc ON ca.live_class_id = lc.id
+      WHERE ca.student_id = ?
+        AND ca.attendance_status = 'present'
+        AND lc.scheduled_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+      GROUP BY DATE(lc.scheduled_at)
+      ORDER BY date ASC`, [sid]);
+
+    // Per-batch breakdown
+    const [batchBreakdown] = await getPool().query(`
+      SELECT b.id as batch_id, b.name as batch_name, c.title as course_title,
+        b.start_date, b.end_date,
+        COUNT(DISTINCT lc.id) as total_classes,
+        COUNT(DISTINCT CASE WHEN ca2.attendance_status='present' THEN lc.id END) as attended,
+        COALESCE(SUM(ca2.duration_seconds), 0) as total_seconds
+      FROM batch_enrollments be
+      JOIN batches b ON be.batch_id = b.id
+      JOIN courses c ON b.course_id = c.id
+      LEFT JOIN live_classes lc ON lc.batch_id = b.id AND lc.status = 'ended'
+      LEFT JOIN class_attendance ca2 ON ca2.live_class_id = lc.id AND ca2.student_id = ?
+      WHERE be.student_id = ? AND be.status = 'active'
+      GROUP BY b.id
+      ORDER BY b.start_date DESC`, [sid, sid]);
+
+    // Daily test/assignment completions for last 30 days
+    const [dailyTests] = await getPool().query(`
+      SELECT DATE(created_at) as date, COUNT(*) as tests_taken,
+        ROUND(AVG(score_percent), 1) as avg_score
+      FROM test_attempts
+      WHERE student_id = ?
+        AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+      GROUP BY DATE(created_at)
+      ORDER BY date ASC`, [sid]);
+
+    res.json({ dailyActivity, batchBreakdown, dailyTests });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // PARTNER: progress overview of all students
 app.get('/api/partner/students/progress-overview', authMiddleware(['partner_admin']), async (req, res) => {
   const agencyId = req.user.agency_id;

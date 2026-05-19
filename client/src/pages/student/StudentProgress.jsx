@@ -1262,8 +1262,135 @@ function PerformanceDashboard({ progress, accent }) {
 }
 
 // ─── ATTENDANCE VIEW ──────────────────────────────────────────
+function DailyActivityChart({ dailyActivity = [], dailyTests = [] }) {
+  // Build a map of last 30 days
+  const days = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+
+  const actMap = {};
+  dailyActivity.forEach(r => { actMap[r.date?.slice(0,10)] = parseInt(r.minutes) || 0; });
+  const testMap = {};
+  dailyTests.forEach(r => { testMap[r.date?.slice(0,10)] = parseInt(r.tests_taken) || 0; });
+
+  const maxMins = Math.max(...days.map(d => actMap[d] || 0), 1);
+
+  return (
+    <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+      <div className="flex items-center justify-between mb-4">
+        <h4 className="font-black text-slate-900">📈 Daily Activity — Last 30 Days</h4>
+        <div className="flex items-center gap-3 text-xs text-slate-400">
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-400 inline-block"/> Time in class</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-purple-400 inline-block"/> Tests done</span>
+        </div>
+      </div>
+      <div className="flex items-end gap-0.5 h-28 overflow-x-auto pb-1">
+        {days.map(d => {
+          const mins = actMap[d] || 0;
+          const tests = testMap[d] || 0;
+          const barH = maxMins > 0 ? Math.round((mins / maxMins) * 88) : 0;
+          const today = d === new Date().toISOString().slice(0,10);
+          return (
+            <div key={d} className="flex flex-col items-center flex-1 min-w-[8px] group relative">
+              {/* tooltip */}
+              <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 z-10 opacity-0 group-hover:opacity-100 transition pointer-events-none">
+                <div className="bg-slate-800 text-white text-[10px] rounded-lg px-2 py-1.5 whitespace-nowrap shadow-lg">
+                  <div className="font-bold">{new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}</div>
+                  {mins > 0 && <div>⏱ {mins}m in class</div>}
+                  {tests > 0 && <div>📝 {tests} test{tests>1?'s':''}</div>}
+                  {mins === 0 && tests === 0 && <div className="text-slate-400">No activity</div>}
+                </div>
+              </div>
+              {/* bar */}
+              <div className="w-full flex flex-col justify-end" style={{ height: 88 }}>
+                {mins > 0 && (
+                  <div className="w-full rounded-t-sm transition-all"
+                    style={{
+                      height: Math.max(barH, 3),
+                      background: today ? 'linear-gradient(180deg,#2563eb,#3b82f6)' : 'linear-gradient(180deg,#60a5fa,#93c5fd)',
+                    }}
+                  />
+                )}
+                {mins === 0 && (
+                  <div className="w-full rounded-t-sm bg-slate-100" style={{ height: 3 }} />
+                )}
+              </div>
+              {/* test dot */}
+              {tests > 0 && (
+                <div className="absolute bottom-1 w-1.5 h-1.5 rounded-full bg-purple-500" style={{ bottom: Math.max(barH + 2, 4) }}/>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex justify-between text-[10px] text-slate-400 mt-1 px-0.5">
+        <span>{new Date(days[0]).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}</span>
+        <span>Today</span>
+      </div>
+    </div>
+  );
+}
+
+function BatchBreakdownTable({ batchBreakdown = [] }) {
+  if (batchBreakdown.length === 0) return null;
+  return (
+    <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+      <h4 className="font-black text-slate-900 mb-4">🎯 Batch Attendance Breakdown</h4>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-100">
+              <th className="text-left font-bold text-slate-500 text-xs uppercase pb-2 pr-3">Batch / Course</th>
+              <th className="text-center font-bold text-slate-500 text-xs uppercase pb-2 px-2">Classes</th>
+              <th className="text-center font-bold text-slate-500 text-xs uppercase pb-2 px-2">Attended</th>
+              <th className="text-center font-bold text-slate-500 text-xs uppercase pb-2 px-2">Rate</th>
+              <th className="text-right font-bold text-slate-500 text-xs uppercase pb-2 pl-2">Time Spent</th>
+            </tr>
+          </thead>
+          <tbody>
+            {batchBreakdown.map((b, i) => {
+              const total = parseInt(b.total_classes) || 0;
+              const attended = parseInt(b.attended) || 0;
+              const pct = total > 0 ? Math.round((attended / total) * 100) : 0;
+              const mins = Math.round((parseInt(b.total_seconds) || 0) / 60);
+              const timeStr = mins >= 60 ? `${Math.floor(mins/60)}h ${mins%60}m` : `${mins}m`;
+              const pctColor = pct >= 80 ? '#16a34a' : pct >= 60 ? '#f59e0b' : '#ef4444';
+              return (
+                <tr key={i} className="border-b border-slate-50 hover:bg-slate-50 transition">
+                  <td className="py-3 pr-3">
+                    <div className="font-semibold text-slate-800 text-sm">{b.batch_name}</div>
+                    <div className="text-xs text-slate-400">{b.course_title}</div>
+                  </td>
+                  <td className="text-center py-3 px-2 text-slate-600">{total || '—'}</td>
+                  <td className="text-center py-3 px-2">
+                    <span className="font-bold text-blue-600">{attended}</span>
+                  </td>
+                  <td className="py-3 px-2">
+                    <div className="flex items-center gap-1.5 justify-center">
+                      <div className="flex-1 max-w-[60px] h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: pctColor }}/>
+                      </div>
+                      <span className="text-xs font-bold" style={{ color: pctColor }}>{total > 0 ? `${pct}%` : '—'}</span>
+                    </div>
+                  </td>
+                  <td className="text-right py-3 pl-2">
+                    <span className="text-xs font-bold text-purple-600">{mins > 0 ? timeStr : '—'}</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function AttendanceView({ progress }) {
-  const { attendance, recentClasses = [] } = progress;
+  const { attendance, recentClasses = [], dailyActivity = [], batchBreakdown = [], dailyTests = [] } = progress;
   const total = parseInt(attendance?.total_classes) || 0;
   const attended = parseInt(attendance?.attended) || 0;
   const pct = total > 0 ? Math.round((attended / total) * 100) : 0;
@@ -1271,12 +1398,13 @@ function AttendanceView({ progress }) {
 
   return (
     <div className="space-y-5">
+      {/* Summary stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: 'Attendance Rate', val: `${pct}%`, icon: '📊', color: pct >= 80 ? '#16a34a' : pct >= 60 ? '#f59e0b' : '#ef4444' },
           { label: 'Classes Attended', val: attended, icon: '✅', color: '#3b82f6' },
           { label: 'Total Scheduled', val: total, icon: '📅', color: '#64748b' },
-          { label: 'Time in Class', val: totalMins >= 60 ? `${Math.round(totalMins/60)}h ${totalMins%60}m` : `${totalMins}m`, icon: '⏱️', color: '#8b5cf6' },
+          { label: 'Time in Class', val: totalMins >= 60 ? `${Math.floor(totalMins/60)}h ${totalMins%60}m` : `${totalMins}m`, icon: '⏱️', color: '#8b5cf6' },
         ].map(c => (
           <div key={c.label} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 text-center">
             <div className="text-2xl mb-1">{c.icon}</div>
@@ -1286,29 +1414,37 @@ function AttendanceView({ progress }) {
         ))}
       </div>
 
+      {/* Overall rate bar */}
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
         <div className="flex items-center justify-between mb-4">
           <h4 className="font-black text-slate-900">Attendance Rate</h4>
           <span className="text-sm font-bold" style={{ color: pct >= 80 ? '#16a34a' : '#f59e0b' }}>
-            {pct >= 80 ? '🌟 Excellent' : pct >= 60 ? '👍 Good' : '⚠️ Needs Improvement'}
+            {pct >= 80 ? '🌟 Excellent' : pct >= 60 ? '👍 Good' : total === 0 ? '—' : '⚠️ Needs Improvement'}
           </span>
         </div>
         <div className="h-5 bg-slate-100 rounded-full overflow-hidden">
           <div className="h-full rounded-full transition-all duration-1000 flex items-center justify-end pr-2"
-            style={{ width: `${pct}%`, background: `linear-gradient(90deg, #3b82f6, ${pct >= 80 ? '#16a34a' : '#f59e0b'})` }}>
-            <span className="text-xs font-black text-white">{pct}%</span>
+            style={{ width: `${pct}%`, minWidth: pct > 0 ? 40 : 0, background: `linear-gradient(90deg, #3b82f6, ${pct >= 80 ? '#16a34a' : '#f59e0b'})` }}>
+            {pct > 0 && <span className="text-xs font-black text-white">{pct}%</span>}
           </div>
         </div>
         <div className="flex justify-between text-xs text-slate-400 mt-2">
           <span>0%</span><span>Target: 80%</span><span>100%</span>
         </div>
-        {pct < 75 && (
+        {pct > 0 && pct < 75 && (
           <div className="mt-3 text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg border border-amber-100">
             ⚠️ Aim for at least 80% attendance. Regular class participation significantly improves exam scores.
           </div>
         )}
       </div>
 
+      {/* Daily activity chart */}
+      <DailyActivityChart dailyActivity={dailyActivity} dailyTests={dailyTests} />
+
+      {/* Per-batch breakdown */}
+      <BatchBreakdownTable batchBreakdown={batchBreakdown} />
+
+      {/* Recent classes list */}
       {recentClasses.length > 0 && (
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
           <h4 className="font-black text-slate-900 mb-4">📋 Recent Classes</h4>
@@ -1343,7 +1479,7 @@ function AttendanceView({ progress }) {
         </div>
       )}
 
-      {recentClasses.length === 0 && (
+      {recentClasses.length === 0 && dailyActivity.length === 0 && (
         <div className="bg-white rounded-2xl p-8 text-center shadow-sm border border-slate-100">
           <div className="text-4xl mb-3">📺</div>
           <p className="font-bold text-slate-700 mb-1">No class history yet</p>
@@ -1470,11 +1606,12 @@ export default function StudentProgress({ initialTab = 'plan', accent = '#1e40af
   const loadProgress = useCallback(async () => {
     setLoading(true);
     try {
-      const [prog, hist] = await Promise.all([
+      const [prog, hist, attDetail] = await Promise.all([
         api.get('/student/progress'),
         api.get('/student/tests/history'),
+        api.get('/student/my-attendance').catch(() => ({})),
       ]);
-      setProgress({ ...prog, testHistory: hist });
+      setProgress({ ...prog, testHistory: hist, ...attDetail });
     } catch (e) { console.error(e); }
     setLoading(false);
   }, []);

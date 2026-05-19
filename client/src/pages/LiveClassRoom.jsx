@@ -3,6 +3,17 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 
+function loadRazorpayScript() {
+  return new Promise(resolve => {
+    if (window.Razorpay) return resolve(true);
+    const s = document.createElement('script');
+    s.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    s.onload = () => resolve(true);
+    s.onerror = () => resolve(false);
+    document.body.appendChild(s);
+  });
+}
+
 export default function LiveClassRoom() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -14,6 +25,8 @@ export default function LiveClassRoom() {
   const [demoSecondsLeft, setDemoSecondsLeft] = useState(null);
   const [showPaywall, setShowPaywall]   = useState(false);
   const [zoomLaunched, setZoomLaunched] = useState(false);
+  const [payNowLoading, setPayNowLoading] = useState(false);
+  const [payNowMsg, setPayNowMsg]       = useState('');
   // One-time demo notice (shown once per session per class)
   const demoNoticeSeen = useRef(false);
   const [showDemoNotice, setShowDemoNotice] = useState(false);
@@ -190,6 +203,65 @@ export default function LiveClassRoom() {
   };
 
   const fmtTime = (secs) => `${Math.floor(secs/60)}:${(secs%60).toString().padStart(2,'0')}`;
+
+  // ─── Pay Now from paywall ─────────────────────────────────────
+  const handlePayNow = async () => {
+    if (!classInfo) return;
+    setPayNowLoading(true);
+    setPayNowMsg('');
+    try {
+      const cfg = await api.get('/student/payment-config');
+      if (cfg?.razorpay_key_id || process.env.REACT_APP_RAZORPAY_KEY_ID) {
+        // Razorpay gateway — create order via purchase endpoint
+        const res = await api.post('/student/purchase', {
+          course_id: classInfo.course_id,
+          type: 'batch',
+        });
+        if (res.gateway === 'razorpay') {
+          const ok = await loadRazorpayScript();
+          if (!ok) { setPayNowMsg('Could not load payment gateway. Try again.'); setPayNowLoading(false); return; }
+          new window.Razorpay({
+            key: res.key_id,
+            amount: res.amount * 100,
+            currency: 'INR',
+            name: classInfo.agency_name || 'TestPrep Platform',
+            description: res.course_title || classInfo.course_title,
+            order_id: res.order_id,
+            handler: async (payment) => {
+              try {
+                await api.post('/student/verify-payment', {
+                  ...payment,
+                  course_id: classInfo.course_id,
+                  amount: res.amount,
+                  discount: res.discount || 0,
+                });
+                setPayNowMsg('success');
+              } catch (e) { setPayNowMsg('err:' + e.message); }
+            },
+            prefill: { name: user?.name, email: user?.email },
+            theme: { color: '#1e40af' },
+          }).open();
+        } else {
+          setPayNowMsg('success');
+        }
+      } else {
+        // No Razorpay — redirect to student portal payments section
+        handleLeave(true);
+        navigate('/student', { state: { tab: 'payments' } });
+      }
+    } catch (e) {
+      // If purchase endpoint gives "Already enrolled" error, treat as success
+      if (e.message?.includes('Already enrolled')) {
+        setPayNowMsg('success');
+      } else {
+        // Fallback: redirect to student portal
+        handleLeave(true);
+        navigate('/student', { state: { tab: 'catalog' } });
+      }
+    } finally {
+      setPayNowLoading(false);
+    }
+  };
 
   // ─── WhatsApp helper ──────────────────────────────────────────
   const openWhatsApp = (msg) => {
@@ -449,28 +521,56 @@ export default function LiveClassRoom() {
           <div className="fixed inset-0 flex items-center justify-center z-50 px-4"
             style={{ background: 'rgba(15,23,42,0.96)', backdropFilter: 'blur(10px)' }}>
             <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full text-center">
-              <div className="text-5xl mb-4">⏰</div>
-              <h2 className="text-xl font-black text-slate-900 mb-2">Your Free Demo Has Ended</h2>
-              <p className="text-slate-500 text-sm mb-4">
-                Your 5-minute free demo of this Zoom class has ended.
-                Enroll in <strong>{classInfo.course_title}</strong> to get full, unlimited access to all live classes.
-              </p>
-              <div className="bg-blue-50 rounded-xl p-4 mb-5 border border-blue-100">
-                <p className="text-xs text-slate-400 mb-1">Enroll in</p>
-                <p className="font-bold text-slate-900">{classInfo.course_title}</p>
-                <p className="text-2xl font-black text-blue-600 mt-1">₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}</p>
-              </div>
-              <button
-                className="w-full py-3 rounded-xl text-white font-black mb-3 transition hover:opacity-90"
-                style={{ background: 'linear-gradient(135deg, #1e40af, #3b82f6)' }}
-                onClick={() => { handleLeave(true); navigate('/student', { state: { tab: 'catalog' } }); }}>
-                🎓 Enroll Now
-              </button>
-              <button
-                className="w-full py-2 text-slate-400 text-sm hover:text-slate-600 transition"
-                onClick={() => { handleLeave(true); navigate(-1); }}>
-                Go Back
-              </button>
+              {payNowMsg === 'success' ? (
+                <>
+                  <div className="text-5xl mb-4">✅</div>
+                  <h2 className="text-xl font-black text-emerald-600 mb-2">Payment Successful!</h2>
+                  <p className="text-slate-600 text-sm mb-5">
+                    You can now join as a full student. Please go back to the class.
+                  </p>
+                  <button
+                    className="w-full py-3 rounded-xl text-white font-black mb-3 transition hover:opacity-90"
+                    style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)' }}
+                    onClick={() => { handleLeave(true); navigate('/student', { state: { tab: 'batches' } }); }}>
+                    Go to My Batches
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="text-5xl mb-4">⏰</div>
+                  <h2 className="text-xl font-black text-slate-900 mb-2">Your 5-Minute Demo Has Ended</h2>
+                  <p className="text-slate-500 text-sm mb-4">
+                    Your free demo of this Zoom class has ended.
+                    Pay now to get full, unlimited access to all live classes in{' '}
+                    <strong>{classInfo.course_title}</strong>.
+                  </p>
+                  <div className="bg-blue-50 rounded-xl p-4 mb-5 border border-blue-100">
+                    <p className="text-xs text-slate-400 mb-1">Course</p>
+                    <p className="font-bold text-slate-900">{classInfo.course_title}</p>
+                    <p className="text-2xl font-black text-blue-600 mt-1">₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}</p>
+                  </div>
+                  {payNowMsg && payNowMsg.startsWith('err:') && (
+                    <p className="text-xs text-red-500 font-semibold mb-3">{payNowMsg.replace('err:','')}</p>
+                  )}
+                  <button
+                    className="w-full py-3 rounded-xl text-white font-black mb-3 transition hover:opacity-90 disabled:opacity-50"
+                    style={{ background: 'linear-gradient(135deg, #1e40af, #3b82f6)' }}
+                    disabled={payNowLoading}
+                    onClick={handlePayNow}>
+                    {payNowLoading ? '⏳ Processing...' : '💳 Pay Now & Continue'}
+                  </button>
+                  <button
+                    className="w-full py-2.5 rounded-xl font-semibold text-slate-700 text-sm mb-2 border border-slate-200 hover:bg-slate-50 transition"
+                    onClick={() => { handleLeave(true); navigate('/student', { state: { tab: 'catalog' } }); }}>
+                    🎓 Enroll via Student Portal
+                  </button>
+                  <button
+                    className="w-full py-2 text-slate-400 text-sm hover:text-slate-600 transition"
+                    onClick={() => { handleLeave(true); navigate(-1); }}>
+                    Go Back
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -520,29 +620,57 @@ export default function LiveClassRoom() {
           <div className="absolute inset-0 flex items-center justify-center z-50"
             style={{ background: 'rgba(15,23,42,0.92)', backdropFilter: 'blur(8px)' }}>
             <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 text-center">
-              <div className="text-5xl mb-4">⏰</div>
-              <h2 className="text-2xl font-black text-slate-900 mb-2">Your Demo Has Ended</h2>
-              <p className="text-slate-500 mb-6">
-                Your 15-minute free preview has ended. Purchase the course to continue.
-              </p>
-              <div className="bg-slate-50 rounded-xl p-4 mb-6">
-                <p className="text-sm text-slate-500 mb-1">Course</p>
-                <p className="font-bold text-slate-900 text-lg">{classInfo?.course_title}</p>
-                <p className="text-2xl font-black text-blue-600 mt-1">
-                  ₹{Number(classInfo?.course_price || 0).toLocaleString('en-IN')}
-                </p>
-              </div>
-              <button
-                className="w-full py-3 rounded-xl text-white font-bold text-lg mb-3"
-                style={{ background: 'linear-gradient(135deg, #1e40af, #3b82f6)' }}
-                onClick={() => navigate('/student', { state: { tab: 'catalog' } })}>
-                Purchase Course
-              </button>
-              <button
-                className="w-full py-2 rounded-xl text-slate-500 text-sm hover:text-slate-700 transition-colors"
-                onClick={() => navigate(-1)}>
-                Go Back
-              </button>
+              {payNowMsg === 'success' ? (
+                <>
+                  <div className="text-5xl mb-4">✅</div>
+                  <h2 className="text-xl font-black text-emerald-600 mb-2">Payment Successful!</h2>
+                  <p className="text-slate-600 text-sm mb-5">
+                    You can now join as a full student. Please go back to the class.
+                  </p>
+                  <button
+                    className="w-full py-3 rounded-xl text-white font-black mb-3 transition hover:opacity-90"
+                    style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)' }}
+                    onClick={() => { handleLeave(true); navigate('/student', { state: { tab: 'batches' } }); }}>
+                    Go to My Batches
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="text-5xl mb-4">⏰</div>
+                  <h2 className="text-2xl font-black text-slate-900 mb-2">Your 5-Minute Demo Has Ended</h2>
+                  <p className="text-slate-500 mb-4 text-sm">
+                    Your free preview has ended. Pay now to get full access to all live classes in{' '}
+                    <strong>{classInfo?.course_title}</strong>.
+                  </p>
+                  <div className="bg-slate-50 rounded-xl p-4 mb-5">
+                    <p className="text-sm text-slate-500 mb-1">Course</p>
+                    <p className="font-bold text-slate-900 text-lg">{classInfo?.course_title}</p>
+                    <p className="text-2xl font-black text-blue-600 mt-1">
+                      ₹{Number(classInfo?.course_price || 0).toLocaleString('en-IN')}
+                    </p>
+                  </div>
+                  {payNowMsg && payNowMsg.startsWith('err:') && (
+                    <p className="text-xs text-red-500 font-semibold mb-3">{payNowMsg.replace('err:','')}</p>
+                  )}
+                  <button
+                    className="w-full py-3 rounded-xl text-white font-black text-lg mb-3 disabled:opacity-50 transition hover:opacity-90"
+                    style={{ background: 'linear-gradient(135deg, #1e40af, #3b82f6)' }}
+                    disabled={payNowLoading}
+                    onClick={handlePayNow}>
+                    {payNowLoading ? '⏳ Processing...' : '💳 Pay Now & Continue'}
+                  </button>
+                  <button
+                    className="w-full py-2.5 rounded-xl font-semibold text-slate-700 text-sm mb-2 border border-slate-200 hover:bg-slate-50 transition"
+                    onClick={() => navigate('/student', { state: { tab: 'catalog' } })}>
+                    🎓 Enroll via Student Portal
+                  </button>
+                  <button
+                    className="w-full py-2 rounded-xl text-slate-500 text-sm hover:text-slate-700 transition-colors"
+                    onClick={() => navigate(-1)}>
+                    Go Back
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
