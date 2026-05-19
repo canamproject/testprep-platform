@@ -1563,89 +1563,92 @@ app.get('/api/live-classes', authMiddleware(), async (req, res) => {
   const isAdmin = req.user.role === 'super_admin';
   const isFaculty = req.user.role === 'faculty';
 
-  let query, params;
-  if (isFaculty) {
-    // Faculty sees classes assigned to them or in their batches
-    query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
-        a.name as agency_name,
-        u.name as faculty_name
-       FROM live_classes lc
-       JOIN batches b ON lc.batch_id = b.id
-       JOIN courses c ON b.course_id = c.id
-       JOIN agencies a ON lc.agency_id = a.id
-       LEFT JOIN users u ON lc.faculty_id = u.id
-       WHERE lc.faculty_id = ? OR b.trainer_id = ?
-       ORDER BY lc.scheduled_at DESC`;
-    params = [req.user.id, req.user.id];
-  } else if (isAdmin) {
-    query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
-        a.name as agency_name,
-        u.name as faculty_name
-       FROM live_classes lc
-       JOIN batches b ON lc.batch_id = b.id
-       JOIN courses c ON b.course_id = c.id
-       JOIN agencies a ON lc.agency_id = a.id
-       LEFT JOIN users u ON lc.faculty_id = u.id
-       ORDER BY lc.scheduled_at DESC`;
-    params = [];
-  } else {
-    query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
-        u.name as faculty_name
-       FROM live_classes lc
-       JOIN batches b ON lc.batch_id = b.id
-       JOIN courses c ON b.course_id = c.id
-       LEFT JOIN users u ON lc.faculty_id = u.id
-       WHERE lc.agency_id = ?
-       ORDER BY lc.scheduled_at DESC`;
-    params = [agencyId];
-  }
+  try {
+    let query, params;
+    // Use LEFT JOINs throughout — inner joins silently drop classes whose batch was deleted
+    if (isFaculty) {
+      query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
+          a.name as agency_name, u.name as faculty_name
+         FROM live_classes lc
+         LEFT JOIN batches b ON lc.batch_id = b.id
+         LEFT JOIN courses c ON b.course_id = c.id
+         LEFT JOIN agencies a ON lc.agency_id = a.id
+         LEFT JOIN users u ON lc.faculty_id = u.id
+         WHERE lc.faculty_id = ? OR b.trainer_id = ?
+         ORDER BY lc.scheduled_at DESC`;
+      params = [req.user.id, req.user.id];
+    } else if (isAdmin) {
+      query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
+          a.name as agency_name, u.name as faculty_name
+         FROM live_classes lc
+         LEFT JOIN batches b ON lc.batch_id = b.id
+         LEFT JOIN courses c ON b.course_id = c.id
+         LEFT JOIN agencies a ON lc.agency_id = a.id
+         LEFT JOIN users u ON lc.faculty_id = u.id
+         ORDER BY lc.scheduled_at DESC`;
+      params = [];
+    } else {
+      query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
+          u.name as faculty_name
+         FROM live_classes lc
+         LEFT JOIN batches b ON lc.batch_id = b.id
+         LEFT JOIN courses c ON b.course_id = c.id
+         LEFT JOIN users u ON lc.faculty_id = u.id
+         WHERE lc.agency_id = ?
+         ORDER BY lc.scheduled_at DESC`;
+      params = [agencyId];
+    }
 
-  const [rows] = await getPool().query(query, params);
-  res.json(rows);
+    const [rows] = await getPool().query(query, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/live-classes/upcoming', authMiddleware(), async (req, res) => {
   const agencyId = req.user.agency_id;
   const isAdmin = req.user.role === 'super_admin';
   const studentId = req.user.role === 'student' ? req.user.id : null;
-  
-  let query, params;
-  
-  if (studentId) {
-    // Student view - only classes for courses they've purchased
-    query = `SELECT lc.*, b.name as batch_name, c.title as course_title
-       FROM live_classes lc
-       JOIN batches b ON lc.batch_id = b.id
-       JOIN courses c ON b.course_id = c.id
-       JOIN enrollments e ON e.course_id = c.id AND e.student_id = ? AND e.status = 'active'
-       WHERE (lc.status = 'live' OR (lc.status = 'scheduled' AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)))
-       ORDER BY lc.status = 'live' DESC, lc.scheduled_at ASC
-       LIMIT 10`;
-    params = [studentId];
-  } else if (isAdmin) {
-    query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
-        a.name as agency_name
-       FROM live_classes lc
-       JOIN batches b ON lc.batch_id = b.id
-       JOIN courses c ON b.course_id = c.id
-       JOIN agencies a ON lc.agency_id = a.id
-       WHERE lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
-       ORDER BY lc.scheduled_at ASC
-       LIMIT 20`;
-    params = [];
-  } else {
-    query = `SELECT lc.*, b.name as batch_name, c.title as course_title
-       FROM live_classes lc
-       JOIN batches b ON lc.batch_id = b.id
-       JOIN courses c ON b.course_id = c.id
-       WHERE lc.agency_id = ? AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
-       ORDER BY lc.scheduled_at ASC
-       LIMIT 20`;
-    params = [agencyId];
-  }
-  
-  const [rows] = await getPool().query(query, params);
-  res.json(rows);
+
+  try {
+    let query, params;
+
+    if (studentId) {
+      // Student view — LEFT JOINs so classes without batch still appear
+      query = `SELECT lc.*, b.name as batch_name, c.title as course_title
+         FROM live_classes lc
+         LEFT JOIN batches b ON lc.batch_id = b.id
+         LEFT JOIN courses c ON b.course_id = c.id
+         LEFT JOIN enrollments e ON e.course_id = c.id AND e.student_id = ? AND e.status = 'active'
+         WHERE (lc.status = 'live' OR (lc.status = 'scheduled' AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)))
+           AND lc.agency_id = (SELECT agency_id FROM users WHERE id = ? LIMIT 1)
+         ORDER BY lc.status = 'live' DESC, lc.scheduled_at ASC
+         LIMIT 10`;
+      params = [studentId, studentId];
+    } else if (isAdmin) {
+      query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
+          a.name as agency_name
+         FROM live_classes lc
+         LEFT JOIN batches b ON lc.batch_id = b.id
+         LEFT JOIN courses c ON b.course_id = c.id
+         LEFT JOIN agencies a ON lc.agency_id = a.id
+         WHERE lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+         ORDER BY lc.scheduled_at ASC
+         LIMIT 20`;
+      params = [];
+    } else {
+      query = `SELECT lc.*, b.name as batch_name, c.title as course_title
+         FROM live_classes lc
+         LEFT JOIN batches b ON lc.batch_id = b.id
+         LEFT JOIN courses c ON b.course_id = c.id
+         WHERE lc.agency_id = ? AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+         ORDER BY lc.scheduled_at ASC
+         LIMIT 20`;
+      params = [agencyId];
+    }
+
+    const [rows] = await getPool().query(query, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Public endpoint — no auth needed, for guest join ──────────
@@ -1812,6 +1815,33 @@ app.post('/api/faculty/live-classes', authMiddleware(['faculty']), async (req, r
     res.json({ id: result.insertId, message: 'Class submitted for admin approval', title: autoTitle });
   } catch (e) {
     res.status(400).json({ error: e.message });
+  }
+});
+
+// Admin starts a live class — sets status to 'live', records started_at
+app.put('/api/admin/live-classes/:id/start', authMiddleware(['super_admin', 'partner_admin']), async (req, res) => {
+  const classId = req.params.id;
+  try {
+    const [[lc]] = await getPool().query(
+      'SELECT id, agency_id, platform, zoom_start_url, zoom_join_url, zoom_password, jitsi_room_name, jitsi_meeting_url FROM live_classes WHERE id=?',
+      [classId]
+    );
+    if (!lc) return res.status(404).json({ error: 'Class not found' });
+    if (req.user.role === 'partner_admin' && lc.agency_id !== req.user.agency_id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    await getPool().query(
+      `UPDATE live_classes SET status='live', started_at=NOW() WHERE id=?`, [classId]
+    );
+    res.json({
+      message: 'Class started',
+      platform: lc.platform,
+      zoom_start_url: lc.zoom_start_url || null,
+      zoom_join_url:  lc.zoom_join_url  || null,
+      meeting_url:    lc.jitsi_meeting_url || lc.zoom_join_url || null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
