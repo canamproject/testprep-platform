@@ -874,18 +874,58 @@ app.get('/api/tenant/:slug', async (req, res) => {
 // ─── PUBLIC LANDING PAGE APIs (no auth) ───────────────────────
 app.get('/api/public/:slug/courses', async (req, res) => {
   try {
-    // Return all active courses (courses are platform-wide, not per-agency)
+    // Respect agency course access control
+    const [[ag]] = await getPool().query(
+      `SELECT id, course_access_type, course_access_data FROM agencies WHERE slug=?`,
+      [req.params.slug]
+    ).catch(() => [[null]]);
+
+    let whereExtra = '';
+    const params = [];
+
+    if (ag && ag.course_access_type === 'categories' && ag.course_access_data) {
+      const cats = typeof ag.course_access_data === 'string' ? JSON.parse(ag.course_access_data) : ag.course_access_data;
+      if (cats && cats.length > 0) {
+        whereExtra = ` AND category IN (${cats.map(() => '?').join(',')})`;
+        params.push(...cats);
+      }
+    } else if (ag && ag.course_access_type === 'specific' && ag.course_access_data) {
+      const ids = typeof ag.course_access_data === 'string' ? JSON.parse(ag.course_access_data) : ag.course_access_data;
+      if (ids && ids.length > 0) {
+        whereExtra = ` AND id IN (${ids.map(() => '?').join(',')})`;
+        params.push(...ids);
+      }
+    }
+
     const [rows] = await getPool().query(
-      'SELECT id, title, category, description, price, duration_weeks FROM courses WHERE is_active=1 ORDER BY category, title'
+      `SELECT id, title, category, price, duration_weeks, description, thumbnail_url, is_live_class FROM courses WHERE status='active'${whereExtra} ORDER BY category, title`,
+      params
     );
-    res.json(rows);
+    return res.json(rows);
   } catch (e) { res.json([]); }
 });
 
 app.get('/api/public/:slug/batches', async (req, res) => {
   try {
-    const [[agency]] = await getPool().query('SELECT id FROM agencies WHERE slug=?', [req.params.slug]);
+    const [[agency]] = await getPool().query(
+      `SELECT id, batch_access_type, batch_access_data FROM agencies WHERE slug=?`,
+      [req.params.slug]
+    );
     if (!agency) return res.json([]);
+    const [rows] = await getPool().query(
+    if (!agency) return res.json([]);
+
+    // Respect batch access control
+    let batchWhere = 'b.agency_id=? AND b.status=\'active\'';
+    const batchParams = [agency.id];
+    if (agency.batch_access_type === 'specific' && agency.batch_access_data) {
+      const ids = typeof agency.batch_access_data === 'string' ? JSON.parse(agency.batch_access_data) : agency.batch_access_data;
+      if (ids && ids.length > 0) {
+        batchWhere += ` AND b.id IN (${ids.map(() => '?').join(',')})`;
+        batchParams.push(...ids);
+      }
+    }
+
     const [rows] = await getPool().query(
       `SELECT b.id, b.name, b.description, b.start_date, b.end_date,
         b.schedule_days, b.class_time, b.duration_minutes,
@@ -895,9 +935,9 @@ app.get('/api/public/:slug/batches', async (req, res) => {
        FROM batches b
        JOIN courses c ON b.course_id = c.id
        LEFT JOIN batch_enrollments be ON b.id = be.batch_id AND be.status='active'
-       WHERE b.agency_id=? AND b.status='active'
+       WHERE ${batchWhere}
        GROUP BY b.id ORDER BY b.start_date ASC LIMIT 20`,
-      [agency.id]
+      batchParams
     );
     res.json(rows);
   } catch (e) { res.json([]); }
@@ -2652,6 +2692,36 @@ app.put('/api/admin/agencies/:id/portal-settings', authMiddleware(['super_admin'
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// Admin: get agency tier + access control settings
+app.get('/api/admin/agencies/:id/access', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [[agency]] = await getPool().query(
+      `SELECT id, tier, course_access_type, course_access_data, batch_access_type, batch_access_data FROM agencies WHERE id=?`,
+      [req.params.id]
+    );
+    if (!agency) return res.status(404).json({ error: 'Agency not found' });
+    const parse = (v) => { try { return v ? (typeof v === 'string' ? JSON.parse(v) : v) : []; } catch { return []; } };
+    agency.course_access_data = parse(agency.course_access_data);
+    agency.batch_access_data  = parse(agency.batch_access_data);
+    const [allCourses] = await getPool().query(`SELECT id, title, category FROM courses WHERE status='active' ORDER BY category, title`);
+    const [allBatches] = await getPool().query(`SELECT b.id, b.name, b.start_date, b.class_time, c.category FROM batches b JOIN courses c ON b.course_id=c.id WHERE b.status='active' ORDER BY b.start_date DESC LIMIT 100`);
+    res.json({ ...agency, allCourses, allBatches });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: save tier + access control
+app.put('/api/admin/agencies/:id/access', authMiddleware(['super_admin']), async (req, res) => {
+  const { tier, course_access_type, course_access_data, batch_access_type, batch_access_data } = req.body;
+  try {
+    await getPool().query(
+      `UPDATE agencies SET tier=?, course_access_type=?, course_access_data=?, batch_access_type=?, batch_access_data=? WHERE id=?`,
+      [tier||'Bronze', course_access_type||'all', course_access_data ? JSON.stringify(course_access_data) : null,
+       batch_access_type||'all', batch_access_data ? JSON.stringify(batch_access_data) : null, req.params.id]
+    );
+    res.json({ message: 'Access settings saved' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── ZOOM API HELPER ─────────────────────────────────────────────────────────
 async function getZoomToken(cfg) {
   const creds = Buffer.from(`${cfg.client_id}:${cfg.client_secret}`).toString('base64');
@@ -3184,6 +3254,13 @@ async function runMigrations() {
     await safeAddCol('course_lectures','lesson_type',"ENUM('video','live','quiz','reading','assignment') DEFAULT 'video'");
     await safeAddCol('course_lectures','duration_minutes','INT DEFAULT 60');
     await safeAddCol('course_lectures','description','TEXT');
+
+    // ── AGENCY TIER & ACCESS CONTROL ────────────────────────────────
+    await safeAddCol('agencies','tier',"ENUM('Diamond','Platinum','Gold','Silver','Bronze','Green') DEFAULT 'Bronze'");
+    await safeAddCol('agencies','course_access_type',"ENUM('all','categories','specific') DEFAULT 'all'");
+    await safeAddCol('agencies','course_access_data','JSON');
+    await safeAddCol('agencies','batch_access_type',"ENUM('all','specific') DEFAULT 'all'");
+    await safeAddCol('agencies','batch_access_data','JSON');
 
     // ── SUPPORT SYSTEM ──────────────────────────────────────────────
     await getPool().query(`

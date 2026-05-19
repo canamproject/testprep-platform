@@ -1448,62 +1448,13 @@ function PartnerBatches({ accent }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-black text-slate-900">My Batches <span className="text-base font-normal text-slate-400 ml-2">{batches.length} total</span></h2>
-        <button className="btn-primary" style={{ background: accent }} onClick={() => setShowForm(!showForm)}>+ Create Batch</button>
+        <h2 className="text-xl font-black text-slate-900">My Batches <span className="text-base font-normal text-slate-400 ml-2">{batches.length} batches assigned</span></h2>
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold">
+          🔒 Batch creation is managed by admin
+        </div>
       </div>
 
       {msg && <div className="mb-4 p-3 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 text-sm">{msg}</div>}
-
-      {showForm && (
-        <form onSubmit={handleSubmit} className="card mb-6">
-          <h3 className="text-sm font-bold text-slate-700 mb-4">Create New Batch</h3>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="label">Course</label>
-              <select className="input" required value={form.course_id} onChange={e => setForm({...form, course_id: e.target.value})}>
-                <option value="">Select Course</option>
-                {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">Batch Name</label>
-              <input className="input" required placeholder="e.g., IELTS April Morning" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
-            </div>
-            <div>
-              <label className="label">Assign Faculty</label>
-              {facultyList.length > 0 ? (
-                <select className="input" value={form.trainer_id}
-                  onChange={e => {
-                    const f = facultyList.find(f => String(f.id) === e.target.value);
-                    setForm({ ...form, trainer_id: e.target.value, trainer_name: f?.name || '' });
-                  }}>
-                  <option value="">No faculty assigned</option>
-                  {facultyList.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                </select>
-              ) : (
-                <input className="input" placeholder="Trainer name (add faculty first)" value={form.trainer_name}
-                  onChange={e => setForm({ ...form, trainer_name: e.target.value })} />
-              )}
-            </div>
-            <div>
-              <label className="label">Start Date</label>
-              <input type="date" className="input" required value={form.start_date} onChange={e => setForm({...form, start_date: e.target.value})} />
-            </div>
-            <div>
-              <label className="label">Class Time</label>
-              <input type="time" className="input" required value={form.class_time} onChange={e => setForm({...form, class_time: e.target.value})} />
-            </div>
-            <div>
-              <label className="label">Max Students</label>
-              <input type="number" className="input" value={form.max_students} onChange={e => setForm({...form, max_students: parseInt(e.target.value)})} />
-            </div>
-          </div>
-          <div className="flex gap-2 mt-4">
-            <button type="submit" className="btn-primary" style={{ background: accent }}>Create Batch</button>
-            <button type="button" className="btn" onClick={() => setShowForm(false)}>Cancel</button>
-          </div>
-        </form>
-      )}
 
       {/* ── Section 1: Live Classes ── */}
       <div className="mb-8">
@@ -2919,7 +2870,7 @@ const ALL_SECTIONS = [
   { id: 'enrollments', icon: '📚', label: 'Enrollments' },
   { id: 'purchases', icon: '🛒', label: 'Online Bookings' },
   { id: 'batches', icon: '📅', label: 'Batches' },
-  { id: 'faculty', icon: '🎓', label: 'Faculty' },
+  // Faculty is admin-only — hidden from partner panel
   { id: 'liveclasses', icon: '📺', label: 'Live Classes' },
   { id: 'studentprogress', icon: '🏆', label: 'Student Progress' },
   { id: 'sharing', icon: '📣', label: 'Share & Grow' },
@@ -3017,7 +2968,7 @@ export default function PartnerDashboard() {
     purchases: <OnlinePurchases accent={accent} partnerPhone={user?.agency_phone} />,
     batches: <PartnerBatches accent={accent} />,
     sharing: <SharingPanel accent={accent} user={user} commRate={commRate} />,
-    faculty: <PartnerFaculty accent={accent} />,
+    // faculty: removed — managed by admin only
     liveclasses: <PartnerLiveClasses accent={accent} />,
     studentprogress: <StudentProgressOverview accent={accent} />,
     earnings: <Earnings accent={accent} commRate={commRate} />,
