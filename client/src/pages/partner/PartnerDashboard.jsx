@@ -531,70 +531,341 @@ function Claim({ accent }) {
 }
 
 // ── CRM ──────────────────────────────────────────────────────
+// Source config — used in lead form + badges
+const LEAD_SOURCES = [
+  { value: 'Facebook',  icon: '👍', color: '#1877f2' },
+  { value: 'Instagram', icon: '📸', color: '#e1306c' },
+  { value: 'Google',    icon: '🔍', color: '#34a853' },
+  { value: 'YouTube',   icon: '▶️', color: '#ff0000' },
+  { value: 'WhatsApp',  icon: '💬', color: '#25d366' },
+  { value: 'Referral',  icon: '🤝', color: '#f59e0b' },
+  { value: 'Walk-in',   icon: '🚶', color: '#6366f1' },
+  { value: 'Website',   icon: '🌐', color: '#0ea5e9' },
+  { value: 'Manual',    icon: '✏️', color: '#94a3b8' },
+  { value: 'Other',     icon: '📌', color: '#64748b' },
+];
+const sourceConfig = (val) => LEAD_SOURCES.find(s => s.value === val) || { icon: '📌', color: '#94a3b8' };
+
 function CRM({ accent }) {
+  const [crmTab, setCrmTab] = useState('leads'); // leads | online
   const [leads, setLeads] = useState([]);
+  const [purchases, setPurchases] = useState([]);
+  const [purchasesLoaded, setPurchasesLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', phone: '', course_interest: '', notes: '' });
+  const [sourceFilter, setSourceFilter] = useState('All');
+  const BLANK_FORM = { name: '', email: '', phone: '', course_interest: '', notes: '', source: 'Manual', sub_source: '' };
+  const [form, setForm] = useState(BLANK_FORM);
   const [msg, setMsg] = useState('');
-  const load = () => api.get('/partner/leads').then(setLeads);
-  useEffect(() => { load(); }, []);
+
+  const loadLeads = () => api.get('/partner/leads').then(setLeads);
+  useEffect(() => { loadLeads(); }, []);
+
+  // Lazy-load purchases when Online tab first opens
+  useEffect(() => {
+    if (crmTab === 'online' && !purchasesLoaded) {
+      api.get('/partner/purchases').then(p => { setPurchases(p); setPurchasesLoaded(true); }).catch(() => setPurchasesLoaded(true));
+    }
+  }, [crmTab, purchasesLoaded]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     await api.post('/partner/leads', form);
-    setMsg('Lead added!'); setShowForm(false); setForm({ name: '', email: '', phone: '', course_interest: '', notes: '' }); load();
+    setMsg('Lead added!'); setShowForm(false); setForm(BLANK_FORM); loadLeads();
   };
 
   const updateStatus = async (id, status) => {
-    await api.put(`/partner/leads/${id}`, { status }); load();
+    await api.put(`/partner/leads/${id}`, { status }); loadLeads();
   };
 
   const stages = ['new', 'contacted', 'demo_done', 'enrolled', 'lost'];
-  const stageLabels = { new: 'New Leads', contacted: 'Contacted', demo_done: 'Demo Done', enrolled: 'Enrolled', lost: 'Lost' };
+  const stageLabels = { new: 'New', contacted: 'Contacted', demo_done: 'Demo Done', enrolled: 'Enrolled ✅', lost: 'Lost' };
   const stageColors = { new: '#3b82f6', contacted: '#f59e0b', demo_done: '#8b5cf6', enrolled: '#10b981', lost: '#ef4444' };
+
+  const allSources = ['All', ...new Set(leads.map(l => l.source || 'Manual').filter(Boolean))];
+  const filteredLeads = sourceFilter === 'All' ? leads : leads.filter(l => (l.source || 'Manual') === sourceFilter);
+
+  // Source breakdown stats for online purchases
+  const paidPurchases = purchases.filter(p => p.payment_status === 'paid');
+  const pendingPurchases = purchases.filter(p => p.payment_status === 'pending');
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-black text-slate-900">CRM — Lead Tracking <span className="text-base font-normal text-slate-400 ml-2">{leads.length} total</span></h2>
-        <button className="btn-primary" style={{ background: accent }} onClick={() => setShowForm(!showForm)}>+ Add Lead</button>
-      </div>
-      {msg && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-sm">{msg}</div>}
-      {showForm && (
-        <div className="card mb-6">
-          <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-4">
-            <div><label>Name</label><input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-            <div><label>Email</label><input value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
-            <div><label>Phone</label><input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></div>
-            <div><label>Course Interest</label><input value={form.course_interest} onChange={e => setForm({ ...form, course_interest: e.target.value })} placeholder="IELTS, PTE..." /></div>
-            <div className="col-span-2"><label>Notes</label><input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
-            <div className="col-span-3 flex gap-2"><button type="submit" className="btn-success">Add Lead</button><button type="button" className="btn-ghost" onClick={() => setShowForm(false)}>Cancel</button></div>
-          </form>
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h2 className="text-xl font-black text-slate-900">CRM & Lead Pipeline</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Track, nurture and convert your leads</p>
         </div>
-      )}
-      <div className="grid grid-cols-5 gap-3">
-        {stages.map(stage => (
-          <div key={stage} className="bg-slate-50 rounded-2xl p-3">
-            <div className="text-xs font-bold uppercase tracking-wide mb-3 flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full" style={{ background: stageColors[stage] }} />
-              {stageLabels[stage]}
-              <span className="ml-auto text-slate-400">{leads.filter(l => l.status === stage).length}</span>
-            </div>
-            {leads.filter(l => l.status === stage).map(lead => (
-              <div key={lead.id} className="bg-white rounded-xl p-3 mb-2 border border-slate-100 shadow-sm">
-                <div className="font-semibold text-sm text-slate-900 mb-1">{lead.name}</div>
-                <div className="text-xs text-slate-400 mb-2">{lead.course_interest}</div>
-                <select className="text-xs border border-slate-200 rounded-lg px-2 py-1 w-full" value={lead.status} onChange={e => updateStatus(lead.id, e.target.value)}>
-                  {stages.map(s => <option key={s} value={s}>{stageLabels[s]}</option>)}
-                </select>
-              </div>
-            ))}
-            {leads.filter(l => l.status === stage).length === 0 && (
-              <div className="text-xs text-slate-300 text-center py-4">Empty</div>
-            )}
-          </div>
+        {crmTab === 'leads' && (
+          <button className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black text-white shadow-sm hover:opacity-90 transition"
+            style={{ background: accent }} onClick={() => setShowForm(!showForm)}>
+            ➕ Add Lead
+          </button>
+        )}
+      </div>
+
+      {/* Tab switcher */}
+      <div className="flex bg-slate-100 rounded-xl p-1 mb-5 gap-1 w-fit">
+        {[['leads','📋 Manual Leads'],['online','🛒 Online Bookings']].map(([k,l]) => (
+          <button key={k} onClick={() => setCrmTab(k)}
+            className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${crmTab===k ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>
+            {l}
+            {k === 'leads' && <span className="ml-1.5 text-xs font-black" style={{ color: accent }}>{leads.length}</span>}
+            {k === 'online' && purchasesLoaded && <span className="ml-1.5 text-xs font-black" style={{ color: accent }}>{purchases.length}</span>}
+          </button>
         ))}
       </div>
+
+      {msg && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-sm font-medium">{msg}</div>}
+
+      {/* ── MANUAL LEADS TAB ── */}
+      {crmTab === 'leads' && (
+        <div>
+          {showForm && (
+            <div className="card mb-5 border-l-4" style={{ borderLeftColor: accent }}>
+              <h3 className="font-black text-slate-800 text-sm mb-4">Add New Lead</h3>
+              <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div><label className="form-label">Name *</label><input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="form-input" placeholder="Full name" /></div>
+                <div><label className="form-label">Phone</label><input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} className="form-input" placeholder="+91..." /></div>
+                <div><label className="form-label">Email</label><input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className="form-input" placeholder="email@..." /></div>
+                <div><label className="form-label">Course Interest</label><input value={form.course_interest} onChange={e => setForm({ ...form, course_interest: e.target.value })} className="form-input" placeholder="IELTS, PTE, German..." /></div>
+                {/* Source selector */}
+                <div>
+                  <label className="form-label">Lead Source</label>
+                  <div className="flex flex-wrap gap-1.5 mt-1">
+                    {LEAD_SOURCES.map(s => (
+                      <button key={s.value} type="button"
+                        onClick={() => setForm({ ...form, source: s.value })}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border-2 transition-all"
+                        style={{
+                          borderColor: form.source === s.value ? s.color : '#e2e8f0',
+                          background: form.source === s.value ? s.color + '18' : 'white',
+                          color: form.source === s.value ? s.color : '#94a3b8',
+                        }}>
+                        {s.icon} {s.value}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="sm:col-span-2 lg:col-span-1"><label className="form-label">Notes</label><input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="form-input" placeholder="Any notes..." /></div>
+                <div className="col-span-full flex gap-2 pt-1">
+                  <button type="submit" className="px-5 py-2 rounded-xl text-xs font-black text-white hover:opacity-90 transition" style={{ background: accent }}>✅ Save Lead</button>
+                  <button type="button" className="px-5 py-2 rounded-xl text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50 transition" onClick={() => { setShowForm(false); setForm(BLANK_FORM); }}>Cancel</button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Source filter pills */}
+          {leads.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {allSources.map(s => {
+                const sc = s === 'All' ? { color: accent, icon: '🎯' } : sourceConfig(s);
+                return (
+                  <button key={s} onClick={() => setSourceFilter(s)}
+                    className="flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold border-2 transition-all"
+                    style={{
+                      borderColor: sourceFilter === s ? sc.color : '#e2e8f0',
+                      background: sourceFilter === s ? sc.color + '15' : 'white',
+                      color: sourceFilter === s ? sc.color : '#94a3b8',
+                    }}>
+                    {sc.icon} {s}
+                    <span className="ml-1 font-black">
+                      {s === 'All' ? leads.length : leads.filter(l => (l.source||'Manual') === s).length}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Kanban */}
+          <div className="grid grid-cols-5 gap-3">
+            {stages.map(stage => {
+              const stageleads = filteredLeads.filter(l => l.status === stage);
+              return (
+                <div key={stage} className="bg-slate-50 rounded-2xl p-3">
+                  <div className="text-xs font-bold uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: stageColors[stage] }} />
+                    <span className="truncate">{stageLabels[stage]}</span>
+                    <span className="ml-auto text-slate-400 font-black flex-shrink-0">{stageleads.length}</span>
+                  </div>
+                  {stageleads.map(lead => {
+                    const sc = sourceConfig(lead.source || 'Manual');
+                    return (
+                      <div key={lead.id} className="bg-white rounded-xl p-3 mb-2 border border-slate-100 shadow-sm">
+                        <div className="font-semibold text-sm text-slate-900 mb-1 truncate">{lead.name}</div>
+                        {lead.phone && <div className="text-xs text-slate-400 mb-1">📞 {lead.phone}</div>}
+                        {lead.course_interest && <div className="text-xs font-medium mb-2" style={{ color: accent }}>{lead.course_interest}</div>}
+                        {/* Source badge */}
+                        <div className="flex items-center gap-1 mb-2">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-0.5"
+                            style={{ background: sc.color + '15', color: sc.color }}>
+                            {sc.icon} {lead.source || 'Manual'}
+                          </span>
+                        </div>
+                        <select className="text-xs border border-slate-200 rounded-lg px-2 py-1 w-full bg-slate-50"
+                          value={lead.status} onChange={e => updateStatus(lead.id, e.target.value)}>
+                          {stages.map(s => <option key={s} value={s}>{stageLabels[s]}</option>)}
+                        </select>
+                      </div>
+                    );
+                  })}
+                  {stageleads.length === 0 && <div className="text-xs text-slate-300 text-center py-4">Empty</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── ONLINE BOOKINGS TAB (merged from Online Purchases) ── */}
+      {crmTab === 'online' && (
+        <div>
+          <p className="text-sm text-slate-500 mb-5">Students who discovered you online and self-enrolled via the course catalog.</p>
+
+          {/* Stats row */}
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            {[
+              { label: 'Total Bookings', v: purchases.length, color: accent },
+              { label: 'Confirmed Paid', v: paidPurchases.length, color: '#10b981' },
+              { label: 'Pending Payment', v: pendingPurchases.length, color: '#f59e0b' },
+            ].map(s => (
+              <div key={s.label} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">{s.label}</p>
+                <p className="text-2xl font-black" style={{ color: s.color }}>{s.v}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Source breakdown */}
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 mb-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-black text-slate-800">Booking Sources</h3>
+              <span className="text-xs text-slate-400">Track where students are finding you</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {LEAD_SOURCES.filter(s => ['Facebook','Instagram','Google','YouTube','WhatsApp','Website','Referral'].includes(s.value)).map(s => {
+                const cnt = purchases.filter(p => p.source === s.value).length;
+                return (
+                  <div key={s.value} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-100 bg-slate-50 text-xs">
+                    <span className="text-base">{s.icon}</span>
+                    <div>
+                      <div className="font-bold text-slate-700">{s.value}</div>
+                      <div className="font-black" style={{ color: s.color }}>{cnt} bookings</div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl border-2 border-dashed border-slate-200 bg-white text-xs cursor-pointer hover:bg-slate-50 transition"
+                title="Add UTM tracking to your sharing links to see source data here">
+                <span className="text-lg">📊</span>
+                <div>
+                  <div className="font-bold text-slate-400">Add UTM links</div>
+                  <div className="text-slate-300">Track ads →</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Pending payment alert */}
+          {pendingPurchases.length > 0 && (
+            <div className="mb-5">
+              <h3 className="text-sm font-black text-amber-600 mb-3 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                Pending Payment Confirmation ({pendingPurchases.length})
+              </h3>
+              <div className="card">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead><tr className="text-xs text-slate-400 uppercase border-b border-slate-100">
+                      <th className="text-left py-2 font-bold">Student</th>
+                      <th className="text-left py-2 font-bold">Course</th>
+                      <th className="text-left py-2 font-bold">Amount</th>
+                      <th className="text-left py-2 font-bold">Date</th>
+                      <th className="text-left py-2 font-bold">Action</th>
+                    </tr></thead>
+                    <tbody>{pendingPurchases.map(p => (
+                      <tr key={p.id} className="border-b border-slate-50 hover:bg-slate-50">
+                        <td className="py-2.5"><div className="font-semibold text-slate-900">{p.student_name}</div><div className="text-xs text-slate-400">{p.student_email}</div></td>
+                        <td className="py-2.5"><div className="font-medium">{p.course_title}</div></td>
+                        <td className="py-2.5 font-black text-slate-800">₹{p.fee_paid}</td>
+                        <td className="py-2.5 text-xs text-slate-400">{p.enrolled_at?.split('T')[0]}</td>
+                        <td className="py-2.5">
+                          {p.student_phone && (
+                            <button
+                              onClick={() => {
+                                const phone = p.student_phone.replace(/\D/g,'');
+                                const m = `Hi ${p.student_name}! Your payment of ₹${p.fee_paid} for "${p.course_title}" is pending. Please complete payment to activate access.`;
+                                window.open(`https://wa.me/${phone}?text=${encodeURIComponent(m)}`, '_blank');
+                              }}
+                              className="text-xs px-3 py-1.5 rounded-lg font-bold text-white hover:opacity-90 transition"
+                              style={{ background: '#25d366' }}>
+                              💬 WhatsApp
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Confirmed paid */}
+          {paidPurchases.length > 0 && (
+            <div>
+              <h3 className="text-sm font-black text-emerald-600 mb-3 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                Confirmed Enrollments ({paidPurchases.length})
+              </h3>
+              <div className="card">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead><tr className="text-xs text-slate-400 uppercase border-b border-slate-100">
+                      <th className="text-left py-2 font-bold">Student</th>
+                      <th className="text-left py-2 font-bold">Course</th>
+                      <th className="text-left py-2 font-bold">Amount</th>
+                      <th className="text-left py-2 font-bold">Source</th>
+                      <th className="text-left py-2 font-bold">Date</th>
+                    </tr></thead>
+                    <tbody>{paidPurchases.map(p => {
+                      const sc = sourceConfig(p.source || 'Website');
+                      return (
+                        <tr key={p.id} className="border-b border-slate-50 hover:bg-slate-50">
+                          <td className="py-2.5"><div className="font-semibold text-slate-900">{p.student_name}</div><div className="text-xs text-slate-400">{p.student_email}</div></td>
+                          <td className="py-2.5 font-medium">{p.course_title}</td>
+                          <td className="py-2.5 font-black text-emerald-600">₹{p.fee_paid}</td>
+                          <td className="py-2.5">
+                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ background: sc.color+'15', color: sc.color }}>
+                              {sc.icon} {p.source || 'Website'}
+                            </span>
+                          </td>
+                          <td className="py-2.5 text-xs text-slate-400">{p.enrolled_at?.split('T')[0]}</td>
+                        </tr>
+                      );
+                    })}</tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!purchasesLoaded && (
+            <div className="flex items-center justify-center py-16 text-slate-300">
+              <div className="animate-spin w-6 h-6 border-2 border-slate-300 border-t-slate-600 rounded-full mr-3" />
+              Loading bookings...
+            </div>
+          )}
+          {purchasesLoaded && purchases.length === 0 && (
+            <div className="text-center py-16 text-slate-400">
+              <div className="text-4xl mb-3">🛒</div>
+              <p className="font-semibold">No online bookings yet</p>
+              <p className="text-sm mt-1">Share your catalog link to start getting self-enrolled students.</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1259,7 +1530,6 @@ function PartnerBatches({ accent }) {
   const [students, setStudents] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [enrollModal, setEnrollModal] = useState(null); // batch object
-  const [editDates, setEditDates] = useState(null); // batch id being date-edited
   const [form, setForm] = useState({
     course_id: '', name: '', description: '',
     start_date: '', end_date: '', schedule_days: 'Mon,Tue,Wed,Thu,Fri',
@@ -1294,35 +1564,6 @@ function PartnerBatches({ accent }) {
   const onlineBatches = batches.filter(b => !b.start_date || !b.class_time);
 
   const [expandedBatch, setExpandedBatch] = useState(null);
-
-  const EditDatesInline = ({ batch, accent: col, onSave, onCancel }) => {
-    const [sd, setSd] = useState(batch.start_date ? batch.start_date.slice(0,10) : '');
-    const [ed, setEd] = useState(batch.end_date ? batch.end_date.slice(0,10) : '');
-    const [saving, setSaving] = useState(false);
-    const handleSave = async () => {
-      setSaving(true);
-      try { await api.put(`/partner/batches/${batch.id}`, { start_date: sd, end_date: ed }); onSave(); }
-      catch (e) { alert(e.message); setSaving(false); }
-    };
-    return (
-      <div className="mt-3 p-3 rounded-xl border border-slate-200 bg-white flex flex-wrap items-end gap-3">
-        <div>
-          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Start Date</label>
-          <input type="date" value={sd} onChange={e => setSd(e.target.value)}
-            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2" style={{ '--tw-ring-color': col }} />
-        </div>
-        <div>
-          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">End Date</label>
-          <input type="date" value={ed} onChange={e => setEd(e.target.value)}
-            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2" style={{ '--tw-ring-color': col }} />
-        </div>
-        <button onClick={handleSave} disabled={saving}
-          className="px-4 py-1.5 rounded-lg text-xs font-black text-white transition hover:opacity-90"
-          style={{ background: col }}>{saving ? 'Saving…' : '✅ Save'}</button>
-        <button onClick={onCancel} className="px-4 py-1.5 rounded-lg text-xs font-bold border border-slate-200 text-slate-600 hover:bg-slate-50 transition">Cancel</button>
-      </div>
-    );
-  };
 
   const CAT_COLORS_P = { IELTS:'#2563eb', PTE:'#059669', TOEFL:'#7c3aed', GERMAN:'#d97706', FRENCH:'#db2777', SPOKEN_ENGLISH:'#0891b2', OTHER:'#475569' };
   const CAT_ICONS_P  = { IELTS:'🇬🇧', PTE:'🎓', TOEFL:'🌐', GERMAN:'🇩🇪', FRENCH:'🇫🇷', SPOKEN_ENGLISH:'🗣️', OTHER:'📚' };
@@ -1422,7 +1663,7 @@ function PartnerBatches({ accent }) {
                     </div>
                   </div>
                 )}
-                {/* Action buttons */}
+                {/* Action buttons — Edit Dates is admin-only */}
                 <div className="flex items-center gap-3 flex-wrap">
                   <button
                     onClick={() => setEnrollModal(b)}
@@ -1430,17 +1671,7 @@ function PartnerBatches({ accent }) {
                     style={{ background: col }}>
                     ➕ Enroll Student
                   </button>
-                  <button
-                    onClick={() => { setEditDates(b.id); }}
-                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black border-2 transition hover:shadow-sm"
-                    style={{ borderColor: col, color: col, background: col+'08' }}>
-                    ✏️ Edit Dates
-                  </button>
                 </div>
-                {/* Inline date edit */}
-                {editDates === b.id && (
-                  <EditDatesInline batch={b} accent={col} onSave={() => { setEditDates(null); loadBatches(); }} onCancel={() => setEditDates(null)} />
-                )}
               </div>
             )}
           </div>
@@ -2872,7 +3103,6 @@ const ALL_SECTIONS = [
   { id: 'overview', icon: '📊', label: 'Overview' },
   { id: 'students', icon: '👥', label: 'Students' },
   { id: 'enrollments', icon: '📚', label: 'Enrollments' },
-  { id: 'purchases', icon: '🛒', label: 'Online Bookings' },
   { id: 'batches', icon: '📅', label: 'Batches' },
   // Faculty is admin-only — hidden from partner panel
   { id: 'liveclasses', icon: '📺', label: 'Live Classes' },
@@ -2969,7 +3199,6 @@ export default function PartnerDashboard() {
     overview: <Overview accent={accent} />,
     students: <Students accent={accent} partnerPhone={user?.agency_phone} agencyName={user?.agency_name} slug={slug} />,
     enrollments: <Enrollments accent={accent} partnerPhone={user?.agency_phone} />,
-    purchases: <OnlinePurchases accent={accent} partnerPhone={user?.agency_phone} />,
     batches: <PartnerBatches accent={accent} />,
     sharing: <SharingPanel accent={accent} user={user} commRate={commRate} />,
     // faculty: removed — managed by admin only

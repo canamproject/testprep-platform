@@ -789,17 +789,20 @@ app.get('/api/partner/leads', authMiddleware(['partner_admin']), async (req, res
 });
 
 app.post('/api/partner/leads', authMiddleware(['partner_admin']), async (req, res) => {
-  const { name, email, phone, course_interest, notes } = req.body;
+  const { name, email, phone, course_interest, notes, source, sub_source } = req.body;
   const [result] = await getPool().query(
-    'INSERT INTO leads (agency_id, name, email, phone, course_interest, notes) VALUES (?,?,?,?,?,?)',
-    [req.user.agency_id, name, email, phone, course_interest, notes]
+    'INSERT INTO leads (agency_id, name, email, phone, course_interest, notes, source, sub_source) VALUES (?,?,?,?,?,?,?,?)',
+    [req.user.agency_id, name, email, phone, course_interest, notes, source || 'Manual', sub_source || null]
   );
   res.json({ id: result.insertId });
 });
 
 app.put('/api/partner/leads/:id', authMiddleware(['partner_admin']), async (req, res) => {
-  const { status, notes } = req.body;
-  await getPool().query('UPDATE leads SET status=?, notes=? WHERE id=? AND agency_id=?', [status, notes, req.params.id, req.user.agency_id]);
+  const { status, notes, source, sub_source } = req.body;
+  await getPool().query(
+    'UPDATE leads SET status=?, notes=?, source=COALESCE(?,source), sub_source=COALESCE(?,sub_source) WHERE id=? AND agency_id=?',
+    [status, notes, source || null, sub_source || null, req.params.id, req.user.agency_id]
+  );
   res.json({ message: 'Lead updated' });
 });
 
@@ -3312,6 +3315,10 @@ async function runMigrations() {
     await safeAddCol('agencies','course_access_data','JSON');
     await safeAddCol('agencies','batch_access_type',"ENUM('all','specific') DEFAULT 'all'");
     await safeAddCol('agencies','batch_access_data','JSON');
+
+    // ── LEADS: source tracking ───────────────────────────────────────
+    await safeAddCol('leads','source',"VARCHAR(60) DEFAULT 'Manual'");
+    await safeAddCol('leads','sub_source',"VARCHAR(60) DEFAULT NULL");
 
     // ── SUPPORT SYSTEM ──────────────────────────────────────────────
     await getPool().query(`
