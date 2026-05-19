@@ -1153,6 +1153,28 @@ app.post('/api/partner/faculty', authMiddleware(['partner_admin']), async (req, 
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// Partner: update batch dates / basic fields
+app.put('/api/partner/batches/:id', authMiddleware(['partner_admin', 'super_admin']), async (req, res) => {
+  const agencyId = req.user.agency_id;
+  const batchId = req.params.id;
+  const { start_date, end_date, class_time, duration_minutes, max_students, trainer_name } = req.body;
+  try {
+    // Verify batch belongs to this agency
+    const [[b]] = await getPool().query('SELECT id FROM batches WHERE id=? AND agency_id=?', [batchId, agencyId]);
+    if (!b) return res.status(403).json({ error: 'Batch not found' });
+    await getPool().query(
+      `UPDATE batches SET
+        start_date=COALESCE(?,start_date), end_date=COALESCE(?,end_date),
+        class_time=COALESCE(?,class_time), duration_minutes=COALESCE(?,duration_minutes),
+        max_students=COALESCE(?,max_students), trainer_name=COALESCE(?,trainer_name),
+        updated_at=NOW()
+       WHERE id=?`,
+      [start_date||null, end_date||null, class_time||null, duration_minutes||null, max_students||null, trainer_name||null, batchId]
+    );
+    res.json({ message: 'Batch updated' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Assign faculty to batch
 app.put('/api/partner/batches/:id/assign-faculty', authMiddleware(['partner_admin', 'super_admin']), async (req, res) => {
   const { trainer_id } = req.body;

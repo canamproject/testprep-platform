@@ -1255,6 +1255,7 @@ function PartnerBatches({ accent }) {
   const [students, setStudents] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [enrollModal, setEnrollModal] = useState(null); // batch object
+  const [editDates, setEditDates] = useState(null); // batch id being date-edited
   const [form, setForm] = useState({
     course_id: '', name: '', description: '',
     start_date: '', end_date: '', schedule_days: 'Mon,Tue,Wed,Thu,Fri',
@@ -1288,41 +1289,159 @@ function PartnerBatches({ accent }) {
   const liveBatches = batches.filter(b => b.start_date && b.class_time);
   const onlineBatches = batches.filter(b => !b.start_date || !b.class_time);
 
-  const BatchTable = ({ rows }) => (
-    <div className="card">
-      <div className="table-wrap">
-        <table>
-          <thead><tr><th>Batch</th><th>Course</th><th>Schedule</th><th>Students</th><th>Status</th><th>Actions</th></tr></thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr><td colSpan={6} className="text-center text-slate-400 text-sm py-8">No batches in this section.</td></tr>
-            )}
-            {rows.map(b => (
-              <tr key={b.id}>
-                <td>
-                  <div className="font-semibold text-slate-900">{b.name}</div>
-                  <div className="text-xs text-slate-400">{b.trainer_name || 'No trainer assigned'}</div>
-                </td>
-                <td>{b.course_title}</td>
-                <td>
-                  <div className="text-sm">{b.class_time ? b.class_time.slice(0,5) : '—'} ({b.duration_minutes} min)</div>
-                  <div className="text-xs text-slate-400">{b.schedule_days}</div>
-                </td>
-                <td className="font-semibold">{b.enrolled_students || 0} / {b.max_students}</td>
-                <td><Badge status={b.status} /></td>
-                <td>
+  const [expandedBatch, setExpandedBatch] = useState(null);
+
+  const EditDatesInline = ({ batch, accent: col, onSave, onCancel }) => {
+    const [sd, setSd] = useState(batch.start_date ? batch.start_date.slice(0,10) : '');
+    const [ed, setEd] = useState(batch.end_date ? batch.end_date.slice(0,10) : '');
+    const [saving, setSaving] = useState(false);
+    const handleSave = async () => {
+      setSaving(true);
+      try { await api.put(`/partner/batches/${batch.id}`, { start_date: sd, end_date: ed }); onSave(); }
+      catch (e) { alert(e.message); setSaving(false); }
+    };
+    return (
+      <div className="mt-3 p-3 rounded-xl border border-slate-200 bg-white flex flex-wrap items-end gap-3">
+        <div>
+          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Start Date</label>
+          <input type="date" value={sd} onChange={e => setSd(e.target.value)}
+            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2" style={{ '--tw-ring-color': col }} />
+        </div>
+        <div>
+          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">End Date</label>
+          <input type="date" value={ed} onChange={e => setEd(e.target.value)}
+            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2" style={{ '--tw-ring-color': col }} />
+        </div>
+        <button onClick={handleSave} disabled={saving}
+          className="px-4 py-1.5 rounded-lg text-xs font-black text-white transition hover:opacity-90"
+          style={{ background: col }}>{saving ? 'Saving…' : '✅ Save'}</button>
+        <button onClick={onCancel} className="px-4 py-1.5 rounded-lg text-xs font-bold border border-slate-200 text-slate-600 hover:bg-slate-50 transition">Cancel</button>
+      </div>
+    );
+  };
+
+  const CAT_COLORS_P = { IELTS:'#2563eb', PTE:'#059669', TOEFL:'#7c3aed', GERMAN:'#d97706', FRENCH:'#db2777', SPOKEN_ENGLISH:'#0891b2', OTHER:'#475569' };
+  const CAT_ICONS_P  = { IELTS:'🇬🇧', PTE:'🎓', TOEFL:'🌐', GERMAN:'🇩🇪', FRENCH:'🇫🇷', SPOKEN_ENGLISH:'🗣️', OTHER:'📚' };
+  const fmtD = s => s ? new Date(s).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—';
+  const parseDayAbbr = str => (str||'').split(',').map(d=>({Mon:'Mo',Tue:'Tu',Wed:'We',Thu:'Th',Fri:'Fr',Sat:'Sa',Sun:'Su'})[d.trim()]||d.trim());
+
+  const BatchAccordion = ({ rows, sectionLabel }) => (
+    <div className="rounded-2xl border border-slate-200 overflow-hidden shadow-sm divide-y divide-slate-100 bg-white">
+      {rows.length === 0 ? (
+        <div className="text-center text-slate-400 text-sm py-10">
+          <div className="text-3xl mb-2">📭</div>
+          No {sectionLabel} batches yet.
+        </div>
+      ) : rows.map(b => {
+        const col = CAT_COLORS_P[b.category] || accent;
+        const isOpen = expandedBatch === b.id;
+        const enrolled = parseInt(b.enrolled_students) || 0;
+        const maxS = parseInt(b.max_students) || 0;
+        const seatPct = maxS > 0 ? Math.min(100, Math.round(enrolled / maxS * 100)) : 0;
+        const timeStr = b.class_time ? b.class_time.slice(0,5) : '—';
+        const endTime = (() => {
+          if (!b.class_time || !b.duration_minutes) return '';
+          const [h,m] = b.class_time.split(':').map(Number);
+          const tot = h*60 + m + parseInt(b.duration_minutes);
+          return ` – ${String(Math.floor(tot/60)).padStart(2,'0')}:${String(tot%60).padStart(2,'0')}`;
+        })();
+        const days = parseDayAbbr(b.schedule_days).join(' · ') || 'Daily';
+
+        return (
+          <div key={b.id} className="bg-white">
+            {/* ── Collapsed row ── */}
+            <button
+              onClick={() => setExpandedBatch(isOpen ? null : b.id)}
+              className="w-full flex items-center gap-0 text-left hover:bg-slate-50 transition-colors focus:outline-none group">
+              <div className="w-1 self-stretch flex-shrink-0" style={{ background: col }} />
+              <div className="flex-1 flex items-center gap-3 px-4 py-3.5 min-w-0">
+                {/* Icon */}
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center text-base flex-shrink-0"
+                  style={{ background: col + '18' }}>
+                  {CAT_ICONS_P[b.category] || '📚'}
+                </div>
+                {/* Name */}
+                <div className="flex-1 min-w-0">
+                  <div className="font-black text-slate-900 text-sm truncate">{b.name}</div>
+                  <div className="text-[11px] text-slate-400 truncate">{b.course_title}</div>
+                </div>
+                {/* Pills */}
+                <div className="hidden sm:flex items-center gap-2 flex-shrink-0">
+                  <span className="text-[11px] font-semibold bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full whitespace-nowrap">⏰ {timeStr}{endTime}</span>
+                  <span className="text-[11px] font-semibold bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full whitespace-nowrap">📆 {days}</span>
+                  <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap"
+                    style={{ background: col+'12', color: col }}>👥 {enrolled}/{maxS}</span>
+                </div>
+                {/* Status + chevron */}
+                <div className="flex items-center gap-2 flex-shrink-0 ml-1">
+                  <span className={`hidden md:inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${b.status==='active' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                    {b.status==='active' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"/>}{b.status}
+                  </span>
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center transition-all"
+                    style={{ background: isOpen ? col+'18' : '#f1f5f9' }}>
+                    <svg className="w-3.5 h-3.5 transition-transform duration-300" style={{ color: isOpen ? col : '#94a3b8', transform: isOpen ? 'rotate(180deg)' : 'none' }}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            </button>
+
+            {/* ── Expanded panel ── */}
+            {isOpen && (
+              <div className="px-5 pb-5 pt-2" style={{ borderTop:`1px solid ${col}20`, background: col+'04' }}>
+                {/* Detail grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+                  {[
+                    ['🗓 Dates',    `${fmtD(b.start_date)}${b.end_date ? ' → '+fmtD(b.end_date) : ' (Ongoing)'}`],
+                    ['⏰ Timings',  `${timeStr}${endTime} · ${b.duration_minutes||60} min`],
+                    ['📆 Days',     days],
+                    b.trainer_name && ['👨‍🏫 Trainer', b.trainer_name],
+                    ['👥 Seats',    `${enrolled} enrolled · ${Math.max(0, maxS-enrolled)} remaining`],
+                    ['📋 Status',   b.status],
+                  ].filter(Boolean).map(([lbl, val]) => (
+                    <div key={lbl} className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-0.5">{lbl}</div>
+                      <div className="text-xs font-bold text-slate-800 leading-snug">{val}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* Seat bar */}
+                {maxS > 0 && (
+                  <div className="mb-4">
+                    <div className="flex justify-between text-[10px] text-slate-400 mb-1 font-semibold">
+                      <span>Seat occupancy</span><span>{seatPct}%</span>
+                    </div>
+                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full" style={{ width:`${seatPct}%`, background: col }} />
+                    </div>
+                  </div>
+                )}
+                {/* Action buttons */}
+                <div className="flex items-center gap-3 flex-wrap">
                   <button
                     onClick={() => setEnrollModal(b)}
-                    className="text-xs px-3 py-1.5 rounded-lg font-bold text-white transition hover:opacity-90"
-                    style={{ background: accent }}>
-                    + Enroll Student
+                    className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-xs font-black text-white hover:opacity-90 transition shadow-sm"
+                    style={{ background: col }}>
+                    ➕ Enroll Student
                   </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                  <button
+                    onClick={() => { setEditDates(b.id); }}
+                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black border-2 transition hover:shadow-sm"
+                    style={{ borderColor: col, color: col, background: col+'08' }}>
+                    ✏️ Edit Dates
+                  </button>
+                </div>
+                {/* Inline date edit */}
+                {editDates === b.id && (
+                  <EditDatesInline batch={b} accent={col} onSave={() => { setEditDates(null); loadBatches(); }} onCancel={() => setEditDates(null)} />
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 
@@ -1392,9 +1511,9 @@ function PartnerBatches({ accent }) {
           <span className="text-lg">🎯</span>
           <h3 className="text-base font-black text-slate-900">Live Classes</h3>
           <span className="text-xs bg-indigo-100 text-indigo-700 font-bold px-2 py-0.5 rounded-full">{liveBatches.length} batches</span>
+          <span className="text-[11px] text-slate-400 ml-1">— click a row to expand &amp; enroll students</span>
         </div>
-        <p className="text-xs text-slate-400 mb-4">Batches with scheduled class times and start dates</p>
-        <BatchTable rows={liveBatches} />
+        <BatchAccordion rows={liveBatches} sectionLabel="live" />
       </div>
 
       {/* ── Section 2: Online Learning ── */}
@@ -1404,8 +1523,7 @@ function PartnerBatches({ accent }) {
           <h3 className="text-base font-black text-slate-900">Online Learning</h3>
           <span className="text-xs bg-purple-100 text-purple-700 font-bold px-2 py-0.5 rounded-full">{onlineBatches.length} batches</span>
         </div>
-        <p className="text-xs text-slate-400 mb-4">Batches without fixed class schedules (self-paced or TBD)</p>
-        <BatchTable rows={onlineBatches} />
+        <BatchAccordion rows={onlineBatches} sectionLabel="online" />
       </div>
 
       {/* Enroll modal */}
@@ -2621,6 +2739,179 @@ function PartnerSupport({ accent, user }) {
   );
 }
 
+// ── SHARING & REFERRAL PANEL ─────────────────────────────────
+function SharingPanel({ accent, user, commRate }) {
+  const slug = user?.slug || user?.agency_slug || '';
+  const signupUrl = `${window.location.origin}/${slug}`;
+  const [copied, setCopied] = useState(false);
+  const [copiedWhat, setCopiedWhat] = useState('');
+
+  const copy = (text, label) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true); setCopiedWhat(label);
+      setTimeout(() => { setCopied(false); setCopiedWhat(''); }, 2500);
+    });
+  };
+
+  const waMsg = `🎓 Join ${user?.agency_name || 'our academy'} and start your exam prep today!\n\nTop courses: IELTS · PTE · German · French\n\nEnrol now 👇\n${signupUrl}`;
+  const smsMsg = `Join ${user?.agency_name || 'our academy'} for expert IELTS & PTE coaching. Enrol: ${signupUrl}`;
+
+  const EARN_STEPS = [
+    { icon: '🔗', title: 'Share Your Link', desc: 'Send your unique academy link to students via WhatsApp, Instagram or word-of-mouth.' },
+    { icon: '📝', title: 'Student Enrols', desc: 'Student signs up via your link and purchases a course or batch seat.' },
+    { icon: '💰', title: 'You Earn', desc: `You earn ${commRate}% commission on every confirmed payment — automatically tracked.` },
+    { icon: '🏦', title: 'Claim Payout', desc: 'Request payout anytime from the Claim Commission tab. Processed within 3 working days.' },
+  ];
+
+  const CHANNEL_TEMPLATES = [
+    {
+      channel: 'WhatsApp',
+      icon: '💬',
+      color: '#25D366',
+      msg: waMsg,
+      action: () => window.open(`https://wa.me/?text=${encodeURIComponent(waMsg)}`, '_blank'),
+    },
+    {
+      channel: 'WhatsApp Status',
+      icon: '📸',
+      color: '#128C7E',
+      msg: `Copy this text and post as your WhatsApp Status:\n\n${waMsg}`,
+      action: () => copy(waMsg, 'WhatsApp message'),
+    },
+    {
+      channel: 'SMS / Text',
+      icon: '📱',
+      color: '#6366f1',
+      msg: smsMsg,
+      action: () => copy(smsMsg, 'SMS message'),
+    },
+    {
+      channel: 'Instagram Bio',
+      icon: '📷',
+      color: '#e1306c',
+      msg: signupUrl,
+      action: () => copy(signupUrl, 'Link'),
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-xl font-black text-slate-900 mb-1">📣 Share & Grow</h2>
+        <p className="text-sm text-slate-400">Spread the word, enrol students and earn commission — all in one place.</p>
+      </div>
+
+      {/* Your unique link */}
+      <div className="rounded-2xl p-5 border-2 shadow-sm" style={{ borderColor: accent+'40', background: accent+'06' }}>
+        <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Your Academy Signup Link</div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex-1 min-w-0 flex items-center gap-2 bg-white rounded-xl border border-slate-200 px-3 py-2.5 shadow-sm">
+            <span className="text-[11px] text-slate-400 flex-shrink-0">🔗</span>
+            <span className="text-sm font-bold text-slate-800 truncate">{signupUrl}</span>
+          </div>
+          <button onClick={() => copy(signupUrl, 'Link')}
+            className="px-4 py-2.5 rounded-xl text-xs font-black text-white transition hover:opacity-90 flex-shrink-0"
+            style={{ background: accent }}>
+            {copied && copiedWhat === 'Link' ? '✅ Copied!' : '📋 Copy Link'}
+          </button>
+        </div>
+        {copied && copiedWhat === 'Link' && (
+          <p className="text-xs text-emerald-600 font-semibold mt-2">✅ Link copied to clipboard — paste it anywhere!</p>
+        )}
+      </div>
+
+      {/* Commission model */}
+      <div className="rounded-2xl border border-slate-100 bg-white shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+          <h3 className="font-black text-slate-900">💵 How You Earn</h3>
+          <span className="text-lg font-black px-3 py-1 rounded-full text-white" style={{ background: accent }}>{commRate}% commission</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-slate-100">
+          {EARN_STEPS.map((s, i) => (
+            <div key={i} className="p-4 text-center hover:bg-slate-50 transition">
+              <div className="text-3xl mb-2">{s.icon}</div>
+              <div className="font-black text-slate-900 text-sm mb-1">{s.title}</div>
+              <p className="text-xs text-slate-400 leading-relaxed">{s.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Example earnings */}
+      <div className="rounded-2xl border border-slate-100 bg-white shadow-sm p-5">
+        <h3 className="font-black text-slate-900 mb-4">📊 Earnings Example</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100">
+                {['Students/month','Course Fee','Your Earning','Yearly Income'].map(h => (
+                  <th key={h} className="text-left text-[11px] font-bold text-slate-400 uppercase pb-2 pr-4">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[5,10,20,50].map(n => {
+                const fee = 15000;
+                const earn = Math.round(n * fee * commRate / 100);
+                return (
+                  <tr key={n} className="border-b border-slate-50 hover:bg-slate-50 transition">
+                    <td className="py-2.5 pr-4 font-bold text-slate-800">{n} students</td>
+                    <td className="py-2.5 pr-4 text-slate-500">₹{fee.toLocaleString('en-IN')}</td>
+                    <td className="py-2.5 pr-4 font-black" style={{ color: accent }}>₹{earn.toLocaleString('en-IN')}</td>
+                    <td className="py-2.5 font-black text-emerald-600">₹{(earn*12).toLocaleString('en-IN')}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[11px] text-slate-400 mt-3">* Based on ₹15,000 average course fee. Actual earnings depend on course prices and enrollment volume.</p>
+      </div>
+
+      {/* Share channel templates */}
+      <div className="rounded-2xl border border-slate-100 bg-white shadow-sm p-5">
+        <h3 className="font-black text-slate-900 mb-4">🚀 Share via Channel</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {CHANNEL_TEMPLATES.map(c => (
+            <div key={c.channel} className="rounded-xl border border-slate-100 p-4 hover:shadow-sm transition">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xl">{c.icon}</span>
+                <span className="font-black text-slate-900 text-sm">{c.channel}</span>
+              </div>
+              <p className="text-[11px] text-slate-400 mb-3 line-clamp-2 leading-relaxed font-mono bg-slate-50 rounded-lg p-2">{c.msg.slice(0,100)}…</p>
+              <button onClick={c.action}
+                className="w-full py-2 rounded-lg text-xs font-black text-white transition hover:opacity-90"
+                style={{ background: c.color }}>
+                {c.channel.includes('WhatsApp') && !c.channel.includes('Status') ? '📲 Send on WhatsApp' : '📋 Copy Message'}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Tips */}
+      <div className="rounded-2xl p-5 border border-amber-100 bg-amber-50">
+        <h3 className="font-black text-amber-900 mb-3">💡 Top Tips to Enrol More Students</h3>
+        <ul className="space-y-2 text-sm text-amber-800">
+          {[
+            'Post your link as a WhatsApp status every Monday morning — reach 100+ contacts at once',
+            'Add your link to your Instagram / Facebook bio so every visitor sees it',
+            'Offer a free demo class to hesitant students — once they attend, conversion is very high',
+            'Follow up with leads within 2 hours of their first enquiry (use the CRM tab)',
+            'Create urgency: "Only 5 seats left in this batch" messages work very well',
+            'Ask satisfied students to refer 2 friends — word-of-mouth is your strongest channel',
+          ].map((tip, i) => (
+            <li key={i} className="flex items-start gap-2">
+              <span className="font-black text-amber-500 flex-shrink-0">{i+1}.</span>
+              <span>{tip}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 // ── MAIN ─────────────────────────────────────────────────────
 const ALL_SECTIONS = [
   { id: 'overview', icon: '📊', label: 'Overview' },
@@ -2631,6 +2922,7 @@ const ALL_SECTIONS = [
   { id: 'faculty', icon: '🎓', label: 'Faculty' },
   { id: 'liveclasses', icon: '📺', label: 'Live Classes' },
   { id: 'studentprogress', icon: '🏆', label: 'Student Progress' },
+  { id: 'sharing', icon: '📣', label: 'Share & Grow' },
   { id: 'earnings', icon: '💵', label: 'Earnings' },
   { id: 'claim', icon: '✅', label: 'Claim Commission' },
   { id: 'crm', icon: '📋', label: 'CRM / Leads' },
@@ -2724,6 +3016,7 @@ export default function PartnerDashboard() {
     enrollments: <Enrollments accent={accent} partnerPhone={user?.agency_phone} />,
     purchases: <OnlinePurchases accent={accent} partnerPhone={user?.agency_phone} />,
     batches: <PartnerBatches accent={accent} />,
+    sharing: <SharingPanel accent={accent} user={user} commRate={commRate} />,
     faculty: <PartnerFaculty accent={accent} />,
     liveclasses: <PartnerLiveClasses accent={accent} />,
     studentprogress: <StudentProgressOverview accent={accent} />,
