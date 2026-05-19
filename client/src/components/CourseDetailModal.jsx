@@ -13,6 +13,76 @@ const CAT_ICONS = {
   FRENCH: '🇫🇷', SPOKEN_ENGLISH: '🗣️', OTHER: '📚',
 };
 
+// What's included per category for live class courses
+const CAT_INCLUDES = {
+  IELTS: [
+    { icon: '📺', text: 'Live interactive classes (Mon–Fri)' },
+    { icon: '📝', text: 'Listening, Reading, Writing & Speaking modules' },
+    { icon: '🏆', text: 'Full IELTS mock tests with band prediction' },
+    { icon: '📊', text: 'Weekly progress reports & weak-area feedback' },
+    { icon: '👨‍🏫', text: 'Expert certified trainers' },
+    { icon: '🎥', text: 'Class recordings for revision' },
+  ],
+  PTE: [
+    { icon: '📺', text: 'Live interactive PTE classes' },
+    { icon: '📝', text: 'Speaking, Writing, Reading & Listening prep' },
+    { icon: '🏆', text: 'Full PTE mock tests with score prediction' },
+    { icon: '📊', text: 'Section-wise score tracking' },
+    { icon: '🤖', text: 'AI-based pronunciation feedback' },
+    { icon: '🎥', text: 'Class recordings for revision' },
+  ],
+  GERMAN: [
+    { icon: '📺', text: 'Live German classes with native-level trainers' },
+    { icon: '📝', text: 'Grammar, Vocabulary, Reading & Speaking' },
+    { icon: '🏆', text: 'Mock tests aligned to Goethe / TestDaF pattern' },
+    { icon: '📊', text: 'Level progression tracking (A1 → B2)' },
+    { icon: '🇩🇪', text: 'Exam certification guidance' },
+    { icon: '🎥', text: 'Class recordings for revision' },
+  ],
+  FRENCH: [
+    { icon: '📺', text: 'Live French classes with expert trainers' },
+    { icon: '📝', text: 'Grammaire, Vocabulaire, Expression & Compréhension' },
+    { icon: '🏆', text: 'DELF / DALF pattern mock tests' },
+    { icon: '📊', text: 'Level-wise progress tracking' },
+    { icon: '🇫🇷', text: 'Exam strategy & certification guidance' },
+    { icon: '🎥', text: 'Class recordings for revision' },
+  ],
+  TOEFL: [
+    { icon: '📺', text: 'Live interactive TOEFL classes' },
+    { icon: '📝', text: 'Reading, Listening, Speaking & Writing modules' },
+    { icon: '🏆', text: 'Full iBT mock tests with score prediction' },
+    { icon: '📊', text: 'Performance analytics per section' },
+    { icon: '👨‍🏫', text: 'Expert certified trainers' },
+    { icon: '🎥', text: 'Class recordings for revision' },
+  ],
+  SPOKEN_ENGLISH: [
+    { icon: '📺', text: 'Daily live spoken English practice sessions' },
+    { icon: '🗣️', text: 'Pronunciation, fluency & confidence building' },
+    { icon: '📝', text: 'Grammar corrections & vocabulary building' },
+    { icon: '🎯', text: 'Real-life conversation scenarios' },
+    { icon: '📊', text: 'Weekly fluency assessment' },
+    { icon: '🎥', text: 'Session recordings for self-review' },
+  ],
+  OTHER: [
+    { icon: '📺', text: 'Live interactive classes with expert faculty' },
+    { icon: '📝', text: 'Comprehensive study material' },
+    { icon: '🏆', text: 'Mock tests & assessments' },
+    { icon: '📊', text: 'Progress tracking & feedback' },
+    { icon: '👨‍🏫', text: 'Certified trainers' },
+    { icon: '🎥', text: 'Class recordings for revision' },
+  ],
+};
+
+const DAY_ABBR = { Mon:'Mo',Tue:'Tu',Wed:'We',Thu:'Th',Fri:'Fr',Sat:'Sa',Sun:'Su' };
+function parseDays(str) {
+  if (!str) return [];
+  return str.split(',').map(d => (DAY_ABBR[d.trim()] || d.trim()));
+}
+function fmtDate(s) {
+  if (!s) return '—';
+  return new Date(s).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+}
+
 function fmtDuration(mins) {
   if (!mins) return '';
   const h = Math.floor(mins / 60), m = mins % 60;
@@ -39,6 +109,7 @@ export default function CourseDetailModal({
   open,
   onClose,
   accent = '#1e40af',
+  tenantSlug,
   // If not logged in, caller provides these to show auth prompt
   onAuthRequired,
   // If logged in student
@@ -48,6 +119,7 @@ export default function CourseDetailModal({
   const isStudent = user?.role === 'student';
 
   const [curriculum, setCurriculum]   = useState(null);
+  const [batches, setBatches]         = useState([]);
   const [loading, setLoading]         = useState(false);
   const [openModules, setOpenModules] = useState({});
   const [purchasing, setPurchasing]   = useState({});
@@ -56,7 +128,7 @@ export default function CourseDetailModal({
 
   useEffect(() => {
     if (!open || !courseId) return;
-    setLoading(true); setMsg('');
+    setLoading(true); setMsg(''); setBatches([]);
     fetch(`/api/courses/${courseId}/curriculum`)
       .then(r => r.json()).then(data => {
         setCurriculum(data);
@@ -64,6 +136,15 @@ export default function CourseDetailModal({
         if (data.modules?.length) setOpenModules({ [data.modules[0].id]: true });
         setLoading(false);
       }).catch(() => setLoading(false));
+
+    // Fetch batches for this course (from public API or catalog)
+    const slug = tenantSlug || window.location.pathname.split('/')[1] || '';
+    if (slug) {
+      fetch(`/api/public/${slug}/batches`)
+        .then(r => r.json())
+        .then(all => setBatches((all || []).filter(b => String(b.course_id) === String(courseId))))
+        .catch(() => {});
+    }
 
     // Load student purchases if logged in
     if (isStudent) {
@@ -206,10 +287,64 @@ export default function CourseDetailModal({
           )}
 
           {curriculum?.modules?.length === 0 && (
-            <div className="text-center py-16 text-slate-400">
-              <div className="text-4xl mb-3">📋</div>
-              <p className="font-semibold text-slate-500">Curriculum coming soon</p>
-              <p className="text-xs mt-1">The instructor is preparing the course content.</p>
+            <div className="py-4 space-y-5">
+              {/* What's Included */}
+              <div>
+                <h3 className="text-sm font-black text-slate-800 mb-3 flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px]" style={{ background: accent }}>✓</span>
+                  What's Included
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {(CAT_INCLUDES[curriculum.category] || CAT_INCLUDES.OTHER).map((item, i) => (
+                    <div key={i} className="flex items-start gap-2.5 p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                      <span className="text-lg flex-shrink-0">{item.icon}</span>
+                      <span className="text-xs font-medium text-slate-700 leading-snug">{item.text}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Live Batches for this course */}
+              {batches.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-black text-slate-800 mb-3 flex items-center gap-2">
+                    <span className="text-base">📅</span> Available Batches
+                    <span className="text-xs font-normal text-slate-400 ml-1">({batches.length} active)</span>
+                  </h3>
+                  <div className="space-y-2">
+                    {batches.map(b => {
+                      const days = parseDays(b.schedule_days).join(' · ') || 'Mon–Fri';
+                      const timeStr = b.class_time ? b.class_time.slice(0,5) : '—';
+                      const endMin = b.class_time && b.duration_minutes
+                        ? (() => { const [h,m] = b.class_time.split(':').map(Number); const t = h*60+m+parseInt(b.duration_minutes); return `${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`; })()
+                        : '';
+                      return (
+                        <div key={b.id} className="flex flex-wrap items-center gap-3 p-3 rounded-xl border border-slate-100 bg-white shadow-sm">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-bold text-sm text-slate-900 truncate">{b.name}</div>
+                            <div className="flex flex-wrap gap-2 mt-1">
+                              {b.class_time && <span className="text-[11px] bg-blue-50 text-blue-700 font-semibold px-2 py-0.5 rounded-full">⏰ {timeStr}{endMin ? ` – ${endMin}` : ''}</span>}
+                              <span className="text-[11px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">📆 {days}</span>
+                              {b.start_date && <span className="text-[11px] bg-emerald-50 text-emerald-700 font-semibold px-2 py-0.5 rounded-full">Starts {fmtDate(b.start_date)}</span>}
+                              {b.max_students > 0 && <span className="text-[11px] bg-amber-50 text-amber-700 font-semibold px-2 py-0.5 rounded-full">👥 {b.enrolled || 0}/{b.max_students} seats</span>}
+                            </div>
+                          </div>
+                          {b.trainer_name && <div className="text-xs text-slate-400 flex-shrink-0">👨‍🏫 {b.trainer_name}</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Curriculum note */}
+              <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-50 border border-amber-100">
+                <span className="text-xl">📋</span>
+                <div>
+                  <p className="text-xs font-bold text-amber-700">Detailed Curriculum</p>
+                  <p className="text-xs text-amber-600 mt-0.5">Session-wise study plan will be shared after enrollment.</p>
+                </div>
+              </div>
             </div>
           )}
 
