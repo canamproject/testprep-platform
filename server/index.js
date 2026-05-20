@@ -130,13 +130,14 @@ function authMiddleware(roles = []) {
 }
 
 // ─── HEALTH ──────────────────────────────────────────────────
-// Responds IMMEDIATELY (no DB wait) so the client can use this
-// endpoint to "wake" a cold Railway container before the user logs in.
-// DB connectivity is checked in the background and reflected in subsequent calls.
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', db: dbConnected ? 'connected' : 'connecting', ts: Date.now(), version: '2.2' });
-  // Kick off a background DB check so dbConnected stays accurate
-  getPool().query('SELECT 1').then(() => { dbConnected = true; }).catch(() => {});
+// MUST respond HTTP 200 immediately — Railway uses this as its
+// healthcheckPath to decide when to route traffic to a new deploy.
+// No DB await here: Express being up IS the health signal.
+// DB connectivity is checked in the background only.
+app.get('/api/health', (_req, res) => {
+  res.status(200).json({ status: 'ok', db: dbConnected ? 'connected' : 'starting', ts: Date.now(), v: '2.2' });
+  // Background DB ping to keep dbConnected accurate (fire and forget)
+  try { getPool().query('SELECT 1').then(() => { dbConnected = true; }).catch(() => {}); } catch (_) {}
 });
 
 // ─── AUTH ─────────────────────────────────────────────────────
