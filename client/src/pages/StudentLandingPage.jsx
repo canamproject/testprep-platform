@@ -214,11 +214,11 @@ export default function StudentLandingPage({ tenantSlug }) {
   }, [user]);
 
   useEffect(() => {
-    fetch(`/api/tenant/${tenantSlug}`).then(r => r.ok ? r.json() : null).then(t => { if (t) setTenant(t); }).catch(() => {});
-    fetch(`/api/public/${tenantSlug}/courses`).then(r => r.json()).then(setCourses).catch(() => {});
-    fetch(`/api/public/${tenantSlug}/batches`).then(r => r.json()).then(setBatches).catch(() => {});
-    fetch(`/api/public/${tenantSlug}/live-classes`).then(r => r.json()).then(setLiveClasses).catch(() => {});
-    fetch(`/api/login-banners?role=student`).then(r => r.ok ? r.json() : []).then(setBanners).catch(() => {});
+    api.get(`/tenant/${tenantSlug}`).then(t => { if (t && !t.error) setTenant(t); }).catch(() => {});
+    api.get(`/public/${tenantSlug}/courses`).then(d => { if (Array.isArray(d)) setCourses(d); }).catch(() => {});
+    api.get(`/public/${tenantSlug}/batches`).then(d => { if (Array.isArray(d)) setBatches(d); }).catch(() => {});
+    api.get(`/public/${tenantSlug}/live-classes`).then(d => { if (Array.isArray(d)) setLiveClasses(d); }).catch(() => {});
+    api.get(`/login-banners?role=student`).then(d => { if (Array.isArray(d)) setBanners(d); }).catch(() => {});
   }, [tenantSlug]);
 
   useEffect(() => {

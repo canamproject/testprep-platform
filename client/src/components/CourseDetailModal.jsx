@@ -129,8 +129,8 @@ export default function CourseDetailModal({
   useEffect(() => {
     if (!open || !courseId) return;
     setLoading(true); setMsg(''); setBatches([]);
-    fetch(`/api/courses/${courseId}/curriculum`)
-      .then(r => r.json()).then(data => {
+    api.get(`/courses/${courseId}/curriculum`)
+      .then(data => {
         setCurriculum(data);
         // Open first module by default
         if (data.modules?.length) setOpenModules({ [data.modules[0].id]: true });
@@ -140,9 +140,8 @@ export default function CourseDetailModal({
     // Fetch batches for this course (from public API)
     const slug = tenantSlug || window.location.pathname.split('/')[1] || '';
     if (slug) {
-      fetch(`/api/public/${slug}/batches`)
-        .then(r => r.json())
-        .then(all => setBatches((all || []).filter(b => String(b.course_id) === String(courseId))))
+      api.get(`/public/${slug}/batches`)
+        .then(all => { if (Array.isArray(all)) setBatches(all.filter(b => String(b.course_id) === String(courseId))); })
         .catch(() => {});
     }
 
