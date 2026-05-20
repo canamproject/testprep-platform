@@ -130,16 +130,13 @@ function authMiddleware(roles = []) {
 }
 
 // ─── HEALTH ──────────────────────────────────────────────────
-app.get('/api/health', async (req, res) => {
-  try {
-    const p = getPool();
-    if (!p) throw new Error('No DB config');
-    await p.query('SELECT 1');
-    dbConnected = true;
-    res.json({ status: 'ok', db: 'connected', version: '2.1', features: ['curriculum'] });
-  } catch (e) {
-    res.json({ status: 'ok', db: 'disconnected', version: '2.1', features: ['curriculum'], message: 'DB not configured yet' });
-  }
+// Responds IMMEDIATELY (no DB wait) so the client can use this
+// endpoint to "wake" a cold Railway container before the user logs in.
+// DB connectivity is checked in the background and reflected in subsequent calls.
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', db: dbConnected ? 'connected' : 'connecting', ts: Date.now(), version: '2.2' });
+  // Kick off a background DB check so dbConnected stays accurate
+  getPool().query('SELECT 1').then(() => { dbConnected = true; }).catch(() => {});
 });
 
 // ─── AUTH ─────────────────────────────────────────────────────

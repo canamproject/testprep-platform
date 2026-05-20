@@ -16,7 +16,7 @@ export function clearToken() {
 // Auto-retry helper — used for 502/503 (server cold start)
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function request(path, options = {}, _retries = 3) {
+async function request(path, options = {}, _retries = 5) {
   const token = getToken();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout

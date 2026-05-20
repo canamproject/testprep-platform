@@ -63,12 +63,14 @@ const STUDENT_USPS = [
 export default function Login({ tenantSlug, defaultMode = 'login' }) {
   const { login, loginWithToken, user } = useAuth();
   const navigate = useNavigate();
-  const [mode, setMode]       = useState(defaultMode);
-  const [tab, setTab]         = useState('student');
-  const [tenant, setTenant]   = useState(null);
-  const [error, setError]     = useState('');
-  const [loading, setLoading] = useState(false);
-  const [banners, setBanners] = useState([]);
+  const [mode, setMode]           = useState(defaultMode);
+  const [tab, setTab]             = useState('student');
+  const [tenant, setTenant]       = useState(null);
+  const [error, setError]         = useState('');
+  const [loading, setLoading]     = useState(false);
+  const [banners, setBanners]     = useState([]);
+  // 'idle' | 'pinging' | 'ready' | 'slow'
+  const [serverStatus, setServerStatus] = useState('pinging');
 
   // Login form
   const [email, setEmail]       = useState('');
@@ -86,18 +88,49 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
     }
   }, [user]);
 
+  // ── Warm up Railway server on page load ──────────────────────
+  // Ping /api/health immediately so the server wakes up while the
+  // user is filling in their credentials. If it takes >8s, show a
+  // "slow start" warning so users know to expect a brief delay.
+  useEffect(() => {
+    let cancelled = false;
+    const slowTimer = setTimeout(() => { if (!cancelled) setServerStatus('slow'); }, 8000);
+    const ping = () =>
+      fetch('/api/health', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then(() => { if (!cancelled) { clearTimeout(slowTimer); setServerStatus('ready'); } })
+        .catch(() => { if (!cancelled) setTimeout(ping, 4000); }); // retry every 4s until alive
+    ping();
+    return () => { cancelled = true; clearTimeout(slowTimer); };
+  }, []);
+
   useEffect(() => {
     if (tenantSlug) {
-      api.get(`/tenant/${tenantSlug}`).then(setTenant).catch(() => {});
-      // Fetch student-targeted banners for agency-branded pages
-      fetch('/api/login-banners?role=student')
-        .then(r => r.ok ? r.json() : []).then(setBanners).catch(() => {});
+      api.get(`/tenant/${tenantSlug}`).then(t => { if (t && !t.error) setTenant(t); }).catch(() => {});
+      api.get(`/login-banners?role=student`).then(d => { if (Array.isArray(d)) setBanners(d); }).catch(() => {});
     }
   }, [tenantSlug]);
 
   const brandColor = tenant?.brand_color || '#1a1a2e';
   const agencyName = tenant?.name || 'TestPrep Platform';
   const logoText   = tenant?.logo_initials || 'TP';
+
+  // Server status badge — shown above the submit button when not ready
+  const ServerBadge = () => {
+    if (serverStatus === 'ready') return null;
+    if (serverStatus === 'slow') return (
+      <div className="mb-3 flex items-center gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700 font-medium">
+        <span className="animate-spin">⏳</span>
+        <span>Server is starting up — login will work in a moment. Please wait…</span>
+      </div>
+    );
+    return (
+      <div className="mb-3 flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 font-medium">
+        <span className="inline-block w-2 h-2 rounded-full bg-slate-400 animate-pulse" />
+        <span>Connecting to server…</span>
+      </div>
+    );
+  };
 
   // ── Login ────────────────────────────────────────────────
   const handleLogin = async (e) => {
@@ -111,7 +144,14 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
       else if (u.role === 'faculty') navigate('/faculty');
       else navigate(slug ? `/${slug}/student` : '/student');
     } catch (err) {
-      setError(err.message);
+      const msg = err.message || '';
+      // Friendlier message for server cold-start errors
+      if (msg.includes('502') || msg.includes('503') || msg.includes('not responding')) {
+        setError('Server is still starting up. Please try again in a few seconds.');
+        setServerStatus('slow');
+      } else {
+        setError(msg);
+      }
     } finally { setLoading(false); }
   };
 
@@ -198,10 +238,11 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
                     <label className="label">Password</label>
                     <input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" className="input" />
                   </div>
+                  <ServerBadge />
                   <button type="submit" disabled={loading}
                     className="w-full py-3 text-white font-bold rounded-xl transition-all hover:opacity-90 disabled:opacity-50"
                     style={{ background: brandColor }}>
-                    {loading ? 'Signing in…' : 'Sign In'}
+                    {loading ? (serverStatus !== 'ready' ? 'Connecting to server…' : 'Signing in…') : 'Sign In'}
                   </button>
                 </form>
               )}
@@ -286,10 +327,11 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
                   <label className="label">Password</label>
                   <input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" className="input" />
                 </div>
+                <ServerBadge />
                 <button type="submit" disabled={loading}
                   className="w-full py-3 text-white font-bold rounded-xl transition-all hover:opacity-90 disabled:opacity-50"
                   style={{ background: '#1a1a2e' }}>
-                  {loading ? 'Signing in…' : 'Sign In'}
+                  {loading ? (serverStatus !== 'ready' ? 'Connecting to server…' : 'Signing in…') : 'Sign In'}
                 </button>
               </form>
             )}
