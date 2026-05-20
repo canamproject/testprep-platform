@@ -1540,43 +1540,43 @@ app.get('/api/live-classes', authMiddleware(), async (req, res) => {
   const isAdmin = req.user.role === 'super_admin';
   const isFaculty = req.user.role === 'faculty';
 
-  let query, params;
-  if (isFaculty) {
-    // Faculty sees classes assigned to them or in their batches
-    query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
-        a.name as agency_name,
-        u.name as faculty_name
-       FROM live_classes lc
-       JOIN batches b ON lc.batch_id = b.id
-       JOIN courses c ON b.course_id = c.id
-       JOIN agencies a ON lc.agency_id = a.id
-       LEFT JOIN users u ON lc.faculty_id = u.id
-       WHERE lc.faculty_id = ? OR b.trainer_id = ?
-       ORDER BY lc.scheduled_at DESC`;
-    params = [req.user.id, req.user.id];
-  } else if (isAdmin) {
-    query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
-        a.name as agency_name,
-        u.name as faculty_name
-       FROM live_classes lc
-       JOIN batches b ON lc.batch_id = b.id
-       JOIN courses c ON b.course_id = c.id
-       JOIN agencies a ON lc.agency_id = a.id
-       LEFT JOIN users u ON lc.faculty_id = u.id
-       ORDER BY lc.scheduled_at DESC`;
-    params = [];
-  } else {
-    query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
-        u.name as faculty_name
-       FROM live_classes lc
-       JOIN batches b ON lc.batch_id = b.id
-       JOIN courses c ON b.course_id = c.id
-       LEFT JOIN users u ON lc.faculty_id = u.id
-       WHERE lc.agency_id = ?
-       ORDER BY lc.scheduled_at DESC`;
-    params = [agencyId];
-  }
-
+  try {
+    let query, params;
+    if (isFaculty) {
+      // Faculty sees classes assigned to them or in their batches
+      query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
+          a.name as agency_name,
+          u.name as faculty_name
+         FROM live_classes lc
+         JOIN batches b ON lc.batch_id = b.id
+         JOIN courses c ON b.course_id = c.id
+         JOIN agencies a ON lc.agency_id = a.id
+         LEFT JOIN users u ON lc.faculty_id = u.id
+         WHERE lc.faculty_id = ? OR b.trainer_id = ?
+         ORDER BY lc.scheduled_at DESC`;
+      params = [req.user.id, req.user.id];
+    } else if (isAdmin) {
+      query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
+          a.name as agency_name,
+          u.name as faculty_name
+         FROM live_classes lc
+         JOIN batches b ON lc.batch_id = b.id
+         JOIN courses c ON b.course_id = c.id
+         JOIN agencies a ON lc.agency_id = a.id
+         LEFT JOIN users u ON lc.faculty_id = u.id
+         ORDER BY lc.scheduled_at DESC`;
+      params = [];
+    } else {
+      query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
+          u.name as faculty_name
+         FROM live_classes lc
+         JOIN batches b ON lc.batch_id = b.id
+         JOIN courses c ON b.course_id = c.id
+         LEFT JOIN users u ON lc.faculty_id = u.id
+         WHERE lc.agency_id = ?
+         ORDER BY lc.scheduled_at DESC`;
+      params = [agencyId];
+    }
     const [rows] = await getPool().query(query, params);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
