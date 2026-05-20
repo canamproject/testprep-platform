@@ -13,7 +13,6 @@ import StudentDashboard from './pages/student/StudentDashboard';
 import FacultyDashboard from './pages/faculty/FacultyDashboard';
 import LiveClassRoom from './pages/LiveClassRoom';
 import PublicLiveClass from './pages/PublicLiveClass';
-import StudentLandingPage from './pages/StudentLandingPage';
 
 // ── System slugs that are NOT agency slugs ──────────────────────────────────
 const RESERVED = new Set(['admin','partner','student','faculty','login','live-class','join','agent','api','partner-login','faculty-login']);
