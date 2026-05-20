@@ -13,6 +13,7 @@ import StudentDashboard from './pages/student/StudentDashboard';
 import FacultyDashboard from './pages/faculty/FacultyDashboard';
 import LiveClassRoom from './pages/LiveClassRoom';
 import PublicLiveClass from './pages/PublicLiveClass';
+import StudentLandingPage from './pages/StudentLandingPage';
 
 // ── System slugs that are NOT agency slugs ──────────────────────────────────
 const RESERVED = new Set(['admin','partner','student','faculty','login','live-class','join','agent','api','partner-login','faculty-login']);
@@ -189,10 +190,10 @@ export default function App() {
           <Route path="/agent/:slug/login" element={<TenantEntry />} />
           <Route path="/agent/:slug/signup" element={<TenantSignup />} />
 
-          {/* Clean partner URLs: /:slug, /:slug/login, /:slug/signup */}
+          {/* Clean partner URLs: /:slug shows landing page, /login and /signup go to auth */}
           <Route path="/:slug/login" element={<TenantEntry />} />
           <Route path="/:slug/signup" element={<TenantSignup />} />
-          <Route path="/:slug" element={<TenantEntry />} />
+          <Route path="/:slug" element={<TenantLanding />} />
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

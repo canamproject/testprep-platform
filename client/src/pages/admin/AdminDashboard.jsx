@@ -717,10 +717,10 @@ function AgencyEditModal({ agency, onClose, onSaved }) {
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-2xl leading-none">&times;</button>
         </div>
 
-        <div className="flex gap-1 px-5 pt-3 border-b border-slate-100 flex-shrink-0">
-          {[['edit','✏️ Edit'],['portal','🎨 Portal'],['history','📋 History']].map(([t,l]) => (
-            <button key={t} onClick={() => setTab(t)}
-              className={`px-4 py-2 text-sm font-semibold rounded-t-xl transition ${tab===t ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>
+        <div className="flex gap-1 px-5 pt-3 border-b border-slate-100 flex-shrink-0 overflow-x-auto">
+          {[['edit','✏️ Edit'],['access','🔐 Access'],['portal','🎨 Portal'],['history','📋 History']].map(([t,l]) => (
+            <button key={t} onClick={() => { setTab(t); if (t === 'access' && !accessData) loadAccessData(); }}
+              className={`px-4 py-2 text-sm font-semibold rounded-t-xl transition whitespace-nowrap ${tab===t ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>
               {l}
             </button>
           ))}
@@ -808,6 +808,132 @@ function AgencyEditModal({ agency, onClose, onSaved }) {
                 <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
               </div>
             </form>
+          )}
+
+          {tab === 'access' && (
+            <div className="space-y-6">
+              {!accessData ? (
+                <div className="text-center py-10 text-slate-400">
+                  <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-2"/>
+                  Loading access settings…
+                </div>
+              ) : (
+                <>
+                  {/* TIER */}
+                  <div>
+                    <label className="label font-black text-slate-800 text-sm mb-3 block">🏅 Agency Tier</label>
+                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                      {[
+                        { id:'Diamond', color:'#b9f2ff', text:'#0ea5e9', emoji:'💎' },
+                        { id:'Platinum', color:'#e8e8f0', text:'#6366f1', emoji:'🥈' },
+                        { id:'Gold', color:'#fef9c3', text:'#ca8a04', emoji:'🥇' },
+                        { id:'Silver', color:'#f1f5f9', text:'#64748b', emoji:'🪙' },
+                        { id:'Bronze', color:'#fef3c7', text:'#b45309', emoji:'🏅' },
+                        { id:'Green', color:'#d1fae5', text:'#059669', emoji:'🌿' },
+                      ].map(t => (
+                        <button key={t.id} type="button"
+                          onClick={() => setTier(t.id)}
+                          className={`py-2.5 rounded-xl text-xs font-black border-2 transition-all ${tier===t.id ? 'border-current shadow-md scale-105' : 'border-transparent hover:border-slate-200'}`}
+                          style={{ background: t.color, color: t.text }}>
+                          <div className="text-lg">{t.emoji}</div>
+                          <div>{t.id}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* COURSES */}
+                  <div className="border border-slate-200 rounded-2xl p-4">
+                    <label className="label font-black text-slate-800 text-sm mb-3 block">📚 Course Access</label>
+                    <div className="space-y-2 mb-4">
+                      {[
+                        { v:'all', label:'✅ All Courses', desc:'Agency sees every active course on the platform' },
+                        { v:'categories', label:'📂 By Category', desc:'Select which exam categories are visible' },
+                        { v:'specific', label:'🔍 Specific Courses', desc:'Hand-pick individual courses' },
+                      ].map(opt => (
+                        <label key={opt.v} className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition ${courseAccessType===opt.v ? 'border-blue-500 bg-blue-50' : 'border-slate-100 hover:border-slate-200'}`}>
+                          <input type="radio" className="mt-0.5" checked={courseAccessType===opt.v} onChange={() => { setCourseAccessType(opt.v); setCourseAccessData([]); }} />
+                          <div>
+                            <div className="font-bold text-sm text-slate-800">{opt.label}</div>
+                            <div className="text-xs text-slate-400">{opt.desc}</div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+
+                    {courseAccessType === 'categories' && (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {['IELTS','PTE','TOEFL','GERMAN','FRENCH','SPOKEN_ENGLISH','OTHER'].map(cat => {
+                          const icons = { IELTS:'🇬🇧', PTE:'🎓', TOEFL:'🌐', GERMAN:'🇩🇪', FRENCH:'🇫🇷', SPOKEN_ENGLISH:'🗣️', OTHER:'📚' };
+                          const checked = courseAccessData.includes(cat);
+                          return (
+                            <label key={cat} className={`flex items-center gap-2 p-2.5 rounded-xl border-2 cursor-pointer text-sm font-semibold transition ${checked ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-slate-100 hover:border-slate-200 text-slate-600'}`}>
+                              <input type="checkbox" checked={checked} onChange={() => setCourseAccessData(prev => prev.includes(cat) ? prev.filter(x=>x!==cat) : [...prev, cat])} className="accent-blue-600" />
+                              <span>{icons[cat]} {cat.replace('_',' ')}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {courseAccessType === 'specific' && (
+                      <div className="space-y-1 max-h-48 overflow-y-auto">
+                        {(accessData.allCourses || []).map(c => {
+                          const checked = courseAccessData.includes(c.id);
+                          return (
+                            <label key={c.id} className={`flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer text-sm transition ${checked ? 'bg-blue-50 text-blue-800 font-semibold' : 'hover:bg-slate-50 text-slate-600'}`}>
+                              <input type="checkbox" checked={checked} onChange={() => setCourseAccessData(prev => prev.includes(c.id) ? prev.filter(x=>x!==c.id) : [...prev, c.id])} className="accent-blue-600" />
+                              <span className="flex-1 truncate">{c.title}</span>
+                              <span className="text-xs text-slate-400 flex-shrink-0">{c.category}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* BATCHES */}
+                  <div className="border border-slate-200 rounded-2xl p-4">
+                    <label className="label font-black text-slate-800 text-sm mb-3 block">📅 Batch Access</label>
+                    <div className="space-y-2 mb-4">
+                      {[
+                        { v:'all', label:'✅ All Batches', desc:'Agency sees all active batches' },
+                        { v:'specific', label:'🔍 Specific Batches', desc:'Select which batches this agency can enroll students into' },
+                      ].map(opt => (
+                        <label key={opt.v} className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition ${batchAccessType===opt.v ? 'border-blue-500 bg-blue-50' : 'border-slate-100 hover:border-slate-200'}`}>
+                          <input type="radio" className="mt-0.5" checked={batchAccessType===opt.v} onChange={() => { setBatchAccessType(opt.v); setBatchAccessData([]); }} />
+                          <div>
+                            <div className="font-bold text-sm text-slate-800">{opt.label}</div>
+                            <div className="text-xs text-slate-400">{opt.desc}</div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+
+                    {batchAccessType === 'specific' && (
+                      <div className="space-y-1 max-h-48 overflow-y-auto">
+                        {(accessData.allBatches || []).map(b => {
+                          const checked = batchAccessData.includes(b.id);
+                          return (
+                            <label key={b.id} className={`flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer text-sm transition ${checked ? 'bg-blue-50 text-blue-800 font-semibold' : 'hover:bg-slate-50 text-slate-600'}`}>
+                              <input type="checkbox" checked={checked} onChange={() => setBatchAccessData(prev => prev.includes(b.id) ? prev.filter(x=>x!==b.id) : [...prev, b.id])} className="accent-blue-600" />
+                              <span className="flex-1 truncate">{b.name}</span>
+                              <span className="text-xs text-slate-400 flex-shrink-0">{b.category} · {b.class_time?.slice(0,5)||'—'}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {accessMsg && <p className={`text-sm font-semibold ${accessMsg.startsWith('✅') ? 'text-emerald-600' : 'text-red-600'}`}>{accessMsg}</p>}
+                  <button onClick={saveAccess} disabled={accessSaving}
+                    className="w-full py-3 rounded-xl font-black text-white transition hover:opacity-90 disabled:opacity-50 bg-blue-600">
+                    {accessSaving ? 'Saving…' : '💾 Save Access Settings'}
+                  </button>
+                </>
+              )}
+            </div>
           )}
 
           {tab === 'portal' && (
@@ -1030,6 +1156,11 @@ function Agencies() {
             </div>
             <div className="flex gap-2 mb-3 flex-wrap items-center">
               <Badge status={ag.status} />
+              {ag.tier && (() => {
+                const tierMeta = { Diamond:{bg:'#b9f2ff',color:'#0ea5e9',emoji:'💎'}, Platinum:{bg:'#e8e8f0',color:'#6366f1',emoji:'🥈'}, Gold:{bg:'#fef9c3',color:'#ca8a04',emoji:'🥇'}, Silver:{bg:'#f1f5f9',color:'#64748b',emoji:'🪙'}, Bronze:{bg:'#fef3c7',color:'#b45309',emoji:'🏅'}, Green:{bg:'#d1fae5',color:'#059669',emoji:'🌿'} };
+                const t = tierMeta[ag.tier] || tierMeta.Bronze;
+                return <span className="text-xs font-black px-2 py-0.5 rounded-full" style={{background:t.bg,color:t.color}}>{t.emoji} {ag.tier}</span>;
+              })()}
               <span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">/agent/{ag.slug}</span>
               <AgencyLogoUpload agency={ag} onDone={load} />
               <button onClick={() => setEditModal(ag)}
@@ -2095,6 +2226,9 @@ function BatchesAdmin() {
     trainer_name: '', max_students: 20, jitsi_room_prefix: ''
   });
   const [msg, setMsg] = useState('');
+  // inline date editing state: { [batchId]: { start_date, end_date } }
+  const [editDates, setEditDates] = useState({});
+  const [savingDate, setSavingDate] = useState(null);
 
   useEffect(() => {
     loadBatches();
@@ -2116,6 +2250,33 @@ function BatchesAdmin() {
     } catch (e) { setMsg(e.message); }
   };
 
+  const startEditDates = (b) => {
+    setEditDates(prev => ({
+      ...prev,
+      [b.id]: {
+        start_date: b.start_date ? b.start_date.split('T')[0] : '',
+        end_date: b.end_date ? b.end_date.split('T')[0] : '',
+      }
+    }));
+  };
+
+  const cancelEditDates = (batchId) => {
+    setEditDates(prev => { const n = { ...prev }; delete n[batchId]; return n; });
+  };
+
+  const saveDates = async (batchId) => {
+    setSavingDate(batchId);
+    try {
+      const { start_date, end_date } = editDates[batchId];
+      await api.put(`/admin/batches/${batchId}`, { start_date, end_date });
+      setMsg('Dates updated!');
+      cancelEditDates(batchId);
+      loadBatches();
+      setTimeout(() => setMsg(''), 3000);
+    } catch (e) { setMsg(e.message); }
+    finally { setSavingDate(null); }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -2123,7 +2284,7 @@ function BatchesAdmin() {
         <button className="btn-primary" onClick={() => setShowForm(!showForm)}>+ Create Batch</button>
       </div>
 
-      {msg && <div className="mb-4 text-sm text-red-600">{msg}</div>}
+      {msg && <div className="mb-4 text-sm p-3 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200">{msg}</div>}
 
       {showForm && (
         <form onSubmit={handleSubmit} className="card mb-6">
@@ -2186,25 +2347,72 @@ function BatchesAdmin() {
       <div className="card">
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Batch</th><th>Agency</th><th>Course</th><th>Schedule</th><th>Students</th><th>Status</th><th>Meeting ID</th></tr></thead>
+            <thead><tr><th>Batch</th><th>Agency</th><th>Course</th><th>Schedule</th><th>Dates</th><th>Students</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>
-              {batches.map(b => (
-                <tr key={b.id}>
-                  <td>
-                    <div className="font-semibold text-slate-900">{b.name}</div>
-                    <div className="text-xs text-slate-400">{b.trainer_name || 'No trainer assigned'}</div>
-                  </td>
-                  <td>{b.agency_name}</td>
-                  <td>{b.course_title}</td>
-                  <td>
-                    <div className="text-sm">{b.schedule_days}</div>
-                    <div className="text-xs text-slate-400">{b.class_time} ({b.duration_minutes} min)</div>
-                  </td>
-                  <td className="font-semibold">{b.enrolled_students || 0} / {b.max_students}</td>
-                  <td><Badge status={b.status} /></td>
-                  <td><span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">{b.jitsi_meeting_id?.slice(0, 20)}...</span></td>
-                </tr>
-              ))}
+              {batches.map(b => {
+                const isEditing = !!editDates[b.id];
+                return (
+                  <tr key={b.id}>
+                    <td>
+                      <div className="font-semibold text-slate-900">{b.name}</div>
+                      <div className="text-xs text-slate-400">{b.trainer_name || 'No trainer assigned'}</div>
+                    </td>
+                    <td>{b.agency_name}</td>
+                    <td>{b.course_title}</td>
+                    <td>
+                      <div className="text-sm">{b.schedule_days}</div>
+                      <div className="text-xs text-slate-400">{b.class_time} ({b.duration_minutes} min)</div>
+                    </td>
+                    <td>
+                      {isEditing ? (
+                        <div className="space-y-1 min-w-[200px]">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase">Start Date</label>
+                            <input type="date" className="input text-xs py-1"
+                              value={editDates[b.id].start_date}
+                              onChange={e => setEditDates(prev => ({ ...prev, [b.id]: { ...prev[b.id], start_date: e.target.value } }))} />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase">Tentative End Date</label>
+                            <input type="date" className="input text-xs py-1"
+                              value={editDates[b.id].end_date}
+                              onChange={e => setEditDates(prev => ({ ...prev, [b.id]: { ...prev[b.id], end_date: e.target.value } }))} />
+                          </div>
+                          <div className="flex gap-1 pt-1">
+                            <button
+                              onClick={() => saveDates(b.id)}
+                              disabled={savingDate === b.id}
+                              className="text-xs px-2.5 py-1 rounded-lg font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 transition">
+                              {savingDate === b.id ? '...' : 'Save'}
+                            </button>
+                            <button
+                              onClick={() => cancelEditDates(b.id)}
+                              className="text-xs px-2.5 py-1 rounded-lg font-semibold border border-slate-200 text-slate-500 hover:bg-slate-50 transition">
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-slate-600 space-y-0.5">
+                          <div>{b.start_date ? b.start_date.split('T')[0] : '—'}</div>
+                          {b.end_date && <div className="text-slate-400">→ {b.end_date.split('T')[0]}</div>}
+                        </div>
+                      )}
+                    </td>
+                    <td className="font-semibold">{b.enrolled_students || 0} / {b.max_students}</td>
+                    <td><Badge status={b.status} /></td>
+                    <td>
+                      {!isEditing && (
+                        <button
+                          onClick={() => startEditDates(b)}
+                          className="text-xs px-3 py-1.5 rounded-lg font-bold border border-blue-200 text-blue-600 hover:bg-blue-50 transition">
+                          ✏️ Edit Dates
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

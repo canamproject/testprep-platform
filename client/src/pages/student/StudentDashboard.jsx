@@ -100,7 +100,14 @@ function CourseCatalog({ accent, user, onEnrolled, focusCourseId }) {
   const baseVisible = filter === 'ALL' ? courses : courses.filter(c => c.category === filter);
   const visible = focusCourseId ? courses.filter(c => c.id === focusCourseId) : baseVisible;
 
-  if (loading) return <div className="text-slate-400 text-sm">Loading courses...</div>;
+  if (loading) return (
+    <div className="space-y-4 animate-pulse">
+      <div className="h-8 w-48 rounded-xl bg-slate-200" />
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {[...Array(6)].map((_,i) => <div key={i} className="h-40 rounded-2xl bg-slate-100" style={{ animationDelay:`${i*60}ms` }} />)}
+      </div>
+    </div>
+  );
 
   return (
     <div>
@@ -247,18 +254,34 @@ function CourseCatalog({ accent, user, onEnrolled, focusCourseId }) {
 function BatchBrowser({ accent, user }) {
   const [batches, setBatches]   = useState([]);
   const [myBatches, setMyBatches] = useState([]);
+  const [courses, setCourses]   = useState([]);
+  const [liveLinks, setLiveLinks] = useState({}); // bulk live-link info keyed by batchId
   const [loading, setLoading]   = useState(true);
   const [joining, setJoining]   = useState(null);
   const [msg, setMsg]           = useState('');
   const [tab, setTab]           = useState('available'); // available | mine
+  const [availSubTab, setAvailSubTab] = useState('live'); // live | online
 
   const load = useCallback(() => {
+    // Fetch available batches, enrolled batches, and ALL live links in one parallel shot
     Promise.all([
       api.get('/student/available-batches'),
       api.get('/student/my-batches'),
-    ]).then(([avail, mine]) => {
+      api.get('/student/today-live-links').catch(() => ({})),
+    ]).then(([avail, mine, links]) => {
       setBatches(avail);
       setMyBatches(mine);
+      setLiveLinks(links);
+      // Derive unique courses from batch data for any course-filter UI
+      const seen = new Set();
+      const cats = [];
+      avail.forEach(b => {
+        if (b.course_id && !seen.has(b.course_id)) {
+          seen.add(b.course_id);
+          cats.push({ id: b.course_id, title: b.course_title, category: b.category });
+        }
+      });
+      setCourses(cats);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -278,7 +301,16 @@ function BatchBrowser({ accent, user }) {
     }
   };
 
-  if (loading) return <div className="text-slate-400 text-sm">Loading batches...</div>;
+  if (loading) return (
+    <div className="space-y-3 animate-pulse">
+      <div className="h-8 w-48 rounded-xl bg-slate-200" />
+      {[...Array(4)].map((_,i) => <div key={i} className="h-14 rounded-2xl bg-slate-100" style={{ animationDelay:`${i*60}ms` }} />)}
+    </div>
+  );
+
+  // Split available batches
+  const liveBatches = batches.filter(b => b.start_date && b.class_time);
+  const onlineCourseBatches = batches.filter(b => !b.start_date || !b.class_time);
 
   return (
     <div>
@@ -290,9 +322,9 @@ function BatchBrowser({ accent, user }) {
         </div>
       )}
 
-      {/* Tab toggle */}
+      {/* Main tab toggle */}
       <div className="flex bg-slate-100 rounded-xl p-1 mb-6 gap-1 w-fit">
-        {[['available','Available Batches'],['mine','My Batches']].map(([k,l]) => (
+        {[['available','Browse'],['mine','My Batches']].map(([k,l]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${tab===k ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}>
             {l} {k === 'mine' && myBatches.length > 0 && <span className="ml-1 bg-emerald-500 text-white text-xs rounded-full px-1.5 py-0.5">{myBatches.length}</span>}
@@ -301,19 +333,60 @@ function BatchBrowser({ accent, user }) {
       </div>
 
       {tab === 'available' && (
+        <>
+          {/* Sub-tabs: Live Classes vs Online Courses */}
+          <div className="flex gap-3 mb-5">
+            <button
+              onClick={() => setAvailSubTab('live')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${availSubTab === 'live' ? 'text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+              style={availSubTab === 'live' ? { background: accent, borderColor: accent } : {}}>
+              🎯 Live Classes
+              {liveBatches.length > 0 && <span className={`text-xs rounded-full px-1.5 py-0.5 font-black ${availSubTab === 'live' ? 'bg-white/30 text-white' : 'bg-indigo-100 text-indigo-700'}`}>{liveBatches.length}</span>}
+            </button>
+            <button
+              onClick={() => setAvailSubTab('online')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${availSubTab === 'online' ? 'text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+              style={availSubTab === 'online' ? { background: accent, borderColor: accent } : {}}>
+              📚 Online Courses
+              {courses.length > 0 && <span className={`text-xs rounded-full px-1.5 py-0.5 font-black ${availSubTab === 'online' ? 'bg-white/30 text-white' : 'bg-purple-100 text-purple-700'}`}>{courses.length}</span>}
+            </button>
+          </div>
+
+          {availSubTab === 'online' && (
+            <div className="card p-6 text-center">
+              <p className="text-4xl mb-3">📚</p>
+              <p className="font-bold text-slate-700 text-base mb-1">Online Courses</p>
+              <p className="text-sm text-slate-400 mb-5">Self-paced courses you can enroll in anytime. No fixed schedule required.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-left">
+                {courses.slice(0, 6).map(c => (
+                  <div key={c.id} className="flex items-center gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50">
+                    <span className="text-2xl">{catIcons[c.category] || '📖'}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-sm text-slate-900 truncate">{c.title}</div>
+                      <div className="text-xs text-slate-400">{c.duration_weeks}w · ₹{Number(c.price || 0).toLocaleString('en-IN')}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {courses.length === 0 && <p className="text-slate-400 text-sm">No courses available yet.</p>}
+              <p className="text-xs text-slate-400 mt-4">To enroll in online courses, visit the <strong>Course Catalog</strong> section.</p>
+            </div>
+          )}
+
+          {availSubTab === 'live' && (
         <div className="space-y-4">
           {batches.some(b => b.already_joined) && (
             <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-700 font-semibold flex items-center gap-2 mb-2">
               ✅ Batches you've already joined are shown with a green badge — check "My Batches" tab to see them.
             </div>
           )}
-          {batches.length === 0 ? (
+          {liveBatches.length === 0 ? (
             <div className="card text-center py-12">
               <p className="text-4xl mb-3">📅</p>
-              <p className="text-slate-500 font-semibold">No active batches available</p>
-              <p className="text-sm text-slate-400 mt-1">Your academy hasn't scheduled any batches yet.</p>
+              <p className="text-slate-500 font-semibold">No live class batches available</p>
+              <p className="text-sm text-slate-400 mt-1">Your academy hasn't scheduled any live batches yet.</p>
             </div>
-          ) : batches.map(b => {
+          ) : liveBatches.map(b => {
             const color = catColors[b.category] || b.brand_color || accent;
             const isFull = b.enrolled_count >= b.max_students;
             return (
@@ -377,6 +450,8 @@ function BatchBrowser({ accent, user }) {
             );
           })}
         </div>
+          )} {/* end availSubTab === 'live' */}
+        </> /* end tab === 'available' */
       )}
 
       {tab === 'mine' && (
@@ -424,12 +499,118 @@ function BatchBrowser({ accent, user }) {
                     {b.demo_expires_at && (
                       <p className="text-xs text-amber-600 mt-2 font-medium">⚠️ Demo expires: {new Date(b.demo_expires_at).toLocaleDateString()}</p>
                     )}
+                    {/* Live class link widget — uses pre-fetched bulk data (no per-batch request) */}
+                    <LiveClassLink batchId={b.batch_id || b.id} accent={color} classTime={b.class_time} accessType={b.access_type} liveInfo={liveLinks[b.batch_id || b.id]} />
                   </div>
                 </div>
               </div>
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── DEMO JOIN MODAL ───────────────────────────────────────────
+function DemoJoinModal({ link, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-4 text-center">
+          <div className="text-3xl mb-1">⚠️</div>
+          <h3 className="text-lg font-black text-white">Demo Access — 5 Minutes Only</h3>
+        </div>
+        <div className="p-6">
+          <p className="text-slate-700 text-sm mb-5 leading-relaxed">
+            You are joining as a demo student. You will be <strong className="text-red-600">automatically removed after 5 minutes</strong>.
+            After removal, you can pay to get full access to all classes.
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="flex-1 py-2.5 rounded-xl border-2 border-slate-200 text-slate-600 text-sm font-bold hover:bg-slate-50 transition">
+              Cancel
+            </button>
+            <a
+              href={link}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={onClose}
+              className="flex-1 py-2.5 rounded-xl text-white text-sm font-black text-center transition hover:opacity-90 shadow-sm"
+              style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
+              🎯 Join 5-Min Demo
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── LIVE CLASS LINK WIDGET ────────────────────────────────────
+// Pass `liveInfo` prop (pre-fetched) to skip the per-batch HTTP round-trip
+function LiveClassLink({ batchId, accent, classTime, accessType, liveInfo: prefetched }) {
+  const [info, setInfo] = useState(prefetched || null);
+  const [loading, setLoading] = useState(!prefetched);
+  const [now, setNow] = useState(new Date());
+  const [showDemoModal, setShowDemoModal] = useState(false);
+
+  useEffect(() => {
+    if (prefetched) { setInfo(prefetched); setLoading(false); return; }
+    api.get(`/student/today-live-link/${batchId}`)
+      .then(setInfo)
+      .catch(() => setInfo(null))
+      .finally(() => setLoading(false));
+  }, [batchId, prefetched]);
+
+  // Tick every 30s to update countdown
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  if (loading) return null;
+  if (!info) return null;
+
+  // Demo = full trial access (no restriction), same as full/trial enrolled
+  // accessType: 'full' | 'trial' | 'demo' — all get the same green join button
+
+  if (info.available) {
+    return (
+      <a
+        href={info.link}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-3 flex items-center justify-center gap-2 w-full py-2.5 rounded-xl font-black text-white text-sm transition hover:opacity-90 shadow-sm animate-pulse"
+        style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)' }}>
+        <span className="w-2 h-2 rounded-full bg-white inline-block" />
+        {info.is_live ? '🔴 Join Live Class Now' : '🔴 Join Live Class (Starting Soon)'}
+      </a>
+    );
+  }
+
+  // Not available — show next class info
+  const nextDate = info.next_class ? new Date(info.next_class) : null;
+  if (!nextDate) return null;
+
+  const today = new Date();
+  const isToday = nextDate.toDateString() === today.toDateString();
+  const minsUntil = Math.ceil((nextDate - now) / 60000);
+  const hoursUntil = Math.ceil(minsUntil / 60);
+
+  return (
+    <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+      <span className="text-slate-400">📅</span>
+      {isToday ? (
+        <span className="text-slate-600">
+          Class starts at <strong>{nextDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}</strong>
+          {minsUntil > 0 && <span className="text-slate-400 ml-1">({minsUntil < 60 ? `${minsUntil} min` : `${hoursUntil}h`} away)</span>}
+        </span>
+      ) : (
+        <span className="text-slate-600">
+          Next class: <strong>{nextDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</strong>
+        </span>
       )}
     </div>
   );
@@ -714,6 +895,7 @@ function motivation(pct) {
 // ── MY COURSES (Dashboard) ───────────────────────────────────
 function Dashboard({ enrollments, accent, user, onNavigate }) {
   const [myBatches, setMyBatches] = useState([]);
+  const [liveLinks, setLiveLinks] = useState({}); // { [batchId]: liveInfo }
   const paidCount   = enrollments.filter(e => e.payment_status === 'paid').length;
   const pendingCount = enrollments.filter(e => e.payment_status !== 'paid').length;
   const avgProgress = enrollments.length
@@ -721,7 +903,14 @@ function Dashboard({ enrollments, accent, user, onNavigate }) {
     : 0;
 
   useEffect(() => {
-    api.get('/student/my-batches').then(setMyBatches).catch(() => {});
+    // Fetch my batches + all live links in parallel — eliminates N+1 per-batch requests
+    Promise.all([
+      api.get('/student/my-batches').catch(() => []),
+      api.get('/student/today-live-links').catch(() => ({})),
+    ]).then(([batches, links]) => {
+      setMyBatches(batches);
+      setLiveLinks(links);
+    });
   }, []);
 
   const myCategories = [...new Set(enrollments.map(e => e.category).filter(Boolean))];
@@ -1315,7 +1504,36 @@ export default function StudentDashboard() {
   const agencyName    = enrollments[0]?.agency_name || user?.agency_name || 'TestPrep';
   const enrichedUser  = { ...user, brand_color: accent, agency_logo: agencyLogo, agency_name: agencyName };
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-400">Loading...</div>;
+  if (loading) return (
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      {/* Skeleton top bar */}
+      <div className="h-14 bg-white border-b border-slate-100 flex items-center px-6 gap-4">
+        <div className="w-8 h-8 rounded-full bg-slate-200 animate-pulse" />
+        <div className="w-32 h-4 rounded bg-slate-200 animate-pulse" />
+        <div className="flex-1" />
+        <div className="w-20 h-4 rounded bg-slate-200 animate-pulse" />
+      </div>
+      <div className="flex flex-1">
+        {/* Skeleton sidebar */}
+        <div className="hidden md:flex w-56 bg-white border-r border-slate-100 flex-col gap-2 p-4">
+          {[...Array(7)].map((_,i) => (
+            <div key={i} className="h-9 rounded-xl bg-slate-100 animate-pulse" style={{ animationDelay: `${i*60}ms` }} />
+          ))}
+        </div>
+        {/* Skeleton main */}
+        <div className="flex-1 p-6 space-y-4">
+          <div className="h-8 w-48 rounded-xl bg-slate-200 animate-pulse" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[...Array(4)].map((_,i) => (
+              <div key={i} className="h-24 rounded-2xl bg-white border border-slate-100 animate-pulse" style={{ animationDelay: `${i*80}ms` }} />
+            ))}
+          </div>
+          <div className="h-48 rounded-2xl bg-white border border-slate-100 animate-pulse" />
+          <div className="h-32 rounded-2xl bg-white border border-slate-100 animate-pulse" style={{ animationDelay: '120ms' }} />
+        </div>
+      </div>
+    </div>
+  );
 
   // Clear course focus when switching away from catalog manually
   const handleSetSection = (s) => {

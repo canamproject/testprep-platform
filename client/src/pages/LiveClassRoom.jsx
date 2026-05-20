@@ -3,6 +3,17 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 
+function loadRazorpayScript() {
+  return new Promise(resolve => {
+    if (window.Razorpay) return resolve(true);
+    const s = document.createElement('script');
+    s.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    s.onload = () => resolve(true);
+    s.onerror = () => resolve(false);
+    document.body.appendChild(s);
+  });
+}
+
 export default function LiveClassRoom() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -14,6 +25,8 @@ export default function LiveClassRoom() {
   const [demoSecondsLeft, setDemoSecondsLeft] = useState(null);
   const [showPaywall, setShowPaywall]   = useState(false);
   const [zoomLaunched, setZoomLaunched] = useState(false);
+  const [payNowLoading, setPayNowLoading] = useState(false);
+  const [payNowMsg, setPayNowMsg]       = useState('');
   // One-time demo notice (shown once per session per class)
   const demoNoticeSeen = useRef(false);
   const [showDemoNotice, setShowDemoNotice] = useState(false);
@@ -188,6 +201,65 @@ export default function LiveClassRoom() {
   };
 
   const fmtTime = (secs) => `${Math.floor(secs/60)}:${(secs%60).toString().padStart(2,'0')}`;
+
+  // ─── Pay Now from paywall ─────────────────────────────────────
+  const handlePayNow = async () => {
+    if (!classInfo) return;
+    setPayNowLoading(true);
+    setPayNowMsg('');
+    try {
+      const cfg = await api.get('/student/payment-config');
+      if (cfg?.razorpay_key_id || process.env.REACT_APP_RAZORPAY_KEY_ID) {
+        // Razorpay gateway — create order via purchase endpoint
+        const res = await api.post('/student/purchase', {
+          course_id: classInfo.course_id,
+          type: 'batch',
+        });
+        if (res.gateway === 'razorpay') {
+          const ok = await loadRazorpayScript();
+          if (!ok) { setPayNowMsg('Could not load payment gateway. Try again.'); setPayNowLoading(false); return; }
+          new window.Razorpay({
+            key: res.key_id,
+            amount: res.amount * 100,
+            currency: 'INR',
+            name: classInfo.agency_name || 'TestPrep Platform',
+            description: res.course_title || classInfo.course_title,
+            order_id: res.order_id,
+            handler: async (payment) => {
+              try {
+                await api.post('/student/verify-payment', {
+                  ...payment,
+                  course_id: classInfo.course_id,
+                  amount: res.amount,
+                  discount: res.discount || 0,
+                });
+                setPayNowMsg('success');
+              } catch (e) { setPayNowMsg('err:' + e.message); }
+            },
+            prefill: { name: user?.name, email: user?.email },
+            theme: { color: '#1e40af' },
+          }).open();
+        } else {
+          setPayNowMsg('success');
+        }
+      } else {
+        // No Razorpay — redirect to student portal payments section
+        handleLeave(true);
+        navigate('/student', { state: { tab: 'payments' } });
+      }
+    } catch (e) {
+      // If purchase endpoint gives "Already enrolled" error, treat as success
+      if (e.message?.includes('Already enrolled')) {
+        setPayNowMsg('success');
+      } else {
+        // Fallback: redirect to student portal
+        handleLeave(true);
+        navigate('/student', { state: { tab: 'catalog' } });
+      }
+    } finally {
+      setPayNowLoading(false);
+    }
+  };
 
   // ─── WhatsApp helper ──────────────────────────────────────────
   const openWhatsApp = (msg) => {

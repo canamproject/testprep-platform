@@ -140,7 +140,7 @@ function Students({ accent, partnerPhone, agencyName, slug }) {
   useEffect(() => { load(); }, []);
 
   const base = window.location.origin;
-  const signupUrl = `${base}/${slug}/signup`;
+  const signupUrl = `${base}/${slug}`;
 
   const waStudent = (s, text) => {
     if (!s.phone) return alert('No phone number for this student.');
@@ -291,10 +291,27 @@ function Enrollments({ accent, partnerPhone }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-black text-slate-900">Enrollments</h2>
         <button className="btn-primary" style={{ background: accent }} onClick={() => setShowForm(!showForm)}>+ Enroll Student</button>
       </div>
+
+      {/* ── Section tabs ── */}
+      <div className="flex gap-3 mb-6">
+        <button
+          onClick={() => setActiveSection('live')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${activeSection === 'live' ? 'text-white border-current' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+          style={activeSection === 'live' ? { background: accent, borderColor: accent } : {}}>
+          🎯 Live Classes
+        </button>
+        <button
+          onClick={() => setActiveSection('online')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${activeSection === 'online' ? 'text-white border-current' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+          style={activeSection === 'online' ? { background: accent, borderColor: accent } : {}}>
+          📚 Online Learning
+        </button>
+      </div>
+
       {msg && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-sm">{msg}</div>}
 
       {/* ── Filter bar ── */}
@@ -388,6 +405,8 @@ function Enrollments({ accent, partnerPhone }) {
           </table>
         </div>
       </div>
+
+      </> /* end activeSection === 'online' */}
     </div>
   );
 }
@@ -498,70 +517,341 @@ function Claim({ accent }) {
 }
 
 // ── CRM ──────────────────────────────────────────────────────
+// Source config — used in lead form + badges
+const LEAD_SOURCES = [
+  { value: 'Facebook',  icon: '👍', color: '#1877f2' },
+  { value: 'Instagram', icon: '📸', color: '#e1306c' },
+  { value: 'Google',    icon: '🔍', color: '#34a853' },
+  { value: 'YouTube',   icon: '▶️', color: '#ff0000' },
+  { value: 'WhatsApp',  icon: '💬', color: '#25d366' },
+  { value: 'Referral',  icon: '🤝', color: '#f59e0b' },
+  { value: 'Walk-in',   icon: '🚶', color: '#6366f1' },
+  { value: 'Website',   icon: '🌐', color: '#0ea5e9' },
+  { value: 'Manual',    icon: '✏️', color: '#94a3b8' },
+  { value: 'Other',     icon: '📌', color: '#64748b' },
+];
+const sourceConfig = (val) => LEAD_SOURCES.find(s => s.value === val) || { icon: '📌', color: '#94a3b8' };
+
 function CRM({ accent }) {
+  const [crmTab, setCrmTab] = useState('leads'); // leads | online
   const [leads, setLeads] = useState([]);
+  const [purchases, setPurchases] = useState([]);
+  const [purchasesLoaded, setPurchasesLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', phone: '', course_interest: '', notes: '' });
+  const [sourceFilter, setSourceFilter] = useState('All');
+  const BLANK_FORM = { name: '', email: '', phone: '', course_interest: '', notes: '', source: 'Manual', sub_source: '' };
+  const [form, setForm] = useState(BLANK_FORM);
   const [msg, setMsg] = useState('');
-  const load = () => api.get('/partner/leads').then(setLeads);
-  useEffect(() => { load(); }, []);
+
+  const loadLeads = () => api.get('/partner/leads').then(setLeads);
+  useEffect(() => { loadLeads(); }, []);
+
+  // Lazy-load purchases when Online tab first opens
+  useEffect(() => {
+    if (crmTab === 'online' && !purchasesLoaded) {
+      api.get('/partner/purchases').then(p => { setPurchases(p); setPurchasesLoaded(true); }).catch(() => setPurchasesLoaded(true));
+    }
+  }, [crmTab, purchasesLoaded]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     await api.post('/partner/leads', form);
-    setMsg('Lead added!'); setShowForm(false); setForm({ name: '', email: '', phone: '', course_interest: '', notes: '' }); load();
+    setMsg('Lead added!'); setShowForm(false); setForm(BLANK_FORM); loadLeads();
   };
 
   const updateStatus = async (id, status) => {
-    await api.put(`/partner/leads/${id}`, { status }); load();
+    await api.put(`/partner/leads/${id}`, { status }); loadLeads();
   };
 
   const stages = ['new', 'contacted', 'demo_done', 'enrolled', 'lost'];
-  const stageLabels = { new: 'New Leads', contacted: 'Contacted', demo_done: 'Demo Done', enrolled: 'Enrolled', lost: 'Lost' };
+  const stageLabels = { new: 'New', contacted: 'Contacted', demo_done: 'Demo Done', enrolled: 'Enrolled ✅', lost: 'Lost' };
   const stageColors = { new: '#3b82f6', contacted: '#f59e0b', demo_done: '#8b5cf6', enrolled: '#10b981', lost: '#ef4444' };
+
+  const allSources = ['All', ...new Set(leads.map(l => l.source || 'Manual').filter(Boolean))];
+  const filteredLeads = sourceFilter === 'All' ? leads : leads.filter(l => (l.source || 'Manual') === sourceFilter);
+
+  // Source breakdown stats for online purchases
+  const paidPurchases = purchases.filter(p => p.payment_status === 'paid');
+  const pendingPurchases = purchases.filter(p => p.payment_status === 'pending');
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-black text-slate-900">CRM — Lead Tracking <span className="text-base font-normal text-slate-400 ml-2">{leads.length} total</span></h2>
-        <button className="btn-primary" style={{ background: accent }} onClick={() => setShowForm(!showForm)}>+ Add Lead</button>
-      </div>
-      {msg && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-sm">{msg}</div>}
-      {showForm && (
-        <div className="card mb-6">
-          <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-4">
-            <div><label>Name</label><input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-            <div><label>Email</label><input value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
-            <div><label>Phone</label><input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></div>
-            <div><label>Course Interest</label><input value={form.course_interest} onChange={e => setForm({ ...form, course_interest: e.target.value })} placeholder="IELTS, PTE..." /></div>
-            <div className="col-span-2"><label>Notes</label><input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
-            <div className="col-span-3 flex gap-2"><button type="submit" className="btn-success">Add Lead</button><button type="button" className="btn-ghost" onClick={() => setShowForm(false)}>Cancel</button></div>
-          </form>
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h2 className="text-xl font-black text-slate-900">CRM & Lead Pipeline</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Track, nurture and convert your leads</p>
         </div>
-      )}
-      <div className="grid grid-cols-5 gap-3">
-        {stages.map(stage => (
-          <div key={stage} className="bg-slate-50 rounded-2xl p-3">
-            <div className="text-xs font-bold uppercase tracking-wide mb-3 flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full" style={{ background: stageColors[stage] }} />
-              {stageLabels[stage]}
-              <span className="ml-auto text-slate-400">{leads.filter(l => l.status === stage).length}</span>
-            </div>
-            {leads.filter(l => l.status === stage).map(lead => (
-              <div key={lead.id} className="bg-white rounded-xl p-3 mb-2 border border-slate-100 shadow-sm">
-                <div className="font-semibold text-sm text-slate-900 mb-1">{lead.name}</div>
-                <div className="text-xs text-slate-400 mb-2">{lead.course_interest}</div>
-                <select className="text-xs border border-slate-200 rounded-lg px-2 py-1 w-full" value={lead.status} onChange={e => updateStatus(lead.id, e.target.value)}>
-                  {stages.map(s => <option key={s} value={s}>{stageLabels[s]}</option>)}
-                </select>
-              </div>
-            ))}
-            {leads.filter(l => l.status === stage).length === 0 && (
-              <div className="text-xs text-slate-300 text-center py-4">Empty</div>
-            )}
-          </div>
+        {crmTab === 'leads' && (
+          <button className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black text-white shadow-sm hover:opacity-90 transition"
+            style={{ background: accent }} onClick={() => setShowForm(!showForm)}>
+            ➕ Add Lead
+          </button>
+        )}
+      </div>
+
+      {/* Tab switcher */}
+      <div className="flex bg-slate-100 rounded-xl p-1 mb-5 gap-1 w-fit">
+        {[['leads','📋 Manual Leads'],['online','🛒 Online Bookings']].map(([k,l]) => (
+          <button key={k} onClick={() => setCrmTab(k)}
+            className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${crmTab===k ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>
+            {l}
+            {k === 'leads' && <span className="ml-1.5 text-xs font-black" style={{ color: accent }}>{leads.length}</span>}
+            {k === 'online' && purchasesLoaded && <span className="ml-1.5 text-xs font-black" style={{ color: accent }}>{purchases.length}</span>}
+          </button>
         ))}
       </div>
+
+      {msg && <div className="mb-4 p-3 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-sm font-medium">{msg}</div>}
+
+      {/* ── MANUAL LEADS TAB ── */}
+      {crmTab === 'leads' && (
+        <div>
+          {showForm && (
+            <div className="card mb-5 border-l-4" style={{ borderLeftColor: accent }}>
+              <h3 className="font-black text-slate-800 text-sm mb-4">Add New Lead</h3>
+              <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div><label className="form-label">Name *</label><input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="form-input" placeholder="Full name" /></div>
+                <div><label className="form-label">Phone</label><input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} className="form-input" placeholder="+91..." /></div>
+                <div><label className="form-label">Email</label><input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className="form-input" placeholder="email@..." /></div>
+                <div><label className="form-label">Course Interest</label><input value={form.course_interest} onChange={e => setForm({ ...form, course_interest: e.target.value })} className="form-input" placeholder="IELTS, PTE, German..." /></div>
+                {/* Source selector */}
+                <div>
+                  <label className="form-label">Lead Source</label>
+                  <div className="flex flex-wrap gap-1.5 mt-1">
+                    {LEAD_SOURCES.map(s => (
+                      <button key={s.value} type="button"
+                        onClick={() => setForm({ ...form, source: s.value })}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border-2 transition-all"
+                        style={{
+                          borderColor: form.source === s.value ? s.color : '#e2e8f0',
+                          background: form.source === s.value ? s.color + '18' : 'white',
+                          color: form.source === s.value ? s.color : '#94a3b8',
+                        }}>
+                        {s.icon} {s.value}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="sm:col-span-2 lg:col-span-1"><label className="form-label">Notes</label><input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="form-input" placeholder="Any notes..." /></div>
+                <div className="col-span-full flex gap-2 pt-1">
+                  <button type="submit" className="px-5 py-2 rounded-xl text-xs font-black text-white hover:opacity-90 transition" style={{ background: accent }}>✅ Save Lead</button>
+                  <button type="button" className="px-5 py-2 rounded-xl text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50 transition" onClick={() => { setShowForm(false); setForm(BLANK_FORM); }}>Cancel</button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Source filter pills */}
+          {leads.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {allSources.map(s => {
+                const sc = s === 'All' ? { color: accent, icon: '🎯' } : sourceConfig(s);
+                return (
+                  <button key={s} onClick={() => setSourceFilter(s)}
+                    className="flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold border-2 transition-all"
+                    style={{
+                      borderColor: sourceFilter === s ? sc.color : '#e2e8f0',
+                      background: sourceFilter === s ? sc.color + '15' : 'white',
+                      color: sourceFilter === s ? sc.color : '#94a3b8',
+                    }}>
+                    {sc.icon} {s}
+                    <span className="ml-1 font-black">
+                      {s === 'All' ? leads.length : leads.filter(l => (l.source||'Manual') === s).length}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Kanban */}
+          <div className="grid grid-cols-5 gap-3">
+            {stages.map(stage => {
+              const stageleads = filteredLeads.filter(l => l.status === stage);
+              return (
+                <div key={stage} className="bg-slate-50 rounded-2xl p-3">
+                  <div className="text-xs font-bold uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: stageColors[stage] }} />
+                    <span className="truncate">{stageLabels[stage]}</span>
+                    <span className="ml-auto text-slate-400 font-black flex-shrink-0">{stageleads.length}</span>
+                  </div>
+                  {stageleads.map(lead => {
+                    const sc = sourceConfig(lead.source || 'Manual');
+                    return (
+                      <div key={lead.id} className="bg-white rounded-xl p-3 mb-2 border border-slate-100 shadow-sm">
+                        <div className="font-semibold text-sm text-slate-900 mb-1 truncate">{lead.name}</div>
+                        {lead.phone && <div className="text-xs text-slate-400 mb-1">📞 {lead.phone}</div>}
+                        {lead.course_interest && <div className="text-xs font-medium mb-2" style={{ color: accent }}>{lead.course_interest}</div>}
+                        {/* Source badge */}
+                        <div className="flex items-center gap-1 mb-2">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-0.5"
+                            style={{ background: sc.color + '15', color: sc.color }}>
+                            {sc.icon} {lead.source || 'Manual'}
+                          </span>
+                        </div>
+                        <select className="text-xs border border-slate-200 rounded-lg px-2 py-1 w-full bg-slate-50"
+                          value={lead.status} onChange={e => updateStatus(lead.id, e.target.value)}>
+                          {stages.map(s => <option key={s} value={s}>{stageLabels[s]}</option>)}
+                        </select>
+                      </div>
+                    );
+                  })}
+                  {stageleads.length === 0 && <div className="text-xs text-slate-300 text-center py-4">Empty</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── ONLINE BOOKINGS TAB (merged from Online Purchases) ── */}
+      {crmTab === 'online' && (
+        <div>
+          <p className="text-sm text-slate-500 mb-5">Students who discovered you online and self-enrolled via the course catalog.</p>
+
+          {/* Stats row */}
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            {[
+              { label: 'Total Bookings', v: purchases.length, color: accent },
+              { label: 'Confirmed Paid', v: paidPurchases.length, color: '#10b981' },
+              { label: 'Pending Payment', v: pendingPurchases.length, color: '#f59e0b' },
+            ].map(s => (
+              <div key={s.label} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">{s.label}</p>
+                <p className="text-2xl font-black" style={{ color: s.color }}>{s.v}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Source breakdown */}
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 mb-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-black text-slate-800">Booking Sources</h3>
+              <span className="text-xs text-slate-400">Track where students are finding you</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {LEAD_SOURCES.filter(s => ['Facebook','Instagram','Google','YouTube','WhatsApp','Website','Referral'].includes(s.value)).map(s => {
+                const cnt = purchases.filter(p => p.source === s.value).length;
+                return (
+                  <div key={s.value} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-100 bg-slate-50 text-xs">
+                    <span className="text-base">{s.icon}</span>
+                    <div>
+                      <div className="font-bold text-slate-700">{s.value}</div>
+                      <div className="font-black" style={{ color: s.color }}>{cnt} bookings</div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl border-2 border-dashed border-slate-200 bg-white text-xs cursor-pointer hover:bg-slate-50 transition"
+                title="Add UTM tracking to your sharing links to see source data here">
+                <span className="text-lg">📊</span>
+                <div>
+                  <div className="font-bold text-slate-400">Add UTM links</div>
+                  <div className="text-slate-300">Track ads →</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Pending payment alert */}
+          {pendingPurchases.length > 0 && (
+            <div className="mb-5">
+              <h3 className="text-sm font-black text-amber-600 mb-3 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                Pending Payment Confirmation ({pendingPurchases.length})
+              </h3>
+              <div className="card">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead><tr className="text-xs text-slate-400 uppercase border-b border-slate-100">
+                      <th className="text-left py-2 font-bold">Student</th>
+                      <th className="text-left py-2 font-bold">Course</th>
+                      <th className="text-left py-2 font-bold">Amount</th>
+                      <th className="text-left py-2 font-bold">Date</th>
+                      <th className="text-left py-2 font-bold">Action</th>
+                    </tr></thead>
+                    <tbody>{pendingPurchases.map(p => (
+                      <tr key={p.id} className="border-b border-slate-50 hover:bg-slate-50">
+                        <td className="py-2.5"><div className="font-semibold text-slate-900">{p.student_name}</div><div className="text-xs text-slate-400">{p.student_email}</div></td>
+                        <td className="py-2.5"><div className="font-medium">{p.course_title}</div></td>
+                        <td className="py-2.5 font-black text-slate-800">₹{p.fee_paid}</td>
+                        <td className="py-2.5 text-xs text-slate-400">{p.enrolled_at?.split('T')[0]}</td>
+                        <td className="py-2.5">
+                          {p.student_phone && (
+                            <button
+                              onClick={() => {
+                                const phone = p.student_phone.replace(/\D/g,'');
+                                const m = `Hi ${p.student_name}! Your payment of ₹${p.fee_paid} for "${p.course_title}" is pending. Please complete payment to activate access.`;
+                                window.open(`https://wa.me/${phone}?text=${encodeURIComponent(m)}`, '_blank');
+                              }}
+                              className="text-xs px-3 py-1.5 rounded-lg font-bold text-white hover:opacity-90 transition"
+                              style={{ background: '#25d366' }}>
+                              💬 WhatsApp
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Confirmed paid */}
+          {paidPurchases.length > 0 && (
+            <div>
+              <h3 className="text-sm font-black text-emerald-600 mb-3 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                Confirmed Enrollments ({paidPurchases.length})
+              </h3>
+              <div className="card">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead><tr className="text-xs text-slate-400 uppercase border-b border-slate-100">
+                      <th className="text-left py-2 font-bold">Student</th>
+                      <th className="text-left py-2 font-bold">Course</th>
+                      <th className="text-left py-2 font-bold">Amount</th>
+                      <th className="text-left py-2 font-bold">Source</th>
+                      <th className="text-left py-2 font-bold">Date</th>
+                    </tr></thead>
+                    <tbody>{paidPurchases.map(p => {
+                      const sc = sourceConfig(p.source || 'Website');
+                      return (
+                        <tr key={p.id} className="border-b border-slate-50 hover:bg-slate-50">
+                          <td className="py-2.5"><div className="font-semibold text-slate-900">{p.student_name}</div><div className="text-xs text-slate-400">{p.student_email}</div></td>
+                          <td className="py-2.5 font-medium">{p.course_title}</td>
+                          <td className="py-2.5 font-black text-emerald-600">₹{p.fee_paid}</td>
+                          <td className="py-2.5">
+                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ background: sc.color+'15', color: sc.color }}>
+                              {sc.icon} {p.source || 'Website'}
+                            </span>
+                          </td>
+                          <td className="py-2.5 text-xs text-slate-400">{p.enrolled_at?.split('T')[0]}</td>
+                        </tr>
+                      );
+                    })}</tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!purchasesLoaded && (
+            <div className="flex items-center justify-center py-16 text-slate-300">
+              <div className="animate-spin w-6 h-6 border-2 border-slate-300 border-t-slate-600 rounded-full mr-3" />
+              Loading bookings...
+            </div>
+          )}
+          {purchasesLoaded && purchases.length === 0 && (
+            <div className="text-center py-16 text-slate-400">
+              <div className="text-4xl mb-3">🛒</div>
+              <p className="font-semibold">No online bookings yet</p>
+              <p className="text-sm mt-1">Share your catalog link to start getting self-enrolled students.</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1066,7 +1356,7 @@ function PartnerPaymentConfig({ accent }) {
 function SignupLinkBox({ slug, accent, agencyName }) {
   const [copied, setCopied] = useState(false);
   const base = window.location.origin;
-  const signupUrl = `${base}/${slug}/signup`;
+  const signupUrl = `${base}/${slug}`;
   const shareMsg = `Take the first step toward your dream career today.\n👉 Sign up / log in to our online coaching academy and get started instantly.\n🚀 Learn, grow, and achieve your goals with ${agencyName || 'our Academy'}\n🔗 Click here to begin: ${signupUrl}`;
   const copy = () => { navigator.clipboard.writeText(signupUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); };
   const shareWA = () => window.open(`https://wa.me/?text=${encodeURIComponent(shareMsg)}`, '_blank');
@@ -1097,12 +1387,135 @@ function SignupLinkBox({ slug, accent, agencyName }) {
   );
 }
 
+// ── ENROLL STUDENT MODAL (per batch) ────────────────────────
+function EnrollStudentModal({ batch, accent, students, onClose, onSuccess }) {
+  const [mode, setMode] = useState('existing'); // 'existing' | 'new'
+  const [studentId, setStudentId] = useState('');
+  const [newStudent, setNewStudent] = useState({ name: '', email: '', phone: '' });
+  const [accessType, setAccessType] = useState('full');
+  const [submitting, setSubmitting] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setMsg('');
+    try {
+      const payload = { access_type: accessType };
+      if (mode === 'existing') {
+        if (!studentId) { setMsg('Please select a student.'); setSubmitting(false); return; }
+        payload.student_id = Number(studentId);
+      } else {
+        if (!newStudent.name || !newStudent.email) { setMsg('Name and email are required.'); setSubmitting(false); return; }
+        payload.new_student = newStudent;
+      }
+      await api.post(`/batches/${batch.id}/enroll`, payload);
+      setMsg('');
+      onSuccess('Student enrolled successfully!');
+    } catch (e) {
+      setMsg(e.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <h3 className="font-black text-slate-900">Enroll Student</h3>
+            <p className="text-xs text-slate-500 mt-0.5">{batch.name} · {batch.course_title}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-2xl leading-none">&times;</button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          {/* Mode toggle */}
+          <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
+            {[['existing', 'Existing Student'], ['new', 'Add New Student']].map(([k, l]) => (
+              <button key={k} type="button" onClick={() => setMode(k)}
+                className={`flex-1 px-3 py-2 text-xs font-bold rounded-lg transition-all ${mode === k ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}>
+                {l}
+              </button>
+            ))}
+          </div>
+
+          {mode === 'existing' ? (
+            <div>
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Select Student</label>
+              <select className="input" value={studentId} onChange={e => setStudentId(e.target.value)}>
+                <option value="">Choose a student...</option>
+                {students.map(s => <option key={s.id} value={s.id}>{s.name} — {s.email}</option>)}
+              </select>
+              {students.length === 0 && <p className="text-xs text-slate-400 mt-1">No students found. Add students first or use "Add New Student".</p>}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Full Name *</label>
+                <input className="input" required placeholder="Student name" value={newStudent.name}
+                  onChange={e => setNewStudent({ ...newStudent, name: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Email *</label>
+                <input type="email" className="input" required placeholder="student@email.com" value={newStudent.email}
+                  onChange={e => setNewStudent({ ...newStudent, email: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Phone</label>
+                <input className="input" placeholder="Mobile number" value={newStudent.phone}
+                  onChange={e => setNewStudent({ ...newStudent, phone: e.target.value })} />
+              </div>
+            </div>
+          )}
+
+          {/* Access type */}
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-2">Access Type</label>
+            <div className="flex gap-3">
+              {[
+                { v: 'full', l: '✅ Full', desc: 'Permanent enrolled access' },
+                { v: 'demo', l: '🎯 Demo', desc: 'Full trial access to all classes' },
+              ].map(({ v, l, desc }) => (
+                <label key={v} className={`flex flex-col items-center gap-1 px-4 py-3 rounded-xl border-2 cursor-pointer transition flex-1 justify-center text-sm font-bold
+                  ${accessType === v ? 'border-current text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                  style={accessType === v ? { background: accent, borderColor: accent } : {}}>
+                  <input type="radio" name="access_type" value={v} checked={accessType === v}
+                    onChange={() => setAccessType(v)} className="hidden" />
+                  <span>{l}</span>
+                  <span className={`text-[10px] font-medium leading-tight text-center ${accessType === v ? 'text-white/80' : 'text-slate-400'}`}>{desc}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {msg && <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm">{msg}</div>}
+
+          <div className="flex gap-2 pt-2">
+            <button type="submit" disabled={submitting}
+              className="flex-1 py-3 rounded-xl font-black text-white text-sm transition hover:opacity-90 disabled:opacity-50"
+              style={{ background: accent }}>
+              {submitting ? 'Enrolling...' : 'Confirm Enrollment'}
+            </button>
+            <button type="button" onClick={onClose}
+              className="px-4 py-3 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition">
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── BATCHES (Partner) ───────────────────────────────────────
 function PartnerBatches({ accent }) {
   const [batches, setBatches] = useState([]);
   const [courses, setCourses] = useState([]);
   const [facultyList, setFacultyList] = useState([]);
+  const [students, setStudents] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [enrollModal, setEnrollModal] = useState(null); // batch object
   const [form, setForm] = useState({
     course_id: '', name: '', description: '',
     start_date: '', end_date: '', schedule_days: 'Mon,Tue,Wed,Thu,Fri',
@@ -1115,6 +1528,7 @@ function PartnerBatches({ accent }) {
     loadBatches();
     api.get('/courses').then(setCourses);
     api.get('/partner/faculty').then(setFacultyList).catch(() => {});
+    api.get('/partner/students').then(setStudents).catch(() => {});
   }, []);
 
   const loadBatches = () => api.get('/partner/batches').then(setBatches);
@@ -1131,91 +1545,173 @@ function PartnerBatches({ accent }) {
     } catch (e) { setMsg(e.message); }
   };
 
+  // Split batches into Live Classes (have start_date + class_time) and others
+  const liveBatches = batches.filter(b => b.start_date && b.class_time);
+  const onlineBatches = batches.filter(b => !b.start_date || !b.class_time);
+
+  const [expandedBatch, setExpandedBatch] = useState(null);
+
+  const CAT_COLORS_P = { IELTS:'#2563eb', PTE:'#059669', TOEFL:'#7c3aed', GERMAN:'#d97706', FRENCH:'#db2777', SPOKEN_ENGLISH:'#0891b2', OTHER:'#475569' };
+  const CAT_ICONS_P  = { IELTS:'🇬🇧', PTE:'🎓', TOEFL:'🌐', GERMAN:'🇩🇪', FRENCH:'🇫🇷', SPOKEN_ENGLISH:'🗣️', OTHER:'📚' };
+  const fmtD = s => s ? new Date(s).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—';
+  const parseDayAbbr = str => (str||'').split(',').map(d=>({Mon:'Mo',Tue:'Tu',Wed:'We',Thu:'Th',Fri:'Fr',Sat:'Sa',Sun:'Su'})[d.trim()]||d.trim());
+
+  const BatchAccordion = ({ rows, sectionLabel }) => (
+    <div className="rounded-2xl border border-slate-200 overflow-hidden shadow-sm divide-y divide-slate-100 bg-white">
+      {rows.length === 0 ? (
+        <div className="text-center text-slate-400 text-sm py-10">
+          <div className="text-3xl mb-2">📭</div>
+          No {sectionLabel} batches yet.
+        </div>
+      ) : rows.map(b => {
+        const col = CAT_COLORS_P[b.category] || accent;
+        const isOpen = expandedBatch === b.id;
+        const enrolled = parseInt(b.enrolled_students) || 0;
+        const maxS = parseInt(b.max_students) || 0;
+        const seatPct = maxS > 0 ? Math.min(100, Math.round(enrolled / maxS * 100)) : 0;
+        const timeStr = b.class_time ? b.class_time.slice(0,5) : '—';
+        const endTime = (() => {
+          if (!b.class_time || !b.duration_minutes) return '';
+          const [h,m] = b.class_time.split(':').map(Number);
+          const tot = h*60 + m + parseInt(b.duration_minutes);
+          return ` – ${String(Math.floor(tot/60)).padStart(2,'0')}:${String(tot%60).padStart(2,'0')}`;
+        })();
+        const days = parseDayAbbr(b.schedule_days).join(' · ') || 'Daily';
+
+        return (
+          <div key={b.id} className="bg-white">
+            {/* ── Collapsed row ── */}
+            <button
+              onClick={() => setExpandedBatch(isOpen ? null : b.id)}
+              className="w-full flex items-center gap-0 text-left hover:bg-slate-50 transition-colors focus:outline-none group">
+              <div className="w-1 self-stretch flex-shrink-0" style={{ background: col }} />
+              <div className="flex-1 flex items-center gap-3 px-4 py-3.5 min-w-0">
+                {/* Icon */}
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center text-base flex-shrink-0"
+                  style={{ background: col + '18' }}>
+                  {CAT_ICONS_P[b.category] || '📚'}
+                </div>
+                {/* Name */}
+                <div className="flex-1 min-w-0">
+                  <div className="font-black text-slate-900 text-sm truncate">{b.name}</div>
+                  <div className="text-[11px] text-slate-400 truncate">{b.course_title}</div>
+                </div>
+                {/* Pills */}
+                <div className="hidden sm:flex items-center gap-2 flex-shrink-0">
+                  <span className="text-[11px] font-semibold bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full whitespace-nowrap">⏰ {timeStr}{endTime}</span>
+                  <span className="text-[11px] font-semibold bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full whitespace-nowrap">📆 {days}</span>
+                  <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap"
+                    style={{ background: col+'12', color: col }}>👥 {enrolled}/{maxS}</span>
+                </div>
+                {/* Status + chevron */}
+                <div className="flex items-center gap-2 flex-shrink-0 ml-1">
+                  <span className={`hidden md:inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${b.status==='active' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                    {b.status==='active' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"/>}{b.status}
+                  </span>
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center transition-all"
+                    style={{ background: isOpen ? col+'18' : '#f1f5f9' }}>
+                    <svg className="w-3.5 h-3.5 transition-transform duration-300" style={{ color: isOpen ? col : '#94a3b8', transform: isOpen ? 'rotate(180deg)' : 'none' }}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            </button>
+
+            {/* ── Expanded panel ── */}
+            {isOpen && (
+              <div className="px-5 pb-5 pt-2" style={{ borderTop:`1px solid ${col}20`, background: col+'04' }}>
+                {/* Detail grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+                  {[
+                    ['🗓 Dates',    `${fmtD(b.start_date)}${b.end_date ? ' → '+fmtD(b.end_date) : ' (Ongoing)'}`],
+                    ['⏰ Timings',  `${timeStr}${endTime} · ${b.duration_minutes||60} min`],
+                    ['📆 Days',     days],
+                    b.trainer_name && ['👨‍🏫 Trainer', b.trainer_name],
+                    ['👥 Seats',    `${enrolled} enrolled · ${Math.max(0, maxS-enrolled)} remaining`],
+                    ['📋 Status',   b.status],
+                  ].filter(Boolean).map(([lbl, val]) => (
+                    <div key={lbl} className="bg-white rounded-xl px-3 py-2.5 border border-slate-100 shadow-sm">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-0.5">{lbl}</div>
+                      <div className="text-xs font-bold text-slate-800 leading-snug">{val}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* Seat bar */}
+                {maxS > 0 && (
+                  <div className="mb-4">
+                    <div className="flex justify-between text-[10px] text-slate-400 mb-1 font-semibold">
+                      <span>Seat occupancy</span><span>{seatPct}%</span>
+                    </div>
+                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full" style={{ width:`${seatPct}%`, background: col }} />
+                    </div>
+                  </div>
+                )}
+                {/* Action buttons — Edit Dates is admin-only */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button
+                    onClick={() => setEnrollModal(b)}
+                    className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-xs font-black text-white hover:opacity-90 transition shadow-sm"
+                    style={{ background: col }}>
+                    ➕ Enroll Student
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-black text-slate-900">My Batches <span className="text-base font-normal text-slate-400 ml-2">{batches.length} total</span></h2>
-        <button className="btn-primary" style={{ background: accent }} onClick={() => setShowForm(!showForm)}>+ Create Batch</button>
-      </div>
-
-      {msg && <div className="mb-4 text-sm text-red-600">{msg}</div>}
-
-      {showForm && (
-        <form onSubmit={handleSubmit} className="card mb-6">
-          <h3 className="text-sm font-bold text-slate-700 mb-4">Create New Batch</h3>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="label">Course</label>
-              <select className="input" required value={form.course_id} onChange={e => setForm({...form, course_id: e.target.value})}>
-                <option value="">Select Course</option>
-                {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">Batch Name</label>
-              <input className="input" required placeholder="e.g., IELTS April Morning" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
-            </div>
-            <div>
-              <label className="label">Assign Faculty</label>
-              {facultyList.length > 0 ? (
-                <select className="input" value={form.trainer_id}
-                  onChange={e => {
-                    const f = facultyList.find(f => String(f.id) === e.target.value);
-                    setForm({ ...form, trainer_id: e.target.value, trainer_name: f?.name || '' });
-                  }}>
-                  <option value="">No faculty assigned</option>
-                  {facultyList.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                </select>
-              ) : (
-                <input className="input" placeholder="Trainer name (add faculty first)" value={form.trainer_name}
-                  onChange={e => setForm({ ...form, trainer_name: e.target.value })} />
-              )}
-            </div>
-            <div>
-              <label className="label">Start Date</label>
-              <input type="date" className="input" required value={form.start_date} onChange={e => setForm({...form, start_date: e.target.value})} />
-            </div>
-            <div>
-              <label className="label">Class Time</label>
-              <input type="time" className="input" required value={form.class_time} onChange={e => setForm({...form, class_time: e.target.value})} />
-            </div>
-            <div>
-              <label className="label">Max Students</label>
-              <input type="number" className="input" value={form.max_students} onChange={e => setForm({...form, max_students: parseInt(e.target.value)})} />
-            </div>
-          </div>
-          <div className="flex gap-2 mt-4">
-            <button type="submit" className="btn-primary" style={{ background: accent }}>Create Batch</button>
-            <button type="button" className="btn" onClick={() => setShowForm(false)}>Cancel</button>
-          </div>
-        </form>
-      )}
-
-      <div className="card">
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Batch</th><th>Course</th><th>Schedule</th><th>Students</th><th>Status</th><th>Meeting ID</th></tr></thead>
-            <tbody>
-              {batches.map(b => (
-                <tr key={b.id}>
-                  <td>
-                    <div className="font-semibold text-slate-900">{b.name}</div>
-                    <div className="text-xs text-slate-400">{b.trainer_name || 'No trainer assigned'}</div>
-                  </td>
-                  <td>{b.course_title}</td>
-                  <td>
-                    <div className="text-sm">{b.class_time} ({b.duration_minutes} min)</div>
-                    <div className="text-xs text-slate-400">{b.schedule_days}</div>
-                  </td>
-                  <td className="font-semibold">{b.enrolled_students || 0} / {b.max_students}</td>
-                  <td><Badge status={b.status} /></td>
-                  <td><span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">{b.jitsi_meeting_id?.slice(0, 20)}...</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <h2 className="text-xl font-black text-slate-900">My Batches <span className="text-base font-normal text-slate-400 ml-2">{batches.length} batches assigned</span></h2>
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold">
+          🔒 Batch creation is managed by admin
         </div>
       </div>
+
+      {msg && <div className="mb-4 p-3 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 text-sm">{msg}</div>}
+
+      {/* ── Section 1: Live Classes ── */}
+      <div className="mb-8">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-lg">🎯</span>
+          <h3 className="text-base font-black text-slate-900">Live Classes</h3>
+          <span className="text-xs bg-indigo-100 text-indigo-700 font-bold px-2 py-0.5 rounded-full">{liveBatches.length} batches</span>
+          <span className="text-[11px] text-slate-400 ml-1">— click a row to expand &amp; enroll students</span>
+        </div>
+        <BatchAccordion rows={liveBatches} sectionLabel="live" />
+      </div>
+
+      {/* ── Section 2: Online Learning ── */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-lg">📚</span>
+          <h3 className="text-base font-black text-slate-900">Online Learning</h3>
+          <span className="text-xs bg-purple-100 text-purple-700 font-bold px-2 py-0.5 rounded-full">{onlineBatches.length} batches</span>
+        </div>
+        <BatchAccordion rows={onlineBatches} sectionLabel="online" />
+      </div>
+
+      {/* Enroll modal */}
+      {enrollModal && (
+        <EnrollStudentModal
+          batch={enrollModal}
+          accent={accent}
+          students={students}
+          onClose={() => setEnrollModal(null)}
+          onSuccess={(successMsg) => {
+            setMsg(successMsg);
+            setEnrollModal(null);
+            loadBatches();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -2260,11 +2756,11 @@ const ALL_SECTIONS = [
   { id: 'overview', icon: '📊', label: 'Overview' },
   { id: 'students', icon: '👥', label: 'Students' },
   { id: 'enrollments', icon: '📚', label: 'Enrollments' },
-  { id: 'purchases', icon: '🛒', label: 'Online Bookings' },
   { id: 'batches', icon: '📅', label: 'Batches' },
-  { id: 'faculty', icon: '🎓', label: 'Faculty' },
+  // Faculty is admin-only — hidden from partner panel
   { id: 'liveclasses', icon: '📺', label: 'Live Classes' },
   { id: 'studentprogress', icon: '🏆', label: 'Student Progress' },
+  { id: 'sharing', icon: '📣', label: 'Share & Grow' },
   { id: 'earnings', icon: '💵', label: 'Earnings' },
   { id: 'claim', icon: '✅', label: 'Claim Commission' },
   { id: 'crm', icon: '📋', label: 'CRM / Leads' },
@@ -2355,9 +2851,9 @@ export default function PartnerDashboard() {
     overview: <Overview accent={accent} />,
     students: <Students accent={accent} partnerPhone={user?.agency_phone} agencyName={user?.agency_name} slug={slug} />,
     enrollments: <Enrollments accent={accent} partnerPhone={user?.agency_phone} />,
-    purchases: <OnlinePurchases accent={accent} partnerPhone={user?.agency_phone} />,
     batches: <PartnerBatches accent={accent} />,
-    faculty: <PartnerFaculty accent={accent} />,
+    sharing: <SharingPanel accent={accent} user={user} commRate={commRate} />,
+    // faculty: removed — managed by admin only
     liveclasses: <PartnerLiveClasses accent={accent} />,
     studentprogress: <StudentProgressOverview accent={accent} />,
     earnings: <Earnings accent={accent} commRate={commRate} />,

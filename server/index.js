@@ -1,5 +1,6 @@
 // ============================================================
 // TestPrepGPT White-Label Platform - Express API Server
+// v2.1 — course curriculum modules + lectures (2026-05-18)
 // ============================================================
 require('dotenv').config();
 const express = require('express');
@@ -125,9 +126,9 @@ app.get('/api/health', async (req, res) => {
     if (!p) throw new Error('No DB config');
     await p.query('SELECT 1');
     dbConnected = true;
-    res.json({ status: 'ok', db: 'connected' });
+    res.json({ status: 'ok', db: 'connected', version: '2.1', features: ['curriculum'] });
   } catch (e) {
-    res.json({ status: 'ok', db: 'disconnected', message: 'DB not configured yet' });
+    res.json({ status: 'ok', db: 'disconnected', version: '2.1', features: ['curriculum'], message: 'DB not configured yet' });
   }
 });
 
@@ -483,6 +484,175 @@ app.post('/api/admin/courses', authMiddleware(['super_admin']), async (req, res)
   res.json({ id: result.insertId });
 });
 
+// ─── COURSE CURRICULUM ────────────────────────────────────────
+
+// Public: get full curriculum for a course (no auth needed)
+app.get('/api/courses/:id/curriculum', async (req, res) => {
+  try {
+    const [[course]] = await getPool().query(
+      'SELECT id, title, category, description, price, duration_weeks FROM courses WHERE id=? AND is_active=1',
+      [req.params.id]
+    );
+    if (!course) return res.status(404).json(null);
+
+    const [modules] = await getPool().query(
+      'SELECT * FROM course_modules WHERE course_id=? AND is_active=1 ORDER BY sort_order ASC, id ASC',
+      [req.params.id]
+    );
+    for (const mod of modules) {
+      const [lectures] = await getPool().query(
+        'SELECT * FROM course_lectures WHERE module_id=? AND is_active=1 ORDER BY sort_order ASC, id ASC',
+        [mod.id]
+      );
+      mod.lectures = lectures;
+    }
+    const totalLectures = modules.reduce((s, m) => s + (m.lectures?.length || 0), 0);
+    const totalDuration  = modules.reduce((s, m) => s + m.lectures.reduce((ls, l) => ls + (l.duration_minutes || 0), 0), 0);
+    res.json({ ...course, modules, totalLectures, totalDuration });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: list modules (with their lectures) for a course
+app.get('/api/admin/courses/:id/modules', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [modules] = await getPool().query(
+      'SELECT * FROM course_modules WHERE course_id=? ORDER BY sort_order ASC, id ASC',
+      [req.params.id]
+    );
+    for (const mod of modules) {
+      const [lectures] = await getPool().query(
+        'SELECT * FROM course_lectures WHERE module_id=? ORDER BY sort_order ASC, id ASC',
+        [mod.id]
+      );
+      mod.lectures = lectures;
+    }
+    res.json(modules);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: get ALL modules from all courses (for library/copy picker)
+app.get('/api/admin/all-modules', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [modules] = await getPool().query(`
+      SELECT cm.*, c.title as course_title, c.category
+      FROM course_modules cm
+      JOIN courses c ON cm.course_id = c.id
+      ORDER BY c.category ASC, c.title ASC, cm.sort_order ASC
+    `);
+    for (const mod of modules) {
+      const [lectures] = await getPool().query(
+        'SELECT id, title, duration_minutes FROM course_lectures WHERE module_id=? ORDER BY sort_order ASC',
+        [mod.id]
+      );
+      mod.lectures = lectures;
+    }
+    res.json(modules);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: create a module for a course
+app.post('/api/admin/courses/:id/modules', authMiddleware(['super_admin']), async (req, res) => {
+  const { title, description, sort_order, price, is_free_preview } = req.body;
+  if (!title) return res.status(400).json({ error: 'Title required' });
+  try {
+    const [r] = await getPool().query(
+      'INSERT INTO course_modules (course_id, title, description, sort_order, price, is_free_preview) VALUES (?,?,?,?,?,?)',
+      [req.params.id, title, description || '', sort_order || 0, price || null, is_free_preview ? 1 : 0]
+    );
+    res.json({ id: r.insertId, message: 'Module created' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: update a module
+app.put('/api/admin/modules/:id', authMiddleware(['super_admin']), async (req, res) => {
+  const { title, description, sort_order, price, is_free_preview } = req.body;
+  try {
+    await getPool().query(
+      'UPDATE course_modules SET title=?, description=?, sort_order=?, price=?, is_free_preview=?, updated_at=NOW() WHERE id=?',
+      [title, description || '', sort_order || 0, price || null, is_free_preview ? 1 : 0, req.params.id]
+    );
+    res.json({ message: 'Module updated' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: delete a module (cascade deletes its lectures)
+app.delete('/api/admin/modules/:id', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    await getPool().query('DELETE FROM course_lectures WHERE module_id=?', [req.params.id]);
+    await getPool().query('DELETE FROM course_modules WHERE id=?', [req.params.id]);
+    res.json({ message: 'Module deleted' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: create a lecture inside a module
+app.post('/api/admin/modules/:moduleId/lectures', authMiddleware(['super_admin']), async (req, res) => {
+  const { title, description, duration_minutes, sort_order, price, is_free_preview, course_id, lesson_type } = req.body;
+  if (!title) return res.status(400).json({ error: 'Title required' });
+  try {
+    const [r] = await getPool().query(
+      'INSERT INTO course_lectures (module_id, course_id, title, description, duration_minutes, lesson_type, sort_order, price, is_free_preview) VALUES (?,?,?,?,?,?,?,?,?)',
+      [req.params.moduleId, course_id || null, title, description || '', duration_minutes || 60, lesson_type || 'video', sort_order || 0, price || null, is_free_preview ? 1 : 0]
+    );
+    res.json({ id: r.insertId, message: 'Lecture created' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: update a lecture
+app.put('/api/admin/lectures/:id', authMiddleware(['super_admin']), async (req, res) => {
+  const { title, description, duration_minutes, sort_order, price, is_free_preview, lesson_type } = req.body;
+  try {
+    await getPool().query(
+      'UPDATE course_lectures SET title=?, description=?, duration_minutes=?, lesson_type=?, sort_order=?, price=?, is_free_preview=?, updated_at=NOW() WHERE id=?',
+      [title, description || '', duration_minutes || 60, lesson_type || 'video', sort_order || 0, price || null, is_free_preview ? 1 : 0, req.params.id]
+    );
+    res.json({ message: 'Lecture updated' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: delete a lecture
+app.delete('/api/admin/lectures/:id', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    await getPool().query('DELETE FROM course_lectures WHERE id=?', [req.params.id]);
+    res.json({ message: 'Lecture deleted' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: deep-copy selected modules (with all their lectures) into a target course
+app.post('/api/admin/courses/:id/import-modules', authMiddleware(['super_admin']), async (req, res) => {
+  const { module_ids } = req.body;
+  if (!module_ids?.length) return res.status(400).json({ error: 'No modules selected' });
+  try {
+    let copied = 0;
+    for (const modId of module_ids) {
+      const [[srcMod]] = await getPool().query('SELECT * FROM course_modules WHERE id=?', [modId]);
+      if (!srcMod) continue;
+      const [[maxOrd]] = await getPool().query(
+        'SELECT COALESCE(MAX(sort_order),0) as m FROM course_modules WHERE course_id=?', [req.params.id]
+      );
+      const [newMod] = await getPool().query(
+        'INSERT INTO course_modules (course_id, title, description, sort_order, price, is_free_preview) VALUES (?,?,?,?,?,?)',
+        [req.params.id, srcMod.title, srcMod.description, maxOrd.m + 1, srcMod.price, srcMod.is_free_preview]
+      );
+      const [srcLecs] = await getPool().query(
+        'SELECT * FROM course_lectures WHERE module_id=? ORDER BY sort_order ASC', [modId]
+      );
+      for (const lec of srcLecs) {
+        await getPool().query(
+          'INSERT INTO course_lectures (module_id, course_id, title, description, duration_minutes, lesson_type, sort_order, price, is_free_preview) VALUES (?,?,?,?,?,?,?,?,?)',
+          [newMod.insertId, req.params.id, lec.title, lec.description, lec.duration_minutes, lec.lesson_type, lec.sort_order, lec.price, lec.is_free_preview]
+        );
+      }
+      copied++;
+    }
+    res.json({ message: `Copied ${copied} module(s) with all lectures`, copied });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Student: get their purchased modules/lectures (stub — future granular purchasing)
+app.get('/api/student/my-purchases', authMiddleware(['student']), async (req, res) => {
+  res.json({ modulePurchases: [], lecturePurchases: [] });
+});
+
 // ─── PARTNER: DASHBOARD ───────────────────────────────────────
 app.get('/api/partner/stats', authMiddleware(['partner_admin']), async (req, res) => {
   const agencyId = req.user.agency_id;
@@ -619,17 +789,20 @@ app.get('/api/partner/leads', authMiddleware(['partner_admin']), async (req, res
 });
 
 app.post('/api/partner/leads', authMiddleware(['partner_admin']), async (req, res) => {
-  const { name, email, phone, course_interest, notes } = req.body;
+  const { name, email, phone, course_interest, notes, source, sub_source } = req.body;
   const [result] = await getPool().query(
-    'INSERT INTO leads (agency_id, name, email, phone, course_interest, notes) VALUES (?,?,?,?,?,?)',
-    [req.user.agency_id, name, email, phone, course_interest, notes]
+    'INSERT INTO leads (agency_id, name, email, phone, course_interest, notes, source, sub_source) VALUES (?,?,?,?,?,?,?,?)',
+    [req.user.agency_id, name, email, phone, course_interest, notes, source || 'Manual', sub_source || null]
   );
   res.json({ id: result.insertId });
 });
 
 app.put('/api/partner/leads/:id', authMiddleware(['partner_admin']), async (req, res) => {
-  const { status, notes } = req.body;
-  await getPool().query('UPDATE leads SET status=?, notes=? WHERE id=? AND agency_id=?', [status, notes, req.params.id, req.user.agency_id]);
+  const { status, notes, source, sub_source } = req.body;
+  await getPool().query(
+    'UPDATE leads SET status=?, notes=?, source=COALESCE(?,source), sub_source=COALESCE(?,sub_source) WHERE id=? AND agency_id=?',
+    [status, notes, source || null, sub_source || null, req.params.id, req.user.agency_id]
+  );
   res.json({ message: 'Lead updated' });
 });
 
@@ -985,6 +1158,28 @@ app.post('/api/partner/faculty', authMiddleware(['partner_admin']), async (req, 
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// Partner: update batch dates / basic fields
+app.put('/api/partner/batches/:id', authMiddleware(['partner_admin', 'super_admin']), async (req, res) => {
+  const agencyId = req.user.agency_id;
+  const batchId = req.params.id;
+  const { start_date, end_date, class_time, duration_minutes, max_students, trainer_name } = req.body;
+  try {
+    // Verify batch belongs to this agency
+    const [[b]] = await getPool().query('SELECT id FROM batches WHERE id=? AND agency_id=?', [batchId, agencyId]);
+    if (!b) return res.status(403).json({ error: 'Batch not found' });
+    await getPool().query(
+      `UPDATE batches SET
+        start_date=COALESCE(?,start_date), end_date=COALESCE(?,end_date),
+        class_time=COALESCE(?,class_time), duration_minutes=COALESCE(?,duration_minutes),
+        max_students=COALESCE(?,max_students), trainer_name=COALESCE(?,trainer_name),
+        updated_at=NOW()
+       WHERE id=?`,
+      [start_date||null, end_date||null, class_time||null, duration_minutes||null, max_students||null, trainer_name||null, batchId]
+    );
+    res.json({ message: 'Batch updated' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Assign faculty to batch
 app.put('/api/partner/batches/:id/assign-faculty', authMiddleware(['partner_admin', 'super_admin']), async (req, res) => {
   const { trainer_id } = req.body;
@@ -1266,24 +1461,58 @@ app.get('/api/batches/:id/students', authMiddleware(), async (req, res) => {
 });
 
 app.post('/api/batches/:id/enroll', authMiddleware(['partner_admin', 'super_admin']), async (req, res) => {
-  const { student_id, enrollment_id, access_type } = req.body;
+  const { student_id, enrollment_id, access_type, new_student } = req.body;
   const batchId = req.params.id;
-  
+
   try {
-    // Verify student belongs to partner's agency
-    if (req.user.role === 'partner_admin') {
-      const [[batch]] = await getPool().query('SELECT agency_id FROM batches WHERE id=?', [batchId]);
-      if (!batch || batch.agency_id !== req.user.agency_id) {
-        return res.status(403).json({ error: 'Access denied' });
+    // Verify batch belongs to partner's agency
+    const [[batch]] = await getPool().query('SELECT agency_id, course_id FROM batches WHERE id=?', [batchId]);
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    if (req.user.role === 'partner_admin' && batch.agency_id !== req.user.agency_id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    let resolvedStudentId = student_id;
+
+    // Create new student if new_student payload provided
+    if (new_student && !student_id) {
+      const { name, email, phone } = new_student;
+      if (!name || !email) return res.status(400).json({ error: 'New student name and email are required' });
+
+      // Check if email already exists
+      const [[existing]] = await getPool().query('SELECT id FROM users WHERE email=?', [email]);
+      if (existing) {
+        resolvedStudentId = existing.id;
+      } else {
+        const defaultPassword = await bcrypt.hash('Student@123', 10);
+        const agencyId = req.user.role === 'partner_admin' ? req.user.agency_id : batch.agency_id;
+        const [newUser] = await getPool().query(
+          `INSERT INTO users (name, email, phone, role, agency_id, password_hash, is_active)
+           VALUES (?,?,?,?,?,?,1)`,
+          [name, email, phone || null, 'student', agencyId, defaultPassword]
+        );
+        resolvedStudentId = newUser.insertId;
       }
     }
-    
+
+    if (!resolvedStudentId) return res.status(400).json({ error: 'student_id or new_student is required' });
+
+    // Find enrollment_id if not provided (optional - batch enrollment can exist without course enrollment)
+    let resolvedEnrollmentId = enrollment_id || null;
+    if (!resolvedEnrollmentId) {
+      const [[enr]] = await getPool().query(
+        'SELECT id FROM enrollments WHERE student_id=? AND course_id=? LIMIT 1',
+        [resolvedStudentId, batch.course_id]
+      );
+      if (enr) resolvedEnrollmentId = enr.id;
+    }
+
     const [result] = await getPool().query(
       `INSERT INTO batch_enrollments (batch_id, student_id, enrollment_id, access_type, status)
        VALUES (?,?,?,?,?)`,
-      [batchId, student_id, enrollment_id, access_type || 'full', 'active']
+      [batchId, resolvedStudentId, resolvedEnrollmentId, access_type || 'full', 'active']
     );
-    res.json({ id: result.insertId, message: 'Student enrolled to batch' });
+    res.json({ id: result.insertId, message: 'Student enrolled to batch', student_id: resolvedStudentId });
   } catch (e) {
     if (e.code === 'ER_DUP_ENTRY') {
       return res.status(400).json({ error: 'Student already enrolled in this batch' });
@@ -1335,52 +1564,56 @@ app.get('/api/live-classes', authMiddleware(), async (req, res) => {
     params = [agencyId];
   }
 
-  const [rows] = await getPool().query(query, params);
-  res.json(rows);
+    const [rows] = await getPool().query(query, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/live-classes/upcoming', authMiddleware(), async (req, res) => {
   const agencyId = req.user.agency_id;
   const isAdmin = req.user.role === 'super_admin';
   const studentId = req.user.role === 'student' ? req.user.id : null;
-  
-  let query, params;
-  
-  if (studentId) {
-    // Student view - only classes for courses they've purchased
-    query = `SELECT lc.*, b.name as batch_name, c.title as course_title
-       FROM live_classes lc
-       JOIN batches b ON lc.batch_id = b.id
-       JOIN courses c ON b.course_id = c.id
-       JOIN enrollments e ON e.course_id = c.id AND e.student_id = ? AND e.status = 'active'
-       WHERE (lc.status = 'live' OR (lc.status = 'scheduled' AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)))
-       ORDER BY lc.status = 'live' DESC, lc.scheduled_at ASC
-       LIMIT 10`;
-    params = [studentId];
-  } else if (isAdmin) {
-    query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
-        a.name as agency_name
-       FROM live_classes lc
-       JOIN batches b ON lc.batch_id = b.id
-       JOIN courses c ON b.course_id = c.id
-       JOIN agencies a ON lc.agency_id = a.id
-       WHERE lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
-       ORDER BY lc.scheduled_at ASC
-       LIMIT 20`;
-    params = [];
-  } else {
-    query = `SELECT lc.*, b.name as batch_name, c.title as course_title
-       FROM live_classes lc
-       JOIN batches b ON lc.batch_id = b.id
-       JOIN courses c ON b.course_id = c.id
-       WHERE lc.agency_id = ? AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
-       ORDER BY lc.scheduled_at ASC
-       LIMIT 20`;
-    params = [agencyId];
-  }
-  
-  const [rows] = await getPool().query(query, params);
-  res.json(rows);
+
+  try {
+    let query, params;
+
+    if (studentId) {
+      // Student view — LEFT JOINs so classes without batch still appear
+      query = `SELECT lc.*, b.name as batch_name, c.title as course_title
+         FROM live_classes lc
+         LEFT JOIN batches b ON lc.batch_id = b.id
+         LEFT JOIN courses c ON b.course_id = c.id
+         LEFT JOIN enrollments e ON e.course_id = c.id AND e.student_id = ? AND e.status = 'active'
+         WHERE (lc.status = 'live' OR (lc.status = 'scheduled' AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)))
+           AND lc.agency_id = (SELECT agency_id FROM users WHERE id = ? LIMIT 1)
+         ORDER BY lc.status = 'live' DESC, lc.scheduled_at ASC
+         LIMIT 10`;
+      params = [studentId, studentId];
+    } else if (isAdmin) {
+      query = `SELECT lc.*, b.name as batch_name, c.title as course_title,
+          a.name as agency_name
+         FROM live_classes lc
+         LEFT JOIN batches b ON lc.batch_id = b.id
+         LEFT JOIN courses c ON b.course_id = c.id
+         LEFT JOIN agencies a ON lc.agency_id = a.id
+         WHERE lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+         ORDER BY lc.scheduled_at ASC
+         LIMIT 20`;
+      params = [];
+    } else {
+      query = `SELECT lc.*, b.name as batch_name, c.title as course_title
+         FROM live_classes lc
+         LEFT JOIN batches b ON lc.batch_id = b.id
+         LEFT JOIN courses c ON b.course_id = c.id
+         WHERE lc.agency_id = ? AND lc.scheduled_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+         ORDER BY lc.scheduled_at ASC
+         LIMIT 20`;
+      params = [agencyId];
+    }
+
+    const [rows] = await getPool().query(query, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Public endpoint — no auth needed, for guest join ──────────
@@ -2252,6 +2485,141 @@ app.get('/api/student/my-batches', authMiddleware(['student']), async (req, res)
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── STUDENT: TODAY LIVE LINK ─────────────────────────────────
+app.get('/api/student/today-live-link/:batchId', authMiddleware(['student']), async (req, res) => {
+  try {
+    const batchId = req.params.batchId;
+    const [[batch]] = await getPool().query(
+      'SELECT id, class_time, schedule_days, duration_minutes, jitsi_room_prefix, jitsi_meeting_id FROM batches WHERE id=? AND status="active"',
+      [batchId]
+    );
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+
+    // Verify student is enrolled
+    const [[enrollment]] = await getPool().query(
+      'SELECT id FROM batch_enrollments WHERE batch_id=? AND student_id=? AND status="active"',
+      [batchId, req.user.id]
+    );
+    if (!enrollment) return res.status(403).json({ error: 'Not enrolled in this batch' });
+
+    const now = new Date();
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const todayDay = dayNames[now.getDay()];
+
+    const scheduledDays = (batch.schedule_days || 'Mon,Tue,Wed,Thu,Fri').split(',').map(d => d.trim());
+    const isScheduledToday = scheduledDays.includes(todayDay);
+
+    const todayStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+
+    // Parse class_time (HH:MM:SS or HH:MM)
+    const [classHour, classMin] = (batch.class_time || '09:00').split(':').map(Number);
+    const classDateTime = new Date(now);
+    classDateTime.setHours(classHour, classMin, 0, 0);
+
+    const msUntilClass = classDateTime - now;
+    const minUntilClass = msUntilClass / 60000;
+    const classEndMs = classDateTime.getTime() + (batch.duration_minutes || 60) * 60000;
+    const isLiveNow = now.getTime() >= classDateTime.getTime() && now.getTime() < classEndMs;
+    const isWithin60Min = minUntilClass >= 0 && minUntilClass <= 60;
+
+    const jitsiPrefix = batch.jitsi_room_prefix || batch.jitsi_meeting_id?.split('-')[0] || 'class';
+    const jitsiUrl = `https://meet.jit.si/${jitsiPrefix}-${todayStr}`;
+
+    if (isScheduledToday && (isLiveNow || isWithin60Min)) {
+      return res.json({
+        available: true,
+        link: jitsiUrl,
+        starts_at: classDateTime.toISOString(),
+        is_live: isLiveNow,
+      });
+    }
+
+    // Find next scheduled day
+    let nextClassDate = null;
+    for (let i = 1; i <= 7; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() + i);
+      if (scheduledDays.includes(dayNames[d.getDay()])) {
+        d.setHours(classHour, classMin, 0, 0);
+        nextClassDate = d;
+        break;
+      }
+    }
+
+    // If today is scheduled but class hasn't started yet (more than 60 min away), it still counts as "today"
+    if (isScheduledToday && minUntilClass > 60) {
+      return res.json({
+        available: false,
+        starts_at: classDateTime.toISOString(),
+        starts_today: true,
+        next_class: classDateTime.toISOString(),
+      });
+    }
+
+    return res.json({
+      available: false,
+      starts_at: nextClassDate?.toISOString() || null,
+      starts_today: false,
+      next_class: nextClassDate?.toISOString() || null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── STUDENT: BULK TODAY-LIVE-LINKS (eliminates N+1) ──────────
+// Returns { [batchId]: { available, link, is_live, starts_at, starts_today, next_class } }
+app.get('/api/student/today-live-links', authMiddleware(['student']), async (req, res) => {
+  try {
+    const [batches] = await getPool().query(`
+      SELECT b.id, b.class_time, b.schedule_days, b.duration_minutes,
+             b.jitsi_room_prefix, b.jitsi_meeting_id
+      FROM batch_enrollments be
+      JOIN batches b ON be.batch_id = b.id
+      WHERE be.student_id = ? AND be.status = 'active' AND b.status = 'active'
+    `, [req.user.id]);
+
+    const now = new Date();
+    const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const todayDay = dayNames[now.getDay()];
+    const todayStr = now.toISOString().split('T')[0];
+
+    const result = {};
+    for (const batch of batches) {
+      const scheduledDays = (batch.schedule_days || 'Mon,Tue,Wed,Thu,Fri').split(',').map(d => d.trim());
+      const isScheduledToday = scheduledDays.includes(todayDay);
+      const [classHour, classMin] = (batch.class_time || '09:00').split(':').map(Number);
+      const classDateTime = new Date(now);
+      classDateTime.setHours(classHour, classMin, 0, 0);
+      const msUntilClass = classDateTime - now;
+      const minUntilClass = msUntilClass / 60000;
+      const classEndMs = classDateTime.getTime() + (batch.duration_minutes || 60) * 60000;
+      const isLiveNow = now.getTime() >= classDateTime.getTime() && now.getTime() < classEndMs;
+      const isWithin60Min = minUntilClass >= 0 && minUntilClass <= 60;
+      const jitsiPrefix = batch.jitsi_room_prefix || batch.jitsi_meeting_id?.split('-')[0] || 'class';
+      const jitsiUrl = `https://meet.jit.si/${jitsiPrefix}-${todayStr}`;
+
+      if (isScheduledToday && (isLiveNow || isWithin60Min)) {
+        result[batch.id] = { available: true, link: jitsiUrl, starts_at: classDateTime.toISOString(), is_live: isLiveNow };
+      } else {
+        let nextClassDate = null;
+        for (let i = 1; i <= 7; i++) {
+          const d = new Date(now); d.setDate(d.getDate() + i);
+          if (scheduledDays.includes(dayNames[d.getDay()])) {
+            d.setHours(classHour, classMin, 0, 0); nextClassDate = d; break;
+          }
+        }
+        if (isScheduledToday && minUntilClass > 60) {
+          result[batch.id] = { available: false, starts_at: classDateTime.toISOString(), starts_today: true, next_class: classDateTime.toISOString() };
+        } else {
+          result[batch.id] = { available: false, starts_at: nextClassDate?.toISOString() || null, starts_today: false, next_class: nextClassDate?.toISOString() || null };
+        }
+      }
+    }
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── PARTNER: STUDENT SELF-PURCHASES ──────────────────────────
 app.get('/api/partner/purchases', authMiddleware(['partner_admin']), async (req, res) => {
   try {
@@ -2344,6 +2712,36 @@ app.put('/api/admin/agencies/:id/portal-settings', authMiddleware(['super_admin'
     );
     res.json({ message: 'Portal settings saved' });
   } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Admin: get agency tier + access control settings
+app.get('/api/admin/agencies/:id/access', authMiddleware(['super_admin']), async (req, res) => {
+  try {
+    const [[agency]] = await getPool().query(
+      `SELECT id, tier, course_access_type, course_access_data, batch_access_type, batch_access_data FROM agencies WHERE id=?`,
+      [req.params.id]
+    );
+    if (!agency) return res.status(404).json({ error: 'Agency not found' });
+    const parse = (v) => { try { return v ? (typeof v === 'string' ? JSON.parse(v) : v) : []; } catch { return []; } };
+    agency.course_access_data = parse(agency.course_access_data);
+    agency.batch_access_data  = parse(agency.batch_access_data);
+    const [allCourses] = await getPool().query(`SELECT id, title, category FROM courses WHERE is_active=1 ORDER BY category, title`);
+    const [allBatches] = await getPool().query(`SELECT b.id, b.name, b.start_date, b.class_time, c.category FROM batches b JOIN courses c ON b.course_id=c.id WHERE b.status='active' ORDER BY b.start_date DESC LIMIT 100`);
+    res.json({ ...agency, allCourses, allBatches });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: save tier + access control
+app.put('/api/admin/agencies/:id/access', authMiddleware(['super_admin']), async (req, res) => {
+  const { tier, course_access_type, course_access_data, batch_access_type, batch_access_data } = req.body;
+  try {
+    await getPool().query(
+      `UPDATE agencies SET tier=?, course_access_type=?, course_access_data=?, batch_access_type=?, batch_access_data=? WHERE id=?`,
+      [tier||'Bronze', course_access_type||'all', course_access_data ? JSON.stringify(course_access_data) : null,
+       batch_access_type||'all', batch_access_data ? JSON.stringify(batch_access_data) : null, req.params.id]
+    );
+    res.json({ message: 'Access settings saved' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── ZOOM API HELPER ─────────────────────────────────────────────────────────
@@ -3153,45 +3551,141 @@ app.get('/api/student/tests/history', authMiddleware(['student']), async (req, r
 app.get('/api/student/progress', authMiddleware(['student']), async (req, res) => {
   const sid = req.user.id;
   try {
-    const [[attStats]] = await getPool().query(`
-      SELECT COUNT(*) as total_classes,
-        SUM(CASE WHEN ca.attendance_status='present' THEN 1 ELSE 0 END) as attended,
-        AVG(ca.time_in_class_percent) as avg_duration_pct,
-        COALESCE(SUM(ca.duration_seconds),0) as total_seconds
-      FROM class_attendance ca
-      JOIN live_classes lc ON ca.live_class_id = lc.id
-      WHERE ca.student_id=?`, [sid]);
+    // Run ALL queries in parallel — eliminates sequential latency (~6-10 round trips → 1)
+    const [
+      [[attStats]],
+      [testScores],
+      [recentAttempts],
+      [weeklyProgress],
+      [[target]],
+      [enrolledCourses],
+      [recentClasses],
+      [testHistory],
+      [dailyActivity],
+      [batchBreakdown],
+      [dailyTests],
+    ] = await Promise.all([
+      getPool().query(`
+        SELECT COUNT(*) as total_classes,
+          SUM(CASE WHEN ca.attendance_status='present' THEN 1 ELSE 0 END) as attended,
+          AVG(ca.time_in_class_percent) as avg_duration_pct,
+          COALESCE(SUM(ca.duration_seconds),0) as total_seconds
+        FROM class_attendance ca
+        JOIN live_classes lc ON ca.live_class_id = lc.id
+        WHERE ca.student_id=?`, [sid]),
 
-    const [testScores] = await getPool().query(`
-      SELECT module_name, exam_type, ROUND(AVG(score_percent),1) as avg_score,
-             MAX(score_percent) as best_score, COUNT(*) as attempts, MAX(created_at) as last_attempt
-      FROM test_attempts WHERE student_id=?
-      GROUP BY module_name, exam_type ORDER BY last_attempt DESC`, [sid]);
+      getPool().query(`
+        SELECT module_name, exam_type, ROUND(AVG(score_percent),1) as avg_score,
+               MAX(score_percent) as best_score, COUNT(*) as attempts, MAX(created_at) as last_attempt
+        FROM test_attempts WHERE student_id=?
+        GROUP BY module_name, exam_type ORDER BY last_attempt DESC`, [sid]),
 
-    const [recentAttempts] = await getPool().query(
-      'SELECT id, exam_type, module_name, test_type, score_percent, band_score, total_questions, correct_answers, time_taken_seconds, created_at FROM test_attempts WHERE student_id=? ORDER BY created_at DESC LIMIT 30',
-      [sid]);
+      getPool().query(
+        'SELECT id, exam_type, module_name, test_type, score_percent, band_score, total_questions, correct_answers, time_taken_seconds, created_at FROM test_attempts WHERE student_id=? ORDER BY created_at DESC LIMIT 30',
+        [sid]),
 
-    const [weeklyProgress] = await getPool().query(`
-      SELECT YEAR(created_at) yr, WEEK(created_at) wk,
-        ROUND(AVG(score_percent),1) avg_score, COUNT(*) tests_taken, MIN(created_at) week_start
-      FROM test_attempts WHERE student_id=? AND created_at >= DATE_SUB(NOW(), INTERVAL 10 WEEK)
-      GROUP BY YEAR(created_at), WEEK(created_at) ORDER BY yr, wk`, [sid]);
+      getPool().query(`
+        SELECT YEAR(created_at) yr, WEEK(created_at) wk,
+          ROUND(AVG(score_percent),1) avg_score, COUNT(*) tests_taken, MIN(created_at) week_start
+        FROM test_attempts WHERE student_id=? AND created_at >= DATE_SUB(NOW(), INTERVAL 10 WEEK)
+        GROUP BY YEAR(created_at), WEEK(created_at) ORDER BY yr, wk`, [sid]),
 
-    const [[target]] = await getPool().query('SELECT * FROM student_targets WHERE student_id=?', [sid]);
+      getPool().query('SELECT * FROM student_targets WHERE student_id=?', [sid]),
 
-    const [enrolledCourses] = await getPool().query(`
-      SELECT e.id, e.status, c.title, c.category, c.id as course_id
-      FROM enrollments e JOIN courses c ON e.course_id = c.id
-      WHERE e.student_id=? AND e.status='active'`, [sid]);
+      getPool().query(`
+        SELECT e.id, e.status, c.title, c.category, c.id as course_id
+        FROM enrollments e JOIN courses c ON e.course_id = c.id
+        WHERE e.student_id=? AND e.status='active'`, [sid]),
 
-    const [recentClasses] = await getPool().query(`
-      SELECT lc.title, lc.scheduled_at, lc.platform, ca.attendance_status, ca.duration_seconds, ca.time_in_class_percent
-      FROM class_attendance ca
-      JOIN live_classes lc ON ca.live_class_id = lc.id
-      WHERE ca.student_id=? ORDER BY lc.scheduled_at DESC LIMIT 20`, [sid]);
+      getPool().query(`
+        SELECT lc.title, lc.scheduled_at, lc.platform, ca.attendance_status, ca.duration_seconds, ca.time_in_class_percent
+        FROM class_attendance ca
+        JOIN live_classes lc ON ca.live_class_id = lc.id
+        WHERE ca.student_id=? ORDER BY lc.scheduled_at DESC LIMIT 20`, [sid]),
 
-    res.json({ attendance: attStats, testScores, recentAttempts, weeklyProgress, target, enrolledCourses, recentClasses });
+      // test history (merged from /student/tests/history)
+      getPool().query(
+        'SELECT * FROM test_attempts WHERE student_id=? ORDER BY created_at DESC LIMIT 100',
+        [sid]),
+
+      // daily activity last 30 days (merged from /student/my-attendance)
+      getPool().query(`
+        SELECT DATE(lc.scheduled_at) as date,
+          ROUND(SUM(ca.duration_seconds) / 60) as minutes,
+          COUNT(*) as classes
+        FROM class_attendance ca
+        JOIN live_classes lc ON ca.live_class_id = lc.id
+        WHERE ca.student_id = ?
+          AND ca.attendance_status = 'present'
+          AND lc.scheduled_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        GROUP BY DATE(lc.scheduled_at)
+        ORDER BY date ASC`, [sid]),
+
+      // per-batch breakdown (merged from /student/my-attendance)
+      getPool().query(`
+        SELECT b.id as batch_id, b.name as batch_name, c.title as course_title,
+          b.start_date, b.end_date,
+          COUNT(DISTINCT lc.id) as total_classes,
+          COUNT(DISTINCT CASE WHEN ca2.attendance_status='present' THEN lc.id END) as attended,
+          COALESCE(SUM(ca2.duration_seconds), 0) as total_seconds
+        FROM batch_enrollments be
+        JOIN batches b ON be.batch_id = b.id
+        JOIN courses c ON b.course_id = c.id
+        LEFT JOIN live_classes lc ON lc.batch_id = b.id AND lc.status = 'ended'
+        LEFT JOIN class_attendance ca2 ON ca2.live_class_id = lc.id AND ca2.student_id = ?
+        WHERE be.student_id = ? AND be.status = 'active'
+        GROUP BY b.id
+        ORDER BY b.start_date DESC`, [sid, sid]),
+
+      // daily tests last 30 days (merged from /student/my-attendance)
+      getPool().query(`
+        SELECT DATE(created_at) as date, COUNT(*) as tests_taken,
+          ROUND(AVG(score_percent), 1) as avg_score
+        FROM test_attempts
+        WHERE student_id = ?
+          AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC`, [sid]),
+    ]);
+
+    res.json({
+      attendance: attStats, testScores, recentAttempts, weeklyProgress,
+      target, enrolledCourses, recentClasses,
+      // merged fields (previously separate endpoints)
+      testHistory, dailyActivity, batchBreakdown, dailyTests,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// STUDENT: daily activity — kept for backwards compat, now delegates to /progress data
+app.get('/api/student/my-attendance', authMiddleware(['student']), async (req, res) => {
+  const sid = req.user.id;
+  try {
+    const [[dailyActivity], [batchBreakdown], [dailyTests]] = await Promise.all([
+      getPool().query(`
+        SELECT DATE(lc.scheduled_at) as date,
+          ROUND(SUM(ca.duration_seconds) / 60) as minutes, COUNT(*) as classes
+        FROM class_attendance ca JOIN live_classes lc ON ca.live_class_id = lc.id
+        WHERE ca.student_id=? AND ca.attendance_status='present'
+          AND lc.scheduled_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        GROUP BY DATE(lc.scheduled_at) ORDER BY date ASC`, [sid]),
+      getPool().query(`
+        SELECT b.id as batch_id, b.name as batch_name, c.title as course_title,
+          b.start_date, b.end_date,
+          COUNT(DISTINCT lc.id) as total_classes,
+          COUNT(DISTINCT CASE WHEN ca2.attendance_status='present' THEN lc.id END) as attended,
+          COALESCE(SUM(ca2.duration_seconds), 0) as total_seconds
+        FROM batch_enrollments be JOIN batches b ON be.batch_id=b.id JOIN courses c ON b.course_id=c.id
+        LEFT JOIN live_classes lc ON lc.batch_id=b.id AND lc.status='ended'
+        LEFT JOIN class_attendance ca2 ON ca2.live_class_id=lc.id AND ca2.student_id=?
+        WHERE be.student_id=? AND be.status='active'
+        GROUP BY b.id ORDER BY b.start_date DESC`, [sid, sid]),
+      getPool().query(`
+        SELECT DATE(created_at) as date, COUNT(*) as tests_taken, ROUND(AVG(score_percent),1) as avg_score
+        FROM test_attempts WHERE student_id=? AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        GROUP BY DATE(created_at) ORDER BY date ASC`, [sid]),
+    ]);
+    res.json({ dailyActivity, batchBreakdown, dailyTests });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3222,32 +3716,102 @@ app.get('/api/partner/students/:id/progress', authMiddleware(['partner_admin']),
     const [[student]] = await getPool().query('SELECT id,name,email,phone,created_at FROM users WHERE id=? AND agency_id=? AND role="student"', [studentId, agencyId]);
     if (!student) return res.status(404).json({ error: 'Student not found' });
 
-    const [testScores] = await getPool().query(`
-      SELECT module_name, exam_type, ROUND(AVG(score_percent),1) avg_score, MAX(score_percent) best_score, COUNT(*) attempts, MAX(created_at) last_attempt
-      FROM test_attempts WHERE student_id=? GROUP BY module_name, exam_type ORDER BY last_attempt DESC`, [studentId]);
-
-    const [recentAttempts] = await getPool().query(
-      'SELECT id, exam_type, module_name, test_type, score_percent, band_score, total_questions, correct_answers, created_at FROM test_attempts WHERE student_id=? ORDER BY created_at DESC LIMIT 20', [studentId]);
-
-    const [[attStats]] = await getPool().query(`
-      SELECT COUNT(*) total, SUM(CASE WHEN attendance_status='present' THEN 1 ELSE 0 END) attended,
-             ROUND(AVG(time_in_class_percent),1) avg_pct
-      FROM class_attendance WHERE student_id=?`, [studentId]);
-
-    const [[target]] = await getPool().query('SELECT * FROM student_targets WHERE student_id=?', [studentId]);
-
-    const [weeklyProgress] = await getPool().query(`
-      SELECT YEAR(created_at) yr, WEEK(created_at) wk, ROUND(AVG(score_percent),1) avg_score, COUNT(*) tests_taken, MIN(created_at) week_start
-      FROM test_attempts WHERE student_id=? AND created_at >= DATE_SUB(NOW(), INTERVAL 8 WEEK)
-      GROUP BY YEAR(created_at), WEEK(created_at) ORDER BY yr, wk`, [studentId]);
-
-    const [recentClasses] = await getPool().query(`
-      SELECT lc.title, lc.scheduled_at, lc.platform, ca.attendance_status, ca.duration_seconds
-      FROM class_attendance ca JOIN live_classes lc ON ca.live_class_id=lc.id
-      WHERE ca.student_id=? ORDER BY lc.scheduled_at DESC LIMIT 15`, [studentId]);
+    const [
+      [testScores], [recentAttempts], [[attStats]], [[target]], [weeklyProgress], [recentClasses]
+    ] = await Promise.all([
+      getPool().query(`
+        SELECT module_name, exam_type, ROUND(AVG(score_percent),1) avg_score, MAX(score_percent) best_score, COUNT(*) attempts, MAX(created_at) last_attempt
+        FROM test_attempts WHERE student_id=? GROUP BY module_name, exam_type ORDER BY last_attempt DESC`, [studentId]),
+      getPool().query(
+        'SELECT id, exam_type, module_name, test_type, score_percent, band_score, total_questions, correct_answers, created_at FROM test_attempts WHERE student_id=? ORDER BY created_at DESC LIMIT 20', [studentId]),
+      getPool().query(`
+        SELECT COUNT(*) total, SUM(CASE WHEN attendance_status='present' THEN 1 ELSE 0 END) attended,
+               ROUND(AVG(time_in_class_percent),1) avg_pct
+        FROM class_attendance WHERE student_id=?`, [studentId]),
+      getPool().query('SELECT * FROM student_targets WHERE student_id=?', [studentId]),
+      getPool().query(`
+        SELECT YEAR(created_at) yr, WEEK(created_at) wk, ROUND(AVG(score_percent),1) avg_score, COUNT(*) tests_taken, MIN(created_at) week_start
+        FROM test_attempts WHERE student_id=? AND created_at >= DATE_SUB(NOW(), INTERVAL 8 WEEK)
+        GROUP BY YEAR(created_at), WEEK(created_at) ORDER BY yr, wk`, [studentId]),
+      getPool().query(`
+        SELECT lc.title, lc.scheduled_at, lc.platform, ca.attendance_status, ca.duration_seconds
+        FROM class_attendance ca JOIN live_classes lc ON ca.live_class_id=lc.id
+        WHERE ca.student_id=? ORDER BY lc.scheduled_at DESC LIMIT 15`, [studentId]),
+    ]);
 
     res.json({ student, testScores, recentAttempts, attendance: attStats, target, weeklyProgress, recentClasses });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── ONE-TIME SEED: create demo batch ────────────────────────
+// Call: GET /api/seed/brightpath-batch?secret=testprep_seed_2026
+app.get('/api/seed/brightpath-batch', async (req, res) => {
+  if (req.query.secret !== 'testprep_seed_2026') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const pool = getPool();
+
+    // 1. Find or create brightpath agency
+    let [[agency]] = await pool.query(`SELECT id FROM agencies WHERE slug='brightpath'`);
+    if (!agency) {
+      const [r] = await pool.query(
+        `INSERT INTO agencies (name, slug, email, brand_color, logo_initials, status)
+         VALUES ('BrightPath Academy','brightpath','admin@brightpath.in','#2563eb','BP','active')
+         ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)`
+      );
+      agency = { id: r.insertId };
+    }
+    const agencyId = agency.id;
+
+    // 2. Find any IELTS course, or create one
+    let [[course]] = await pool.query(`SELECT id FROM courses WHERE category='IELTS' LIMIT 1`);
+    if (!course) {
+      const [r] = await pool.query(
+        `INSERT INTO courses (title, category, description, price, duration_weeks, status, is_live_class, agency_id)
+         VALUES ('IELTS Academic Masterclass','IELTS','Complete IELTS Academic preparation with live classes',15000,12,'active',1,?)`,
+        [agencyId]
+      );
+      course = { id: r.insertId };
+    }
+
+    // 3. Check if batch already exists
+    const [[existing]] = await pool.query(
+      `SELECT id FROM batches WHERE agency_id=? AND name='Morning Live IELTS Class' LIMIT 1`,
+      [agencyId]
+    );
+    if (existing) return res.json({ message: 'Batch already exists', batch_id: existing.id });
+
+    // 4. Create the batch (Mon–Fri, 10:00–12:00 = 120 min)
+    const today = new Date().toISOString().slice(0, 10);
+    const endDate = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const roomPrefix = 'brightpath-morning-ielts';
+    const meetingId = `${roomPrefix}-${Date.now()}`;
+
+    const [result] = await pool.query(
+      `INSERT INTO batches (agency_id, course_id, name, description, start_date, end_date,
+        schedule_days, class_time, duration_minutes, timezone, trainer_name,
+        max_students, jitsi_room_prefix, jitsi_meeting_id, created_by, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active')`,
+      [agencyId, course.id,
+       'Morning Live IELTS Class',
+       'Daily live IELTS coaching — Listening, Reading, Writing & Speaking with expert feedback.',
+       today, endDate,
+       'Mon,Tue,Wed,Thu,Fri', '10:00:00', 120,
+       'Asia/Kolkata', 'Expert IELTS Trainer',
+       30, roomPrefix, meetingId]
+    );
+
+    res.json({
+      message: '✅ Batch created successfully!',
+      batch_id: result.insertId,
+      agency_id: agencyId,
+      batch_name: 'Morning Live IELTS Class',
+      schedule: 'Mon–Fri 10:00–12:00',
+      start_date: today,
+      end_date: endDate,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── START ────────────────────────────────────────────────────
