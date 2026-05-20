@@ -13,13 +13,13 @@ export function clearToken() {
   localStorage.removeItem('tp_user');
 }
 
-// Auto-retry helper — used for 502/503 (server cold start)
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-async function request(path, options = {}, _retries = 5) {
+// Single attempt — no internal retry.
+// Callers that need retry (e.g. Login page) handle it themselves with
+// visible feedback. Background GET calls retry once silently.
+async function request(path, options = {}, _retries = 1) {
   const token = getToken();
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+  const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s per attempt
   try {
     const res = await fetch(`${BASE}${path}`, {
       ...options,
@@ -31,24 +31,28 @@ async function request(path, options = {}, _retries = 5) {
       },
     });
 
-    // 502/503 = server cold-starting on Railway — auto-retry up to 3×
+    // 502/503 = server restarting — retry once silently for background calls
     if ((res.status === 502 || res.status === 503) && _retries > 0) {
       clearTimeout(timeoutId);
-      await sleep(5000); // wait 5s between retries
+      await new Promise(r => setTimeout(r, 4000));
       return request(path, options, _retries - 1);
     }
 
     const data = await res.json().catch(() => ({ error: `Server error (${res.status})` }));
-    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
   } catch (e) {
+    clearTimeout(timeoutId);
     if (e.name === 'AbortError') {
       if (_retries > 0) {
-        clearTimeout(timeoutId);
-        await sleep(4000);
+        await new Promise(r => setTimeout(r, 4000));
         return request(path, options, _retries - 1);
       }
-      throw new Error('Server is not responding. Please check your connection and try again.');
+      throw new Error('SERVER_TIMEOUT');
+    }
+    // Propagate 502 as a recognisable code so callers can retry with UI
+    if (e.message && (e.message.includes('502') || e.message.includes('503'))) {
+      throw new Error('SERVER_UNAVAILABLE');
     }
     throw e;
   } finally {

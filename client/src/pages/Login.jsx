@@ -63,21 +63,22 @@ const STUDENT_USPS = [
 export default function Login({ tenantSlug, defaultMode = 'login' }) {
   const { login, loginWithToken, user } = useAuth();
   const navigate = useNavigate();
-  const [mode, setMode]           = useState(defaultMode);
-  const [tab, setTab]             = useState('student');
-  const [tenant, setTenant]       = useState(null);
-  const [error, setError]         = useState('');
-  const [loading, setLoading]     = useState(false);
-  const [banners, setBanners]     = useState([]);
-  // 'idle' | 'pinging' | 'ready' | 'slow'
-  const [serverStatus, setServerStatus] = useState('pinging');
+  const [mode, setMode]     = useState(defaultMode);
+  const [tab, setTab]       = useState('student');
+  const [tenant, setTenant] = useState(null);
+  const [banners, setBanners] = useState([]);
 
-  // Login form
+  // Login state
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading]   = useState(false);
+  // null = idle | string = error message | { retrying, countdown } = server-starting state
+  const [status, setStatus] = useState(null);
 
   // Signup form
   const [sig, setSig] = useState({ name: '', email: '', phone: '', password: '', confirm: '' });
+
+  const retryRef = useRef(null); // cancel flag for retry loop
 
   useEffect(() => {
     if (user) {
@@ -88,20 +89,13 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
     }
   }, [user]);
 
-  // ── Warm up Railway server on page load ──────────────────────
-  // Ping /api/health immediately so the server wakes up while the
-  // user is filling in their credentials. If it takes >8s, show a
-  // "slow start" warning so users know to expect a brief delay.
+  // Warm up Railway server silently on page load
   useEffect(() => {
-    let cancelled = false;
-    const slowTimer = setTimeout(() => { if (!cancelled) setServerStatus('slow'); }, 8000);
-    const ping = () =>
-      fetch('/api/health', { cache: 'no-store' })
-        .then(r => r.ok ? r.json() : Promise.reject())
-        .then(() => { if (!cancelled) { clearTimeout(slowTimer); setServerStatus('ready'); } })
-        .catch(() => { if (!cancelled) setTimeout(ping, 4000); }); // retry every 4s until alive
+    let dead = false;
+    const ping = () => fetch('/api/health', { cache: 'no-store' }).catch(() => {});
     ping();
-    return () => { cancelled = true; clearTimeout(slowTimer); };
+    const id = setInterval(() => { if (!dead) ping(); }, 10000);
+    return () => { dead = true; clearInterval(id); };
   }, []);
 
   useEffect(() => {
@@ -115,52 +109,66 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
   const agencyName = tenant?.name || 'TestPrep Platform';
   const logoText   = tenant?.logo_initials || 'TP';
 
-  // Server status badge — shown above the submit button when not ready
-  const ServerBadge = () => {
-    if (serverStatus === 'ready') return null;
-    if (serverStatus === 'slow') return (
-      <div className="mb-3 flex items-center gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700 font-medium">
-        <span className="animate-spin">⏳</span>
-        <span>Server is starting up — login will work in a moment. Please wait…</span>
-      </div>
-    );
-    return (
-      <div className="mb-3 flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 font-medium">
-        <span className="inline-block w-2 h-2 rounded-full bg-slate-400 animate-pulse" />
-        <span>Connecting to server…</span>
-      </div>
-    );
-  };
-
-  // ── Login ────────────────────────────────────────────────
+  // ── Login with visible auto-retry on server errors ────────
   const handleLogin = async (e) => {
-    e.preventDefault();
-    setLoading(true); setError('');
-    try {
-      const u = await login(email, password);
-      const slug = u.slug || u.agency_slug;
-      if (u.role === 'super_admin') navigate('/admin');
-      else if (u.role === 'partner_admin') navigate(slug ? `/${slug}/partner` : '/partner');
-      else if (u.role === 'faculty') navigate('/faculty');
-      else navigate(slug ? `/${slug}/student` : '/student');
-    } catch (err) {
-      const msg = err.message || '';
-      // Friendlier message for server cold-start errors
-      if (msg.includes('502') || msg.includes('503') || msg.includes('not responding')) {
-        setError('Server is still starting up. Please try again in a few seconds.');
-        setServerStatus('slow');
-      } else {
-        setError(msg);
+    if (e) e.preventDefault();
+    setLoading(true);
+    setStatus(null);
+
+    // Cancel any previous retry loop
+    if (retryRef.current) retryRef.current.cancelled = true;
+    const ctx = { cancelled: false };
+    retryRef.current = ctx;
+
+    const MAX_ATTEMPTS = 6;
+    const RETRY_DELAY  = 8; // seconds between attempts
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      if (ctx.cancelled) break;
+      try {
+        const u = await login(email, password);
+        // ✅ Success — navigate
+        const slug = u.slug || u.agency_slug;
+        if (u.role === 'super_admin') navigate('/admin');
+        else if (u.role === 'partner_admin') navigate(slug ? `/${slug}/partner` : '/partner');
+        else if (u.role === 'faculty') navigate('/faculty');
+        else navigate(slug ? `/${slug}/student` : '/student');
+        return; // done
+      } catch (err) {
+        if (ctx.cancelled) break;
+        const msg = err.message || '';
+        const isServerDown = msg === 'SERVER_UNAVAILABLE' || msg === 'SERVER_TIMEOUT'
+          || msg.includes('502') || msg.includes('503') || msg.includes('not responding');
+
+        if (isServerDown && attempt < MAX_ATTEMPTS) {
+          // Show countdown and auto-retry
+          for (let t = RETRY_DELAY; t > 0; t--) {
+            if (ctx.cancelled) break;
+            setStatus({ retrying: true, countdown: t, attempt, max: MAX_ATTEMPTS });
+            await new Promise(r => setTimeout(r, 1000));
+          }
+          setStatus({ retrying: true, countdown: 0, attempt, max: MAX_ATTEMPTS });
+          continue; // next attempt
+        }
+
+        // Permanent error (wrong password, etc.) or ran out of retries
+        setStatus(isServerDown
+          ? 'Server is taking too long to respond. Please try again in a minute.'
+          : msg
+        );
+        break;
       }
-    } finally { setLoading(false); }
+    }
+
+    if (!ctx.cancelled) setLoading(false);
   };
 
   // ── Signup ───────────────────────────────────────────────
   const handleSignup = async (e) => {
     e.preventDefault();
-    setError('');
-    if (sig.password !== sig.confirm) { setError('Passwords do not match'); return; }
-    if (sig.password.length < 6) { setError('Password must be at least 6 characters'); return; }
+    setStatus(null);
+    if (sig.password !== sig.confirm) { setStatus('Passwords do not match'); return; }
+    if (sig.password.length < 6) { setStatus('Password must be at least 6 characters'); return; }
     setLoading(true);
     try {
       const data = await api.post('/auth/signup', {
@@ -171,8 +179,33 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
       const agSlug = data.user?.slug || data.user?.agency_slug || tenantSlug;
       navigate(agSlug ? `/${agSlug}/student` : '/student', { replace: true });
     } catch (err) {
-      setError(err.message);
+      setStatus(err.message);
     } finally { setLoading(false); }
+  };
+
+  // ── Status display helper ─────────────────────────────────
+  const StatusBox = () => {
+    if (!status) return null;
+    if (typeof status === 'object' && status.retrying) {
+      return (
+        <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
+          <div className="flex items-center gap-2 font-semibold mb-1">
+            <span className="animate-spin inline-block">⏳</span>
+            Server is starting up… (attempt {status.attempt}/{status.max})
+          </div>
+          {status.countdown > 0 && (
+            <div className="text-xs text-amber-600">
+              Retrying automatically in <strong>{status.countdown}s</strong>
+            </div>
+          )}
+        </div>
+      );
+    }
+    return (
+      <div className="mb-3 p-3 bg-red-50 border border-red-100 text-red-600 rounded-xl text-sm">
+        {status}
+      </div>
+    );
   };
 
   // ── Tenant (agency-branded) page ─────────────────────────
@@ -213,19 +246,17 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
             <div className="px-6 py-5">
               {/* Mode toggle */}
               <div className="flex bg-slate-100 rounded-xl p-1 mb-5 gap-1">
-                <button onClick={() => { setMode('login'); setError(''); }}
+                <button onClick={() => { setMode('login'); setStatus(null); }}
                   className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${mode === 'login' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}>
                   Sign In
                 </button>
-                <button onClick={() => { setMode('signup'); setError(''); }}
+                <button onClick={() => { setMode('signup'); setStatus(null); }}
                   className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${mode === 'signup' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}>
                   Sign Up
                 </button>
               </div>
 
-              {error && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-100 text-red-600 rounded-xl text-sm">{error}</div>
-              )}
+              <StatusBox />
 
               {/* Sign In */}
               {mode === 'login' && (
@@ -238,11 +269,12 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
                     <label className="label">Password</label>
                     <input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" className="input" />
                   </div>
-                  <ServerBadge />
                   <button type="submit" disabled={loading}
                     className="w-full py-3 text-white font-bold rounded-xl transition-all hover:opacity-90 disabled:opacity-50"
                     style={{ background: brandColor }}>
-                    {loading ? (serverStatus !== 'ready' ? 'Connecting to server…' : 'Signing in…') : 'Sign In'}
+                    {loading
+                      ? (typeof status === 'object' ? 'Waiting for server…' : 'Signing in…')
+                      : 'Sign In'}
                   </button>
                 </form>
               )}
@@ -294,11 +326,11 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
 
           <div className="bg-white px-8 py-6">
             <div className="flex bg-slate-100 rounded-xl p-1 mb-5 gap-1">
-              <button onClick={() => { setMode('login'); setError(''); }}
+              <button onClick={() => { setMode('login'); setStatus(null); }}
                 className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${mode === 'login' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}>
                 Sign In
               </button>
-              <button onClick={() => { setMode('signup'); setError(''); }}
+              <button onClick={() => { setMode('signup'); setStatus(null); }}
                 className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${mode === 'signup' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}>
                 Sign Up
               </button>
@@ -315,7 +347,7 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
               </div>
             )}
 
-            {error && <div className="mb-4 p-3 bg-red-50 border border-red-100 text-red-600 rounded-xl text-sm">{error}</div>}
+            <StatusBox />
 
             {mode === 'login' && (
               <form onSubmit={handleLogin} className="space-y-4">
@@ -327,11 +359,12 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
                   <label className="label">Password</label>
                   <input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" className="input" />
                 </div>
-                <ServerBadge />
                 <button type="submit" disabled={loading}
                   className="w-full py-3 text-white font-bold rounded-xl transition-all hover:opacity-90 disabled:opacity-50"
                   style={{ background: '#1a1a2e' }}>
-                  {loading ? (serverStatus !== 'ready' ? 'Connecting to server…' : 'Signing in…') : 'Sign In'}
+                  {loading
+                    ? (typeof status === 'object' ? 'Waiting for server…' : 'Signing in…')
+                    : 'Sign In'}
                 </button>
               </form>
             )}
