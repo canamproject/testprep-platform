@@ -11,14 +11,16 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Safety fallback: never leave app stuck on loading > 15s
-    const safetyTimer = setTimeout(() => setLoading(false), 15000);
+    // Safety fallback: never leave app stuck on loading > 20s
+    // (api.js retries 3× @ 5s each = up to 15s, so give 20s total)
+    const safetyTimer = setTimeout(() => setLoading(false), 20000);
 
     if (localStorage.getItem('tp_token')) {
       api.get('/auth/me').then(u => {
         setUser(u);
         localStorage.setItem('tp_user', JSON.stringify(u));
       }).catch(() => {
+        // On persistent failure, clear stale token so user gets login page
         clearToken();
         setUser(null);
       }).finally(() => {

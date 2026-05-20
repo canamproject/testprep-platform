@@ -1,8 +1,18 @@
 // ============================================================
 // TestPrepGPT White-Label Platform - Express API Server
-// v2.1 — course curriculum modules + lectures (2026-05-18)
+// v2.2 — crash protection + keep-alive (2026-05-20)
 // ============================================================
 require('dotenv').config();
+
+// ─── Global crash protection ──────────────────────────────────
+// Unhandled rejections and exceptions must NOT crash the server.
+// Log them and continue — Railway restarts take 30-60s of 502s.
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err.message, err.stack);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -826,17 +836,19 @@ app.get('/api/partner/earnings', authMiddleware(['partner_admin']), async (req, 
 
 // ─── STUDENT: DASHBOARD ───────────────────────────────────────
 app.get('/api/student/dashboard', authMiddleware(['student']), async (req, res) => {
+  try {
   const [enrollments] = await getPool().query(`
     SELECT e.id, e.course_id, e.fee_paid, e.payment_status, e.enrolled_at, e.progress_percent, e.status,
       c.title as course_title, c.category, c.duration_weeks,
       a.name as agency_name, a.brand_color, a.logo_initials, a.logo_url as agency_logo_url, a.slug as agency_slug, a.email as agency_email
     FROM enrollments e
-    JOIN courses c ON e.course_id = c.id
-    JOIN agencies a ON e.agency_id = a.id
+    LEFT JOIN courses c ON e.course_id = c.id
+    LEFT JOIN agencies a ON e.agency_id = a.id
     WHERE e.student_id = ?
     ORDER BY e.enrolled_at DESC
   `, [req.user.id]);
   res.json({ enrollments });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── STUDENT: SSO TOKEN (LMS Access) ─────────────────────────
@@ -3824,4 +3836,14 @@ app.listen(PORT, HOST, () => {
   console.log(`\n🚀 TestPrepGPT API running at http://${HOST}:${PORT}`);
   console.log(`📋 Health check: http://${HOST}:${PORT}/api/health\n`);
   checkDBConnection();
+
+  // Keep-alive: ping DB every 4 minutes so Railway doesn't put the process
+  // to sleep and users never see a 30-60s cold-start 502.
+  setInterval(async () => {
+    try {
+      await getPool().query('SELECT 1');
+    } catch (e) {
+      console.warn('[keep-alive] DB ping failed:', e.message);
+    }
+  }, 4 * 60 * 1000); // every 4 minutes
 });
