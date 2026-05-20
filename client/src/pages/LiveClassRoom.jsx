@@ -47,25 +47,23 @@ export default function LiveClassRoom() {
       // ── Zoom platform ──────────────────────────────────────────
       if (data.platform === 'zoom') {
         if (data.is_demo) {
-          // Demo: open Zoom for 5 min with one-time notice
-          if (data.zoom_join_url) {
-            window.open(data.zoom_join_url, '_blank');
-            setZoomLaunched(true);
-          }
-          // Show the one-time demo notice (only once per session)
+          // Demo: do NOT auto-open Zoom — mobile browsers block window.open unless
+          // triggered directly by a user tap. Show the notice/join button instead.
           const seen = sessionStorage.getItem(`demo_notice_${id}`);
           if (!seen) {
+            // First visit: show the one-time notice modal
             setShowDemoNotice(true);
             sessionStorage.setItem(`demo_notice_${id}`, '1');
           }
+          // zoomLaunched stays false → "Open Zoom Meeting" button renders for return visits
+          // Demo countdown — 5 min for Zoom, kicks user via API when expired
+          if (data.demo_minutes) {
+            startDemoTimer(data.demo_minutes, false, true);
+          }
         } else if (!data.payment_rejected && !data.payment_expired && data.zoom_join_url) {
-          // Enrolled or payment pending: open Zoom
+          // Enrolled or payment pending: auto-open Zoom (fine — triggered on user navigation)
           window.open(data.zoom_join_url, '_blank');
           setZoomLaunched(true);
-        }
-        // Demo countdown — 5 min for Zoom, kicks user via API when expired
-        if (data.is_demo && data.demo_minutes) {
-          startDemoTimer(data.demo_minutes, false, true);
         }
       } else {
         // ── Jitsi platform ─────────────────────────────────────────
@@ -431,11 +429,17 @@ export default function LiveClassRoom() {
                 <button
                   className="w-full py-3 rounded-xl font-black text-white mb-2 transition hover:opacity-90 shadow-lg"
                   style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
-                  onClick={() => { setShowDemoNotice(false); handleLeave(true); navigate('/student', { state: { tab: 'catalog' } }); }}>
+                  onClick={() => { setShowDemoNotice(false); handleLeave(true); navigate('/student', { state: { tab: 'catalog', course_id: classInfo.course_id } }); }}>
                   🎓 Enroll Now — ₹{Number(classInfo.course_price || 0).toLocaleString('en-IN')}
                 </button>
                 <button
-                  onClick={() => setShowDemoNotice(false)}
+                  onClick={() => {
+                    setShowDemoNotice(false);
+                    if (classInfo?.zoom_join_url) {
+                      window.open(classInfo.zoom_join_url, '_blank');
+                      setZoomLaunched(true);
+                    }
+                  }}
                   className="w-full py-2 text-slate-400 text-sm hover:text-slate-600 transition">
                   I understand — start 5-min demo →
                 </button>
@@ -463,7 +467,7 @@ export default function LiveClassRoom() {
               <button
                 className="w-full py-3 rounded-xl text-white font-black mb-3 transition hover:opacity-90"
                 style={{ background: 'linear-gradient(135deg, #1e40af, #3b82f6)' }}
-                onClick={() => { handleLeave(true); navigate('/student', { state: { tab: 'catalog' } }); }}>
+                onClick={() => { handleLeave(true); navigate('/student', { state: { tab: 'catalog', course_id: classInfo.course_id } }); }}>
                 🎓 Enroll Now
               </button>
               <button
@@ -535,7 +539,7 @@ export default function LiveClassRoom() {
               <button
                 className="w-full py-3 rounded-xl text-white font-bold text-lg mb-3"
                 style={{ background: 'linear-gradient(135deg, #1e40af, #3b82f6)' }}
-                onClick={() => navigate('/student', { state: { tab: 'catalog' } })}>
+                onClick={() => navigate('/student', { state: { tab: 'catalog', course_id: classInfo?.course_id } })}>
                 Purchase Course
               </button>
               <button
@@ -568,7 +572,7 @@ export default function LiveClassRoom() {
             <button
               className="w-full py-3 rounded-xl font-black text-white mb-2 transition hover:opacity-90"
               style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
-              onClick={() => { setShowDemoNotice(false); handleLeave(true); navigate('/student', { state: { tab: 'catalog' } }); }}>
+              onClick={() => { setShowDemoNotice(false); handleLeave(true); navigate('/student', { state: { tab: 'catalog', course_id: classInfo?.course_id } }); }}>
               🎓 Enroll Now
             </button>
             <button onClick={() => setShowDemoNotice(false)}

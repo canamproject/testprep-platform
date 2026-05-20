@@ -1,16 +1,74 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
 
+// ── Banner mini-carousel (student page) ─────────────────────
+function StudentBanners({ banners, brandColor }) {
+  const [idx, setIdx] = useState(0);
+  const timer = useRef(null);
+
+  useEffect(() => {
+    if (banners.length < 2) return;
+    timer.current = setInterval(() => setIdx(i => (i + 1) % banners.length), 4000);
+    return () => clearInterval(timer.current);
+  }, [banners.length]);
+
+  if (!banners.length) return null;
+  const b = banners[idx];
+
+  return (
+    <div className="mb-4 rounded-2xl overflow-hidden shadow-sm cursor-pointer"
+      onClick={() => b.link_url && window.open(b.link_url, '_blank')}>
+      <div className="flex items-stretch min-h-[80px]" style={{ background: b.bg_color || brandColor }}>
+        {b.image_data && (
+          <div className="w-24 flex-shrink-0">
+            <img src={b.image_data} alt="" className="w-full h-full object-cover" />
+          </div>
+        )}
+        <div className="flex-1 px-4 py-3 flex flex-col justify-center" style={{ color: b.text_color || '#fff' }}>
+          {b.badge && (
+            <span className="text-[10px] font-black px-2 py-0.5 rounded-full self-start mb-1"
+              style={{ background: 'rgba(255,255,255,0.2)' }}>
+              {b.badge}
+            </span>
+          )}
+          <p className="font-black text-sm leading-tight">{b.title}</p>
+          {b.subtitle && <p className="text-xs opacity-70 mt-0.5 line-clamp-2">{b.subtitle}</p>}
+          {b.link_url && (
+            <span className="text-[10px] font-bold mt-1 opacity-80">{b.link_text || 'Learn More'} →</span>
+          )}
+        </div>
+        {banners.length > 1 && (
+          <div className="flex flex-col justify-center gap-1 pr-3">
+            {banners.map((_, i) => (
+              <button key={i} onClick={e => { e.stopPropagation(); setIdx(i); }}
+                className={`w-1.5 rounded-full transition-all ${i === idx ? 'h-5 bg-white' : 'h-1.5 bg-white/40'}`} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── USP strip for agency-branded pages ──────────────────────
+const STUDENT_USPS = [
+  { icon: '🎥', text: 'Live Interactive Classes' },
+  { icon: '📱', text: 'Study on Any Device' },
+  { icon: '📊', text: 'Track Your Progress' },
+  { icon: '🏆', text: 'Mock Tests & Practice' },
+];
+
 export default function Login({ tenantSlug, defaultMode = 'login' }) {
   const { login, loginWithToken, user } = useAuth();
   const navigate = useNavigate();
-  const [mode, setMode]       = useState(defaultMode); // 'login' | 'signup'
-  const [tab, setTab]         = useState('student');    // login tabs: admin|partner|student
+  const [mode, setMode]       = useState(defaultMode);
+  const [tab, setTab]         = useState('student');
   const [tenant, setTenant]   = useState(null);
   const [error, setError]     = useState('');
   const [loading, setLoading] = useState(false);
+  const [banners, setBanners] = useState([]);
 
   // Login form
   const [email, setEmail]       = useState('');
@@ -31,6 +89,9 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
   useEffect(() => {
     if (tenantSlug) {
       api.get(`/tenant/${tenantSlug}`).then(setTenant).catch(() => {});
+      // Fetch student-targeted banners for agency-branded pages
+      fetch('/api/login-banners?role=student')
+        .then(r => r.ok ? r.json() : []).then(setBanners).catch(() => {});
     }
   }, [tenantSlug]);
 
@@ -38,22 +99,23 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
   const agencyName = tenant?.name || 'TestPrep Platform';
   const logoText   = tenant?.logo_initials || 'TP';
 
-  // ── Login ─────────────────────────────────────────────────
+  // ── Login ────────────────────────────────────────────────
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true); setError('');
     try {
       const u = await login(email, password);
+      const slug = u.slug || u.agency_slug;
       if (u.role === 'super_admin') navigate('/admin');
-      else if (u.role === 'partner_admin') navigate('/partner');
+      else if (u.role === 'partner_admin') navigate(slug ? `/${slug}/partner` : '/partner');
       else if (u.role === 'faculty') navigate('/faculty');
-      else navigate('/student');
+      else navigate(slug ? `/${slug}/student` : '/student');
     } catch (err) {
       setError(err.message);
     } finally { setLoading(false); }
   };
 
-  // ── Signup ────────────────────────────────────────────────
+  // ── Signup ───────────────────────────────────────────────
   const handleSignup = async (e) => {
     e.preventDefault();
     setError('');
@@ -62,38 +124,134 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
     setLoading(true);
     try {
       const data = await api.post('/auth/signup', {
-        name: sig.name,
-        email: sig.email,
-        phone: sig.phone,
-        password: sig.password,
-        agency_slug: tenantSlug || null,
+        name: sig.name, email: sig.email, phone: sig.phone,
+        password: sig.password, agency_slug: tenantSlug || null,
       });
       loginWithToken(data.token, data.user);
-      navigate('/student');
+      const agSlug = data.user?.slug || data.user?.agency_slug || tenantSlug;
+      navigate(agSlug ? `/${agSlug}/student` : '/student', { replace: true });
     } catch (err) {
       setError(err.message);
     } finally { setLoading(false); }
   };
 
+  // ── Tenant (agency-branded) page ─────────────────────────
+  if (tenantSlug) {
+    return (
+      <div className="min-h-screen" style={{ background: '#f1f5f9' }}>
+        {/* Top section with brand color */}
+        <div className="px-4 pt-8 pb-6 text-white text-center" style={{ background: brandColor }}>
+          <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3 text-2xl font-black">
+            {tenant?.logo_url
+              ? <img src={tenant.logo_url} alt={agencyName} className="w-full h-full object-cover rounded-2xl" />
+              : logoText
+            }
+          </div>
+          <h1 className="text-xl font-bold">{agencyName}</h1>
+          <p className="text-white/60 text-xs mt-1">Powered by TestPrep Platform</p>
+
+          {/* USP mini-strip */}
+          <div className="flex justify-center flex-wrap gap-2 mt-4">
+            {STUDENT_USPS.map(u => (
+              <span key={u.text} className="text-[11px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1"
+                style={{ background: 'rgba(255,255,255,0.15)' }}>
+                {u.icon} {u.text}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="max-w-md mx-auto px-4 -mt-2 pb-8">
+          {/* Admin-managed banners */}
+          {banners.length > 0 && (
+            <div className="mt-4">
+              <StudentBanners banners={banners} brandColor={brandColor} />
+            </div>
+          )}
+
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden mt-3">
+            <div className="px-6 py-5">
+              {/* Mode toggle */}
+              <div className="flex bg-slate-100 rounded-xl p-1 mb-5 gap-1">
+                <button onClick={() => { setMode('login'); setError(''); }}
+                  className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${mode === 'login' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}>
+                  Sign In
+                </button>
+                <button onClick={() => { setMode('signup'); setError(''); }}
+                  className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${mode === 'signup' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}>
+                  Sign Up
+                </button>
+              </div>
+
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-100 text-red-600 rounded-xl text-sm">{error}</div>
+              )}
+
+              {/* Sign In */}
+              {mode === 'login' && (
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <div>
+                    <label className="label">Email or Mobile Number</label>
+                    <input type="text" required value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com or 9876543210" className="input" />
+                  </div>
+                  <div>
+                    <label className="label">Password</label>
+                    <input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" className="input" />
+                  </div>
+                  <button type="submit" disabled={loading}
+                    className="w-full py-3 text-white font-bold rounded-xl transition-all hover:opacity-90 disabled:opacity-50"
+                    style={{ background: brandColor }}>
+                    {loading ? 'Signing in…' : 'Sign In'}
+                  </button>
+                </form>
+              )}
+
+              {/* Sign Up */}
+              {mode === 'signup' && (
+                <form onSubmit={handleSignup} className="space-y-3">
+                  <div className="flex items-center gap-2 p-2.5 bg-blue-50 rounded-xl text-xs text-blue-700 font-medium mb-1">
+                    <span>🏫</span>
+                    <span>Signing up under <strong>{agencyName}</strong></span>
+                  </div>
+                  {[
+                    { label: 'Full Name *', key: 'name', type: 'text', placeholder: 'Priya Sharma', req: true },
+                    { label: 'Email Address *', key: 'email', type: 'email', placeholder: 'your@email.com', req: true },
+                    { label: 'Phone', key: 'phone', type: 'tel', placeholder: '+91 98765 43210', req: false },
+                    { label: 'Password *', key: 'password', type: 'password', placeholder: 'Min 6 characters', req: true },
+                    { label: 'Confirm Password *', key: 'confirm', type: 'password', placeholder: 'Repeat password', req: true },
+                  ].map(f => (
+                    <div key={f.key}>
+                      <label className="label">{f.label}</label>
+                      <input type={f.type} required={f.req} placeholder={f.placeholder} className="input"
+                        value={sig[f.key]} onChange={e => setSig({ ...sig, [f.key]: e.target.value })} />
+                    </div>
+                  ))}
+                  <button type="submit" disabled={loading}
+                    className="w-full py-3 text-white font-bold rounded-xl transition-all hover:opacity-90 disabled:opacity-50 mt-1"
+                    style={{ background: brandColor }}>
+                    {loading ? 'Creating account…' : 'Create Account'}
+                  </button>
+                  <p className="text-xs text-slate-400 text-center">By signing up you agree to our terms of service.</p>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Generic login page (no tenant) ──────────────────────────
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: '#f1f5f9' }}>
       <div className="w-full max-w-md">
         <div className="rounded-2xl overflow-hidden shadow-xl border border-slate-100">
-
-          {/* Brand header */}
-          <div className="px-8 pt-8 pb-6 text-white text-center" style={{ background: brandColor }}>
-            <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3 text-2xl font-black">
-              {logoText}
-            </div>
-            <h1 className="text-xl font-bold">{agencyName}</h1>
-            {tenant && (
-              <p className="text-white/60 text-xs mt-1">Powered by TestPrep Platform</p>
-            )}
+          <div className="px-8 pt-8 pb-6 text-white text-center" style={{ background: '#1a1a2e' }}>
+            <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3 text-2xl font-black">TP</div>
+            <h1 className="text-xl font-bold">TestPrep Platform</h1>
           </div>
 
           <div className="bg-white px-8 py-6">
-
-            {/* Mode toggle: Sign In / Sign Up */}
             <div className="flex bg-slate-100 rounded-xl p-1 mb-5 gap-1">
               <button onClick={() => { setMode('login'); setError(''); }}
                 className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${mode === 'login' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}`}>
@@ -105,8 +263,7 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
               </button>
             </div>
 
-            {/* Admin/Partner tabs — only on login, non-tenant */}
-            {mode === 'login' && !tenantSlug && (
+            {mode === 'login' && (
               <div className="flex gap-1 mb-4">
                 {[['student','Student'],['partner','Partner'],['admin','Admin']].map(([k, l]) => (
                   <button key={k} onClick={() => setTab(k)}
@@ -117,84 +274,56 @@ export default function Login({ tenantSlug, defaultMode = 'login' }) {
               </div>
             )}
 
-            {error && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-100 text-red-600 rounded-xl text-sm">{error}</div>
-            )}
+            {error && <div className="mb-4 p-3 bg-red-50 border border-red-100 text-red-600 rounded-xl text-sm">{error}</div>}
 
-            {/* ── SIGN IN FORM ── */}
             {mode === 'login' && (
               <form onSubmit={handleLogin} className="space-y-4">
                 <div>
-                  <label>Email Address</label>
-                  <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" />
+                  <label className="label">Email Address</label>
+                  <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" className="input" />
                 </div>
                 <div>
-                  <label>Password</label>
-                  <input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" />
+                  <label className="label">Password</label>
+                  <input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" className="input" />
                 </div>
                 <button type="submit" disabled={loading}
                   className="w-full py-3 text-white font-bold rounded-xl transition-all hover:opacity-90 disabled:opacity-50"
-                  style={{ background: brandColor }}>
+                  style={{ background: '#1a1a2e' }}>
                   {loading ? 'Signing in…' : 'Sign In'}
                 </button>
               </form>
             )}
 
-            {/* ── SIGN UP FORM ── */}
             {mode === 'signup' && (
               <form onSubmit={handleSignup} className="space-y-3">
-                {tenant && (
-                  <div className="flex items-center gap-2 p-2.5 bg-blue-50 rounded-xl text-xs text-blue-700 font-medium mb-1">
-                    <span>🏫</span>
-                    <span>Signing up under <strong>{agencyName}</strong></span>
+                {[
+                  { label: 'Full Name *', key: 'name', type: 'text', placeholder: 'Priya Sharma', req: true },
+                  { label: 'Email Address *', key: 'email', type: 'email', placeholder: 'your@email.com', req: true },
+                  { label: 'Phone', key: 'phone', type: 'tel', placeholder: '+91 98765 43210', req: false },
+                  { label: 'Password *', key: 'password', type: 'password', placeholder: 'Min 6 characters', req: true },
+                  { label: 'Confirm Password *', key: 'confirm', type: 'password', placeholder: 'Repeat password', req: true },
+                ].map(f => (
+                  <div key={f.key}>
+                    <label className="label">{f.label}</label>
+                    <input type={f.type} required={f.req} placeholder={f.placeholder} className="input"
+                      value={sig[f.key]} onChange={e => setSig({ ...sig, [f.key]: e.target.value })} />
                   </div>
-                )}
-                <div>
-                  <label>Full Name *</label>
-                  <input required placeholder="Priya Sharma"
-                    value={sig.name} onChange={e => setSig({ ...sig, name: e.target.value })} />
-                </div>
-                <div>
-                  <label>Email Address *</label>
-                  <input type="email" required placeholder="your@email.com"
-                    value={sig.email} onChange={e => setSig({ ...sig, email: e.target.value })} />
-                </div>
-                <div>
-                  <label>Phone <span className="font-normal text-slate-400">optional</span></label>
-                  <input type="tel" placeholder="+91 98765 43210"
-                    value={sig.phone} onChange={e => setSig({ ...sig, phone: e.target.value })} />
-                </div>
-                <div>
-                  <label>Password *</label>
-                  <input type="password" required placeholder="Min 6 characters"
-                    value={sig.password} onChange={e => setSig({ ...sig, password: e.target.value })} />
-                </div>
-                <div>
-                  <label>Confirm Password *</label>
-                  <input type="password" required placeholder="Repeat password"
-                    value={sig.confirm} onChange={e => setSig({ ...sig, confirm: e.target.value })} />
-                </div>
+                ))}
                 <button type="submit" disabled={loading}
                   className="w-full py-3 text-white font-bold rounded-xl transition-all hover:opacity-90 disabled:opacity-50 mt-1"
-                  style={{ background: brandColor }}>
+                  style={{ background: '#1a1a2e' }}>
                   {loading ? 'Creating account…' : 'Create Account'}
                 </button>
-                <p className="text-xs text-slate-400 text-center">
-                  By signing up you agree to our terms of service.
-                </p>
+                <p className="text-xs text-slate-400 text-center">By signing up you agree to our terms of service.</p>
               </form>
             )}
-
           </div>
         </div>
 
-        {/* Tenant portals — only on main login, not on tenant pages */}
-        {!tenantSlug && (
-          <p className="text-center text-xs text-slate-400 mt-4">
-            Are you a student from a partner institute?{' '}
-            <span className="text-slate-600">Use your institute's link to sign up.</span>
-          </p>
-        )}
+        <p className="text-center text-xs text-slate-400 mt-4">
+          Are you a student from a partner institute?{' '}
+          <span className="text-slate-600">Use your institute's link to sign up.</span>
+        </p>
       </div>
     </div>
   );

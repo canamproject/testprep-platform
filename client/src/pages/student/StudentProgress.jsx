@@ -223,7 +223,406 @@ const QB = {
     { q: 'Which is an example of a discourse marker for addition?', opts: ['However','Furthermore','Although','Otherwise'], a: 1, exp: '"Furthermore" adds to a previous point. However/Although = contrast; Otherwise = condition.' },
     { q: '"Extrapolate" data means to:', opts: ['delete irrelevant data','extend conclusions beyond observed data','compare data from two sources','calculate the average of data'], a: 1, exp: 'Extrapolate = extend the application of (a method or conclusion) to unknown situations.' },
   ],
+  FRENCH_A1_Grammaire: [
+    { q: 'Choose the correct form: "Je ___ un étudiant." (I am a student.)', opts: ['es','suis','est','sommes'], a: 1, exp: '"Être" conjugation: je suis (I am).' },
+    { q: '"Tu ___ la télévision?" — fill in the correct verb form.', opts: ['regardes','regarde','regardez','regardons'], a: 0, exp: '"Tu" takes the -es ending: tu regardes (you watch).' },
+    { q: 'Choose the correct negation: "I don\'t have a dog."', opts: ['Je n\'ai pas un chien.','Je n\'ai pas de chien.','Je ne ai pas chien.','Je n\'as pas de chien.'], a: 1, exp: 'After negation (ne...pas), indefinite articles become "de/d\'".' },
+    { q: '"Il ___ au cinéma." — Choose the correct form.', opts: ['va a','va au','va à le','va en'], a: 1, exp: '"À + le" always contracts to "au": Il va au cinéma.' },
+    { q: '"Nous ___ français." — fill in "to speak".', opts: ['parle','parlez','parlons','parlent'], a: 2, exp: '"Nous" takes the -ons ending: nous parlons (we speak).' },
+    { q: 'Choose the correct gender: ___ livre (the book)', opts: ['la','le','les','l\''], a: 1, exp: '"Livre" (book) is masculine: le livre.' },
+    { q: '"Je m\'appelle Marie." This sentence means:', opts: ['I like Marie.','My name is Marie.','I know Marie.','I am calling Marie.'], a: 1, exp: '"S\'appeler" = to be called/named: je m\'appelle = my name is.' },
+    { q: 'What is the correct plural of "un chat"?', opts: ['des chats','les chat','un chats','des chat'], a: 0, exp: '"Des chats" — pluralisation adds -s; indefinite article becomes "des".' },
+    { q: '"Quelle heure est-ce?" means:', opts: ['How are you?','Where are you?','What time is it?','How old are you?'], a: 2, exp: '"Quelle heure" = what time; "est-ce?" = is it? → What time is it?' },
+    { q: '"Je ___ une pomme." (I have an apple.) Choose the correct verb form.', opts: ['suis','avoir','ai','est'], a: 2, exp: '"Avoir" = to have; je ai → contracted to "j\'ai" but here: je ai = je ai — 1st person is "ai".' },
+  ],
+  FRENCH_A1_Vocabulaire: [
+    { q: 'What does "bonjour" mean?', opts: ['Goodbye','Good evening','Hello / Good day','Thank you'], a: 2, exp: '"Bonjour" = Hello / Good day.' },
+    { q: 'Which word means "water" in French?', opts: ['Lait','Jus','Eau','Vin'], a: 2, exp: '"Eau" = water. Lait=milk, Jus=juice, Vin=wine.' },
+    { q: '"Merci beaucoup" means:', opts: ['You are welcome','Thank you very much','Excuse me please','I am sorry'], a: 1, exp: '"Merci" = thank you; "beaucoup" = very much.' },
+    { q: 'What does "maison" mean?', opts: ['Table','Garden','House','Street'], a: 2, exp: '"Maison" = house.' },
+    { q: '"Je suis fatigué(e)" means:', opts: ['I am happy','I am tired','I am hungry','I am cold'], a: 1, exp: '"Fatigué(e)" = tired.' },
+    { q: 'What is the French word for "Monday"?', opts: ['Dimanche','Vendredi','Lundi','Samedi'], a: 2, exp: '"Lundi" = Monday.' },
+    { q: '"Où est la gare?" means:', opts: ['When does the train leave?','How much is the ticket?','Where is the train station?','Is the train late?'], a: 2, exp: '"Où" = where; "gare" = train station.' },
+    { q: 'Which word means "beautiful" in French?', opts: ['Petit','Grand','Beau/Belle','Nouveau'], a: 2, exp: '"Beau" (masc.) / "Belle" (fem.) = beautiful.' },
+    { q: '"J\'ai vingt ans" means:', opts: ['I am twenty years old.','I want twenty.','I have twenty items.','I live for twenty years.'], a: 0, exp: '"J\'ai ... ans" = I am ... years old (literally "I have ... years").' },
+    { q: 'What does "s\'il vous plaît" mean?', opts: ['Thank you','You\'re welcome','Please','Excuse me'], a: 2, exp: '"S\'il vous plaît" = please (formal/polite).' },
+  ],
 };
+
+// ─── DIAGNOSTIC ASSESSMENT ───────────────────────────────────
+
+// Pre-enrich QB: carry passage forward to questions that don't have their own
+const QB_ENRICHED = (() => {
+  const out = {};
+  Object.entries(QB).forEach(([key, qs]) => {
+    let curPassage = null;
+    out[key] = qs.map(q => {
+      if (q.passage) curPassage = q.passage;
+      return { ...q, _passage: q.passage ? q.passage : curPassage };
+    });
+  });
+  return out;
+})();
+
+// Map exam type → question sections for diagnostic
+const DIAG_MAP = {
+  IELTS:      [{ key:'IELTS_Grammar',count:3,label:'Grammar',shuffle:true },{ key:'IELTS_Vocabulary',count:3,label:'Vocabulary',shuffle:true },{ key:'IELTS_Reading',count:2,label:'Reading',shuffle:false },{ key:'IELTS_Listening',count:2,label:'Listening',shuffle:true }],
+  PTE:        [{ key:'PTE_Reading',count:5,label:'Reading',shuffle:false },{ key:'PTE_Listening',count:5,label:'Listening',shuffle:true }],
+  GERMAN_A1:  [{ key:'GERMAN_A1_Grammatik',count:4,label:'Grammatik',shuffle:true },{ key:'GERMAN_A1_Wortschatz',count:4,label:'Wortschatz',shuffle:true },{ key:'GERMAN_A1_Lesen',count:2,label:'Lesen',shuffle:false }],
+  GERMAN_A2:  [{ key:'GERMAN_A1_Grammatik',count:4,label:'Grammatik',shuffle:true },{ key:'GERMAN_A1_Wortschatz',count:3,label:'Wortschatz',shuffle:true },{ key:'GERMAN_A1_Lesen',count:3,label:'Lesen',shuffle:false }],
+  GERMAN_B1:  [{ key:'GERMAN_B1_Grammatik',count:5,label:'Grammatik',shuffle:true },{ key:'GERMAN_A1_Wortschatz',count:3,label:'Wortschatz',shuffle:true },{ key:'GERMAN_A1_Lesen',count:2,label:'Lesen',shuffle:false }],
+  GERMAN_B2:  [{ key:'GERMAN_B1_Grammatik',count:5,label:'Grammatik',shuffle:true },{ key:'GERMAN_A1_Wortschatz',count:3,label:'Wortschatz',shuffle:true },{ key:'GERMAN_A1_Lesen',count:2,label:'Lesen',shuffle:false }],
+  FRENCH_A1:  [{ key:'FRENCH_A1_Grammaire',count:5,label:'Grammaire',shuffle:true },{ key:'FRENCH_A1_Vocabulaire',count:5,label:'Vocabulaire',shuffle:true }],
+};
+
+const DIAG_LEVELS = [
+  { min:0,  max:30,  level:'Beginner',          emoji:'🌱', color:'#ef4444',
+    desc:'You\'re just starting out. We\'ll build strong foundations first.',
+    suggestScore:{ IELTS:5.0, PTE:34, GERMAN_A1:60, GERMAN_A2:60, GERMAN_B1:62, GERMAN_B2:62, FRENCH_A1:52 }, weeks:24, hours:3 },
+  { min:31, max:50,  level:'Elementary',         emoji:'📗', color:'#f59e0b',
+    desc:'You have basic knowledge. Consistent practice will help you grow quickly.',
+    suggestScore:{ IELTS:5.5, PTE:42, GERMAN_A1:68, GERMAN_A2:68, GERMAN_B1:65, GERMAN_B2:68, FRENCH_A1:55 }, weeks:16, hours:2.5 },
+  { min:51, max:65,  level:'Intermediate',       emoji:'📘', color:'#3b82f6',
+    desc:'Good foundation! Focus on weak areas to reach your target.',
+    suggestScore:{ IELTS:6.5, PTE:58, GERMAN_A1:75, GERMAN_A2:75, GERMAN_B1:70, GERMAN_B2:72, FRENCH_A1:62 }, weeks:12, hours:2 },
+  { min:66, max:80,  level:'Upper-Intermediate', emoji:'📙', color:'#8b5cf6',
+    desc:'Strong skills! Target higher bands with focused practice.',
+    suggestScore:{ IELTS:7.0, PTE:65, GERMAN_A1:82, GERMAN_A2:82, GERMAN_B1:76, GERMAN_B2:78, FRENCH_A1:70 }, weeks:8, hours:1.5 },
+  { min:81, max:100, level:'Advanced',           emoji:'🏆', color:'#16a34a',
+    desc:'Excellent command of the language! Push for top scores.',
+    suggestScore:{ IELTS:7.5, PTE:75, GERMAN_A1:90, GERMAN_A2:90, GERMAN_B1:85, GERMAN_B2:85, FRENCH_A1:80 }, weeks:6, hours:1 },
+];
+
+function getDiagLevel(pct) {
+  return DIAG_LEVELS.find(l => pct >= l.min && pct <= l.max) || DIAG_LEVELS[0];
+}
+
+function buildDiagQuestions(examType) {
+  const sections = DIAG_MAP[examType] || DIAG_MAP.IELTS;
+  const out = [];
+  sections.forEach(sec => {
+    const pool = (QB_ENRICHED[sec.key] || []).map(q => ({ ...q, section: sec.label }));
+    if (sec.shuffle) {
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+    }
+    pool.slice(0, sec.count).forEach(q => out.push(q));
+  });
+  return out.slice(0, 10);
+}
+
+// ── DiagnosticTest: the 10-question quiz ──────────────────────
+function DiagnosticTest({ examType, onComplete }) {
+  const [questions] = useState(() => buildDiagQuestions(examType));
+  const [current, setCurrent]   = useState(0);
+  const [answers, setAnswers]   = useState({});
+  const [selected, setSelected] = useState(null);
+  const [showExp, setShowExp]   = useState(false);
+
+  const examDef = EXAMS[examType] || EXAMS.IELTS;
+  const q = questions[current];
+  const total = questions.length;
+
+  const handleAnswer = (i) => {
+    if (showExp) return;
+    setSelected(i);
+    setShowExp(true);
+    setAnswers(prev => ({ ...prev, [current]: i }));
+  };
+
+  const handleNext = () => {
+    const finalAnswers = { ...answers, [current]: selected };
+    if (current < total - 1) {
+      setCurrent(c => c + 1);
+      setSelected(null);
+      setShowExp(false);
+    } else {
+      // Build section scores
+      const sectionScores = {};
+      questions.forEach((q, i) => {
+        const sec = q.section;
+        if (!sectionScores[sec]) sectionScores[sec] = { correct: 0, total: 0 };
+        sectionScores[sec].total++;
+        if (finalAnswers[i] === q.a) sectionScores[sec].correct++;
+      });
+      const totalCorrect = Object.values(sectionScores).reduce((s, v) => s + v.correct, 0);
+      const scorePct = Math.round((totalCorrect / total) * 100);
+      const levelDef = getDiagLevel(scorePct);
+      const weakSections   = Object.entries(sectionScores).filter(([, v]) => (v.correct / v.total) < 0.6).map(([k]) => k);
+      const strongSections = Object.entries(sectionScores).filter(([, v]) => (v.correct / v.total) >= 0.8).map(([k]) => k);
+      onComplete({ scorePct, totalCorrect, total, level: levelDef.level, levelDef,
+        sectionScores, weakSections, strongSections,
+        suggestedScore: levelDef.suggestScore[examType] ?? levelDef.suggestScore.IELTS,
+        suggestedWeeks: levelDef.weeks, suggestedHours: levelDef.hours });
+    }
+  };
+
+  const progPct = Math.round(((current) / total) * 100);
+
+  return (
+    <div className="max-w-lg">
+      {/* Progress bar */}
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-bold text-slate-500">Question {current + 1} of {total}</span>
+        <span className="text-[11px] font-black px-2 py-0.5 rounded-full text-white" style={{ background: examDef.color }}>{q.section}</span>
+      </div>
+      <div className="h-2 bg-slate-100 rounded-full mb-5 overflow-hidden">
+        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${progPct}%`, background: examDef.color }} />
+      </div>
+
+      {/* Passage */}
+      {q._passage && (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 text-xs text-slate-600 leading-relaxed max-h-28 overflow-y-auto">
+          {q._passage}
+        </div>
+      )}
+
+      {/* Question card */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 mb-4">
+        <p className="font-semibold text-slate-900 text-sm leading-relaxed mb-4">{q.q}</p>
+        <div className="space-y-2">
+          {q.opts.map((opt, i) => {
+            let cls = 'bg-white border-slate-200 text-slate-700 hover:border-blue-300 hover:bg-blue-50';
+            if (showExp) {
+              if (i === q.a)               cls = 'bg-emerald-50 border-emerald-400 text-emerald-800';
+              else if (i === selected)     cls = 'bg-red-50 border-red-400 text-red-700';
+              else                         cls = 'bg-slate-50 border-slate-200 text-slate-400';
+            } else if (i === selected)     cls = 'bg-blue-50 border-blue-400 text-blue-800';
+            return (
+              <button key={i} onClick={() => handleAnswer(i)} disabled={showExp}
+                className={`w-full text-left px-4 py-3 rounded-xl border-2 text-sm font-medium transition ${cls}`}>
+                <span className="font-black mr-2">{String.fromCharCode(65 + i)}.</span>{opt}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Explanation */}
+      {showExp && (
+        <div className={`rounded-xl p-4 mb-4 text-sm border ${selected === q.a ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+          <span className="font-bold">{selected === q.a ? '✅ Correct! ' : '❌ Not quite. '}</span>{q.exp}
+        </div>
+      )}
+
+      {/* Next button */}
+      {showExp && (
+        <button onClick={handleNext}
+          className="w-full py-3 rounded-xl font-black text-white transition hover:opacity-90"
+          style={{ background: examDef.color }}>
+          {current === total - 1 ? '📊 See My Results →' : 'Next Question →'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── DiagnosticResults: level + breakdown + suggestion ─────────
+function DiagnosticResults({ results, examType, onProceed }) {
+  const examDef = EXAMS[examType] || EXAMS.IELTS;
+  const { scorePct, totalCorrect, total, level, levelDef, sectionScores, weakSections, strongSections, suggestedScore, suggestedWeeks, suggestedHours } = results;
+
+  useEffect(() => {
+    api.post('/student/diagnostic', {
+      exam_type: examType, score_pct: scorePct, level,
+      section_scores: JSON.stringify(sectionScores),
+    }).catch(() => {});
+  }, []);
+
+  return (
+    <div className="max-w-lg space-y-5">
+      {/* Level banner */}
+      <div className="rounded-2xl p-6 text-center text-white" style={{ background: `linear-gradient(135deg, ${levelDef.color}, ${levelDef.color}cc)` }}>
+        <div className="text-5xl mb-2">{levelDef.emoji}</div>
+        <div className="text-2xl font-black mb-1">Your Level: {level}</div>
+        <p className="text-sm opacity-90 mb-3">{levelDef.desc}</p>
+        <div className="inline-flex items-center gap-2 bg-white/20 rounded-full px-4 py-1.5 text-sm font-bold">
+          {totalCorrect} / {total} correct · {scorePct}%
+        </div>
+      </div>
+
+      {/* Section breakdown */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+        <h4 className="font-black text-slate-900 mb-4">📊 Section Breakdown</h4>
+        {Object.entries(sectionScores).map(([sec, data]) => {
+          const pct = Math.round((data.correct / data.total) * 100);
+          const col = pct >= 70 ? '#16a34a' : pct >= 50 ? '#f59e0b' : '#ef4444';
+          return (
+            <div key={sec} className="mb-3">
+              <div className="flex justify-between text-xs mb-1">
+                <span className="font-semibold text-slate-700">{sec}</span>
+                <span className="font-bold" style={{ color: col }}>{data.correct}/{data.total} · {pct}%</span>
+              </div>
+              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: col }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Weak / Strong grid */}
+      {(weakSections.length > 0 || strongSections.length > 0) && (
+        <div className="grid grid-cols-2 gap-3">
+          {weakSections.length > 0 && (
+            <div className="bg-red-50 rounded-2xl p-4 border border-red-100">
+              <p className="font-bold text-red-700 text-sm mb-2">🎯 Focus Areas</p>
+              {weakSections.map(s => <p key={s} className="text-xs text-red-600 mb-1">• {s}</p>)}
+            </div>
+          )}
+          {strongSections.length > 0 && (
+            <div className="bg-green-50 rounded-2xl p-4 border border-green-100">
+              <p className="font-bold text-green-700 text-sm mb-2">✅ Strong Areas</p>
+              {strongSections.map(s => <p key={s} className="text-xs text-green-700 mb-1">• {s}</p>)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Suggested plan */}
+      <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-5 border border-blue-100">
+        <h4 className="font-black text-slate-900 mb-3">💡 Personalised Recommendation</h4>
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          {[
+            { val: String(suggestedScore), lbl: 'Suggested Target', color: examDef.color },
+            { val: `${suggestedWeeks}w`,    lbl: 'Study Period',     color: '#6366f1' },
+            { val: `${suggestedHours}h/d`,  lbl: 'Hours Per Day',    color: '#8b5cf6' },
+          ].map(c => (
+            <div key={c.lbl} className="text-center bg-white rounded-xl p-3 border border-blue-100">
+              <div className="text-lg font-black" style={{ color: c.color }}>{c.val}</div>
+              <div className="text-[10px] text-slate-400 mt-0.5">{c.lbl}</div>
+            </div>
+          ))}
+        </div>
+        <ul className="space-y-1.5 text-xs text-slate-700">
+          {weakSections.length > 0 && (
+            <li className="flex items-start gap-1.5"><span>🎯</span><span>Prioritise <strong>{weakSections.join(', ')}</strong> in your first 4 weeks</span></li>
+          )}
+          <li className="flex items-start gap-1.5"><span>📝</span><span>Take a mock test every week to track improvement</span></li>
+          <li className="flex items-start gap-1.5"><span>🔁</span><span>Review wrong answers within 24 hours for best retention</span></li>
+        </ul>
+      </div>
+
+      <button onClick={() => onProceed(results)}
+        className="w-full py-3.5 rounded-xl font-black text-white transition hover:opacity-90 text-base"
+        style={{ background: `linear-gradient(135deg, ${examDef.color}, ${examDef.color}cc)` }}>
+        🎯 Set My Target &amp; Start Plan →
+      </button>
+    </div>
+  );
+}
+
+// ── DiagnosticWizard: intro → test → results → target form ────
+function DiagnosticWizard({ existing, onSaved }) {
+  const [step, setStep]           = useState('intro'); // intro | assessment | results | target
+  const [examType, setExamType]   = useState(existing?.exam_type || 'IELTS');
+  const [diagResults, setDiagResults] = useState(null);
+
+  const examDef = EXAMS[examType] || EXAMS.IELTS;
+
+  if (step === 'intro') return (
+    <div className="max-w-lg space-y-4">
+      {/* Exam picker */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+        <h3 className="font-black text-slate-900 text-lg mb-1">🎯 Set Your Study Target</h3>
+        <p className="text-sm text-slate-400 mb-4">First, choose which exam you are preparing for.</p>
+        <div className="grid grid-cols-2 gap-2">
+          {Object.entries(EXAMS).map(([key, ex]) => (
+            <button key={key} onClick={() => setExamType(key)}
+              className="flex items-center gap-2 p-2.5 rounded-xl border-2 text-left transition"
+              style={{ borderColor: examType === key ? ex.color : '#e2e8f0', background: examType === key ? ex.color + '12' : '#fff' }}>
+              <span>{ex.icon}</span>
+              <span className="text-xs font-bold truncate" style={{ color: examType === key ? ex.color : '#64748b' }}>
+                {ex.label.split(' (')[0]}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Diagnostic intro */}
+      <div className="rounded-2xl p-5 border-2" style={{ borderColor: examDef.color + '50', background: examDef.color + '08' }}>
+        <div className="flex items-start gap-3 mb-3">
+          <div className="text-3xl">{examDef.icon}</div>
+          <div>
+            <h4 className="font-black text-slate-900">Free Diagnostic Assessment</h4>
+            <p className="text-xs text-slate-500 mt-0.5">{examDef.label} · 10 questions · ~5 minutes</p>
+          </div>
+        </div>
+        <p className="text-sm text-slate-600 mb-4">
+          Answer 10 quick questions so we can understand your current level and suggest the right target score and study plan tailored to you.
+        </p>
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          {[['10','Questions'],['~5 min','Duration'],['100%','Free']].map(([v, l]) => (
+            <div key={l} className="text-center bg-white rounded-xl py-2.5 border border-slate-100">
+              <div className="font-black text-slate-900 text-sm">{v}</div>
+              <div className="text-[10px] text-slate-400 mt-0.5">{l}</div>
+            </div>
+          ))}
+        </div>
+        <button onClick={() => setStep('assessment')}
+          className="w-full py-3 rounded-xl font-black text-white transition hover:opacity-90"
+          style={{ background: examDef.color }}>
+          🚀 Start Diagnostic Assessment
+        </button>
+      </div>
+
+      <button onClick={() => setStep('target')}
+        className="w-full py-2.5 text-sm font-semibold text-slate-400 hover:text-slate-600 transition text-center">
+        Skip assessment → Set target directly
+      </button>
+    </div>
+  );
+
+  if (step === 'assessment') return (
+    <div className="max-w-lg">
+      <div className="flex items-center gap-3 mb-5">
+        <button onClick={() => setStep('intro')} className="text-slate-400 hover:text-slate-600 text-sm font-semibold">← Back</button>
+        <h3 className="font-black text-slate-900">{examDef.icon} {examDef.label.split(' (')[0]} Diagnostic</h3>
+      </div>
+      <DiagnosticTest examType={examType}
+        onComplete={(res) => { setDiagResults(res); setStep('results'); }} />
+    </div>
+  );
+
+  if (step === 'results') return (
+    <div className="max-w-lg">
+      <div className="mb-5">
+        <h3 className="font-black text-slate-900 text-lg">📊 Your Diagnostic Results</h3>
+        <p className="text-xs text-slate-400 mt-0.5">Based on your answers, here's your current level.</p>
+      </div>
+      <DiagnosticResults results={diagResults} examType={examType}
+        onProceed={() => setStep('target')} />
+    </div>
+  );
+
+  if (step === 'target') return (
+    <div className="max-w-lg">
+      {diagResults && (
+        <div className="mb-4 p-3.5 rounded-xl bg-blue-50 border border-blue-100 flex items-center gap-3">
+          <span className="text-2xl">{diagResults.levelDef.emoji}</span>
+          <div>
+            <p className="text-sm font-bold text-slate-900">
+              Diagnostic result: <span style={{ color: diagResults.levelDef.color }}>{diagResults.level}</span>
+            </p>
+            <p className="text-xs text-slate-500">We've pre-filled a suggested target below. You can adjust it freely.</p>
+          </div>
+        </div>
+      )}
+      <TargetSetupForm
+        existing={existing}
+        forceExamType={examType}
+        suggestedScore={diagResults?.suggestedScore}
+        suggestedHours={diagResults?.suggestedHours}
+        onSaved={onSaved}
+      />
+    </div>
+  );
+
+  return null;
+}
 
 // ─── SVG CHARTS ──────────────────────────────────────────────
 function RadialProgress({ pct = 0, size = 120, strokeWidth = 10, color = '#3b82f6', label = '', subLabel = '', bg = '#e2e8f0' }) {
@@ -956,18 +1355,29 @@ function AttendanceView({ progress }) {
 }
 
 // ─── TARGET SETUP FORM ────────────────────────────────────────
-function TargetSetupForm({ existing, onSaved }) {
+function TargetSetupForm({ existing, forceExamType, suggestedScore, suggestedHours, onSaved }) {
+  const initExam  = forceExamType || existing?.exam_type || 'IELTS';
+  const initScore = suggestedScore ?? existing?.target_score ?? (EXAMS[initExam]?.defaultTarget || 7.0);
+  const initHours = suggestedHours ?? existing?.study_hours_per_day ?? 2;
   const [form, setForm] = useState({
-    exam_type: existing?.exam_type || 'IELTS',
-    target_score: existing?.target_score || 7.0,
+    exam_type: initExam,
+    target_score: initScore,
     target_date: existing?.target_date?.slice(0, 10) || '',
-    study_hours_per_day: existing?.study_hours_per_day || 2,
+    study_hours_per_day: initHours,
     notes: existing?.notes || '',
   });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
 
   const def = EXAMS[form.exam_type] || EXAMS.IELTS;
+  // If forceExamType is set, lock the exam type when the prop changes
+  useEffect(() => {
+    if (forceExamType && forceExamType !== form.exam_type) {
+      setForm(f => ({ ...f, exam_type: forceExamType,
+        target_score: suggestedScore ?? (EXAMS[forceExamType]?.defaultTarget || 7.0) }));
+    }
+  }, [forceExamType]);
+
   const minDate = new Date(); minDate.setDate(minDate.getDate() + 7);
 
   const handleSave = async () => {
@@ -986,19 +1396,30 @@ function TargetSetupForm({ existing, onSaved }) {
       <h3 className="font-black text-slate-900 text-lg mb-1">🎯 Set Your Target</h3>
       <p className="text-sm text-slate-400 mb-5">Tell us your exam goal and we'll create a personalised study plan.</p>
       <div className="space-y-4">
-        <div>
-          <label className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-1.5 block">Exam Type</label>
-          <div className="grid grid-cols-2 gap-2">
-            {Object.entries(EXAMS).map(([key, ex]) => (
-              <button key={key} onClick={() => setForm(f => ({ ...f, exam_type: key, target_score: ex.defaultTarget }))}
-                className="flex items-center gap-2 p-2.5 rounded-xl border-2 text-left text-sm font-semibold transition"
-                style={{ borderColor: form.exam_type === key ? ex.color : '#e2e8f0', background: form.exam_type === key ? ex.color + '10' : '#fff', color: form.exam_type === key ? ex.color : '#64748b' }}>
-                <span>{ex.icon}</span>
-                <span className="truncate text-xs">{ex.label.split(' (')[0]}</span>
-              </button>
-            ))}
+        {/* Hide exam picker when exam type is locked from diagnostic */}
+        {!forceExamType ? (
+          <div>
+            <label className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-1.5 block">Exam Type</label>
+            <div className="grid grid-cols-2 gap-2">
+              {Object.entries(EXAMS).map(([key, ex]) => (
+                <button key={key} onClick={() => setForm(f => ({ ...f, exam_type: key, target_score: ex.defaultTarget }))}
+                  className="flex items-center gap-2 p-2.5 rounded-xl border-2 text-left text-sm font-semibold transition"
+                  style={{ borderColor: form.exam_type === key ? ex.color : '#e2e8f0', background: form.exam_type === key ? ex.color + '10' : '#fff', color: form.exam_type === key ? ex.color : '#64748b' }}>
+                  <span>{ex.icon}</span>
+                  <span className="truncate text-xs">{ex.label.split(' (')[0]}</span>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-2 p-3 rounded-xl border border-slate-200 bg-slate-50">
+            <span className="text-xl">{def.icon}</span>
+            <div>
+              <p className="text-sm font-black text-slate-900">{def.label}</p>
+              <p className="text-xs text-slate-400">Exam selected from diagnostic</p>
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-1.5 block">Target {def.scoreLabel}</label>
@@ -1138,7 +1559,7 @@ export default function StudentProgress({ initialTab = 'plan', accent = '#1e40af
       {tab === 'plan' && (
         <div>
           {(!target || editTarget) ? (
-            <TargetSetupForm existing={target} onSaved={(saved) => { setEditTarget(false); loadProgress(); }} />
+            <DiagnosticWizard existing={target} onSaved={() => { setEditTarget(false); loadProgress(); }} />
           ) : (
             <StudyPlan target={target} testScores={progress?.testScores || []} enrolledCourses={progress?.enrolledCourses || []} />
           )}

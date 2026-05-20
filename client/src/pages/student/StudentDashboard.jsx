@@ -4,6 +4,7 @@ import { api } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
 import DashLayout, { NavItem } from '../../components/DashLayout';
 import StudentProgress from './StudentProgress';
+import CourseDetailModal from '../../components/CourseDetailModal';
 
 const fmt = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 const catIcons  = { IELTS:'📝', PTE:'🖥️', TOEFL:'🌐', GERMAN:'🇩🇪', FRENCH:'🇫🇷', SPOKEN_ENGLISH:'🗣️', OTHER:'📚' };
@@ -27,7 +28,7 @@ function loadRazorpayScript() {
 }
 
 // ── COURSE CATALOG ──────────────────────────────────────────
-function CourseCatalog({ accent, user, onEnrolled }) {
+function CourseCatalog({ accent, user, onEnrolled, focusCourseId }) {
   const [courses, setCourses]     = useState([]);
   const [enrollments, setEnrollments] = useState({}); // map: course_id → enrollment obj
   const [loading, setLoading]     = useState(true);
@@ -35,6 +36,7 @@ function CourseCatalog({ accent, user, onEnrolled }) {
   const [coupon, setCoupon]       = useState('');
   const [msg, setMsg]             = useState('');
   const [filter, setFilter]       = useState('ALL');
+  const [detailCourseId, setDetailCourseId] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -95,7 +97,8 @@ function CourseCatalog({ accent, user, onEnrolled }) {
   };
 
   const categories = ['ALL', ...new Set(courses.map(c => c.category))];
-  const visible = filter === 'ALL' ? courses : courses.filter(c => c.category === filter);
+  const baseVisible = filter === 'ALL' ? courses : courses.filter(c => c.category === filter);
+  const visible = focusCourseId ? courses.filter(c => c.id === focusCourseId) : baseVisible;
 
   if (loading) return <div className="text-slate-400 text-sm">Loading courses...</div>;
 
@@ -103,8 +106,17 @@ function CourseCatalog({ accent, user, onEnrolled }) {
     <div>
       <div className="flex items-center justify-between mb-5">
         <div>
-          <h2 className="text-xl font-black text-slate-900">Course Catalog 🎯</h2>
-          <p className="text-xs text-slate-400 mt-0.5">Pick a course and start your journey</p>
+          {focusCourseId ? (
+            <>
+              <h2 className="text-xl font-black text-slate-900">Enroll in Course 🎓</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Complete your enrollment to get full access</p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-xl font-black text-slate-900">Course Catalog 🎯</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Pick a course and start your journey</p>
+            </>
+          )}
         </div>
         <input
           className="border border-slate-200 rounded-xl px-3 py-2 text-sm w-36 focus:outline-none focus:ring-2"
@@ -121,8 +133,8 @@ function CourseCatalog({ accent, user, onEnrolled }) {
         </div>
       )}
 
-      {/* Category filter */}
-      <div className="flex gap-2 mb-5 flex-wrap">
+      {/* Category filter — hidden when focused on a single course */}
+      {!focusCourseId && <div className="flex gap-2 mb-5 flex-wrap">
         {categories.map(cat => (
           <button key={cat} onClick={() => setFilter(cat)}
             className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${filter === cat ? 'text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
@@ -130,7 +142,7 @@ function CourseCatalog({ accent, user, onEnrolled }) {
             {catIcons[cat] || ''} {cat.replace('_', ' ')}
           </button>
         ))}
-      </div>
+      </div>}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {visible.map(course => {
@@ -167,28 +179,41 @@ function CourseCatalog({ accent, user, onEnrolled }) {
                   {coupon && <div className="text-xs text-emerald-600 font-semibold bg-emerald-50 px-2 py-1 rounded-lg">🎟️ Coupon ready</div>}
                 </div>
                 {isPending ? (
-                  <PayNowFromCard
-                    enrollment={{ ...enr, course_title: course.title, fee_paid: course.price }}
-                    accent={color}
-                    onSuccess={() => setEnrollments(prev => ({ ...prev, [course.id]: { ...prev[course.id], payment_status: 'paid' } }))}
-                    label="🔓 Complete Payment to Unlock"
-                  />
+                  <div className="space-y-2">
+                    <PayNowFromCard
+                      enrollment={{ ...enr, course_title: course.title, fee_paid: course.price }}
+                      accent={color}
+                      onSuccess={() => setEnrollments(prev => ({ ...prev, [course.id]: { ...prev[course.id], payment_status: 'paid' } }))}
+                      label="🔓 Complete Payment to Unlock"
+                    />
+                    <button onClick={() => setDetailCourseId(course.id)}
+                      className="w-full py-2 rounded-xl text-xs font-semibold border border-slate-200 text-slate-500 hover:bg-slate-50 transition">
+                      📋 View Curriculum
+                    </button>
+                  </div>
                 ) : isPaid ? (
                   <div className="space-y-2">
                     <div className="w-full py-2.5 rounded-2xl text-sm text-center font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
                       ✅ Purchased — learning unlocked
                     </div>
-                    <button onClick={() => handlePurchase(course)} disabled={buying === course.id}
-                      className="w-full py-2 rounded-xl text-xs font-semibold border border-slate-200 text-slate-500 hover:bg-slate-50 transition disabled:opacity-50">
-                      {buying === course.id ? 'Processing...' : `🔄 Purchase Again`}
+                    <button onClick={() => setDetailCourseId(course.id)}
+                      className="w-full py-2 rounded-xl text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
+                      📋 View Full Curriculum
                     </button>
                   </div>
                 ) : (
-                  <button onClick={() => handlePurchase(course)} disabled={buying === course.id}
-                    className="w-full py-3 text-white font-black rounded-2xl text-sm transition hover:opacity-90 disabled:opacity-50 shadow-sm"
-                    style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)` }}>
-                    {buying === course.id ? '⏳ Processing...' : `🚀 Enroll Now — ${fmt(course.price)}`}
-                  </button>
+                  <div className="space-y-2">
+                    <button onClick={() => handlePurchase(course)} disabled={buying === course.id}
+                      className="w-full py-3 text-white font-black rounded-2xl text-sm transition hover:opacity-90 disabled:opacity-50 shadow-sm"
+                      style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)` }}>
+                      {buying === course.id ? '⏳ Processing...' : `🚀 Enroll Now — ${fmt(course.price)}`}
+                    </button>
+                    <button onClick={() => setDetailCourseId(course.id)}
+                      className="w-full py-2 rounded-xl text-xs font-bold border-2 transition hover:shadow-sm"
+                      style={{ borderColor: color + '40', color: color, background: color + '08' }}>
+                      📋 View Curriculum & Buy by Module
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -202,6 +227,18 @@ function CourseCatalog({ accent, user, onEnrolled }) {
           <p className="font-semibold">No courses in this category yet</p>
         </div>
       )}
+
+      {/* Course Detail Modal */}
+      <CourseDetailModal
+        courseId={detailCourseId}
+        open={!!detailCourseId}
+        onClose={() => setDetailCourseId(null)}
+        accent={accent}
+        onEnrolled={() => {
+          setDetailCourseId(null);
+          onEnrolled?.();
+        }}
+      />
     </div>
   );
 }
@@ -1252,13 +1289,15 @@ export default function StudentDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [section, setSection] = useState('dashboard');
+  const [focusCourseId, setFocusCourseId] = useState(null);
   const [enrollments, setEnrollments] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Support navigation from LiveClassRoom paywall: navigate('/student', { state: { tab: 'catalog' } })
+  // Support navigation from LiveClassRoom paywall: navigate('/student', { state: { tab: 'catalog', course_id: X } })
   useEffect(() => {
     const state = window.history.state?.usr;
     if (state?.tab) setSection(state.tab);
+    if (state?.course_id) setFocusCourseId(state.course_id);
   }, []);
 
   const loadEnrollments = useCallback(() => {
@@ -1278,9 +1317,15 @@ export default function StudentDashboard() {
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-400">Loading...</div>;
 
+  // Clear course focus when switching away from catalog manually
+  const handleSetSection = (s) => {
+    if (s !== 'catalog') setFocusCourseId(null);
+    setSection(s);
+  };
+
   const panels = {
-    dashboard:   <Dashboard enrollments={enrollments} accent={accent} user={enrichedUser} onNavigate={setSection} />,
-    catalog:     <CourseCatalog accent={accent} user={enrichedUser} onEnrolled={loadEnrollments} />,
+    dashboard:   <Dashboard enrollments={enrollments} accent={accent} user={enrichedUser} onNavigate={handleSetSection} />,
+    catalog:     <CourseCatalog accent={accent} user={enrichedUser} onEnrolled={loadEnrollments} focusCourseId={focusCourseId} />,
     batches:     <BatchBrowser accent={accent} user={enrichedUser} />,
     liveclasses: <StudentLiveClasses accent={accent} />,
     progress:    <StudentProgress accent={accent} initialTab="plan" />,
@@ -1312,14 +1357,14 @@ export default function StudentDashboard() {
         ),
         items: (
           <>
-            <NavItem active={section==='dashboard'}   onClick={() => setSection('dashboard')}   icon="🏠" label="My Courses"    accent="rgba(255,255,255,0.9)" />
-            <NavItem active={section==='catalog'}     onClick={() => setSection('catalog')}     icon="🛒" label="Buy Courses"   accent="rgba(255,255,255,0.9)" />
-            <NavItem active={section==='batches'}     onClick={() => setSection('batches')}     icon="📅" label="Book Batches"  accent="rgba(255,255,255,0.9)" />
-            <NavItem active={section==='liveclasses'} onClick={() => setSection('liveclasses')} icon="📺" label="Live Classes"  accent="rgba(255,255,255,0.9)" />
-            <NavItem active={section==='progress'}    onClick={() => setSection('progress')}    icon="📊" label="My Progress"   accent="rgba(255,255,255,0.9)" />
-            <NavItem active={section==='tests'}       onClick={() => setSection('tests')}       icon="📝" label="Tests & Mocks" accent="rgba(255,255,255,0.9)" />
-            <NavItem active={section==='payments'}    onClick={() => setSection('payments')}    icon="💳" label="Payments"      accent="rgba(255,255,255,0.9)" />
-            <NavItem active={section==='profile'}     onClick={() => setSection('profile')}     icon="👤" label="Profile"       accent="rgba(255,255,255,0.9)" />
+            <NavItem active={section==='dashboard'}   onClick={() => handleSetSection('dashboard')}   icon="🏠" label="My Courses"    accent="rgba(255,255,255,0.9)" />
+            <NavItem active={section==='catalog'}     onClick={() => handleSetSection('catalog')}     icon="🛒" label="Buy Courses"   accent="rgba(255,255,255,0.9)" />
+            <NavItem active={section==='batches'}     onClick={() => handleSetSection('batches')}     icon="📅" label="Book Batches"  accent="rgba(255,255,255,0.9)" />
+            <NavItem active={section==='liveclasses'} onClick={() => handleSetSection('liveclasses')} icon="📺" label="Live Classes"  accent="rgba(255,255,255,0.9)" />
+            <NavItem active={section==='progress'}    onClick={() => handleSetSection('progress')}    icon="📊" label="My Progress"   accent="rgba(255,255,255,0.9)" />
+            <NavItem active={section==='tests'}       onClick={() => handleSetSection('tests')}       icon="📝" label="Tests & Mocks" accent="rgba(255,255,255,0.9)" />
+            <NavItem active={section==='payments'}    onClick={() => handleSetSection('payments')}    icon="💳" label="Payments"      accent="rgba(255,255,255,0.9)" />
+            <NavItem active={section==='profile'}     onClick={() => handleSetSection('profile')}     icon="👤" label="Profile"       accent="rgba(255,255,255,0.9)" />
           </>
         )
       }}
