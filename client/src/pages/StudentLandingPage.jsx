@@ -394,11 +394,11 @@ export default function StudentLandingPage({ tenantSlug }) {
       {/* ── COURSES ────────────────────────────────────────────── */}
       <section ref={coursesRef} className="py-20 px-4 bg-white scroll-mt-16">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-12">
+          <div className="text-center mb-10">
             <span className="text-xs font-black uppercase tracking-widest px-3 py-1.5 rounded-full mb-4 inline-block"
               style={{ background: brandColor + '18', color: brandColor }}>Our Courses</span>
             <h2 className="text-3xl sm:text-4xl font-black text-slate-900 mt-2">Choose Your Path to Success</h2>
-            <p className="text-slate-500 mt-3 max-w-lg mx-auto">Industry-leading preparation for every major exam and language goal.</p>
+            <p className="text-slate-500 mt-3 max-w-lg mx-auto">Expert preparation for every major exam and language goal.</p>
           </div>
 
           {/* Category filter pills */}
@@ -418,35 +418,46 @@ export default function StudentLandingPage({ tenantSlug }) {
 
           {/* Course cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredCourses.length === 0 && (
-              <div className="col-span-3 text-center py-16 text-slate-400">
-                <div className="text-4xl mb-3">📚</div>
-                <p className="font-semibold">Courses coming soon. Check back shortly!</p>
+            {filteredCourses.length === 0 ? (
+              <div className="col-span-3 text-center py-16 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                <div className="text-5xl mb-3">📚</div>
+                <p className="font-black text-slate-700 text-lg">Courses coming soon!</p>
+                <p className="text-slate-400 text-sm mt-1">Check back shortly or sign up to be notified.</p>
+                <button onClick={() => { setAuthMode('signup'); setAuthOpen(true); }}
+                  className="mt-5 px-6 py-2.5 rounded-xl text-sm font-bold text-white hover:opacity-90 transition-all"
+                  style={{ background: brandColor }}>
+                  Notify Me →
+                </button>
               </div>
-            )}
-            {filteredCourses.map(course => (
+            ) : filteredCourses.map(course => (
               <div key={course.id}
                 className="group bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 overflow-hidden flex flex-col">
-                {/* Card color top bar */}
-                <div className="h-1.5 w-full" style={{ background: CAT_COLORS[course.category] || brandColor }} />
+                {/* Thumbnail or color bar */}
+                {course.thumbnail_url ? (
+                  <div className="h-36 bg-slate-100 overflow-hidden">
+                    <img src={course.thumbnail_url} alt={course.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                  </div>
+                ) : (
+                  <div className="h-2 w-full" style={{ background: `linear-gradient(90deg, ${CAT_COLORS[course.category] || brandColor}, ${brandColor})` }} />
+                )}
                 <div className="p-5 flex flex-col flex-1">
-                  {/* Category badge */}
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-xs font-black px-2.5 py-1 rounded-full"
                       style={{ background: (CAT_COLORS[course.category] || brandColor) + '18', color: CAT_COLORS[course.category] || brandColor }}>
                       {CAT_ICONS[course.category] || '📚'} {course.category}
                     </span>
-                    {course.duration_weeks && (
-                      <span className="text-xs text-slate-400 font-semibold">{course.duration_weeks}w</span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {course.is_live_class ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-600">🔴 Live</span> : null}
+                      {course.duration_weeks ? <span className="text-xs text-slate-400 font-semibold">{course.duration_weeks}w</span> : null}
+                    </div>
                   </div>
                   <h3 className="font-black text-slate-900 text-base mb-2 group-hover:text-blue-700 transition-colors leading-snug">
                     {course.title}
                   </h3>
                   {course.description && (
-                    <p className="text-xs text-slate-500 leading-relaxed flex-1 line-clamp-3">{course.description}</p>
+                    <p className="text-xs text-slate-500 leading-relaxed flex-1 line-clamp-3 mb-3">{course.description}</p>
                   )}
-                  <div className="mt-4 pt-4 border-t border-slate-100">
+                  <div className="mt-auto pt-4 border-t border-slate-100">
                     <div className="flex items-center justify-between mb-3">
                       <div>
                         <div className="text-xl font-black text-slate-900">{fmt(course.price)}</div>
@@ -459,9 +470,9 @@ export default function StudentLandingPage({ tenantSlug }) {
                       </button>
                     </div>
                     <button onClick={() => openDetail(course.id)}
-                      className="w-full py-2 rounded-xl text-xs font-bold border-2 transition-all hover:shadow-sm"
+                      className="w-full py-2 rounded-xl text-xs font-bold border-2 transition-all hover:shadow-sm flex items-center justify-center gap-1.5"
                       style={{ borderColor: brandColor + '40', color: brandColor, background: brandColor + '08' }}>
-                      📋 View Curriculum & Buy by Module
+                      📋 View Details & Curriculum
                     </button>
                   </div>
                 </div>
@@ -471,74 +482,156 @@ export default function StudentLandingPage({ tenantSlug }) {
         </div>
       </section>
 
-      {/* ── ACTIVE BATCHES ─────────────────────────────────────── */}
-      {batches.length > 0 && (
-        <section ref={batchesRef} className="py-20 px-4 scroll-mt-16"
-          style={{ background: `linear-gradient(135deg, ${brandColor}08, ${brandColor}04, #f8fafc)` }}>
-          <div className="max-w-6xl mx-auto">
-            <div className="text-center mb-12">
-              <span className="text-xs font-black uppercase tracking-widest px-3 py-1.5 rounded-full mb-4 inline-block"
-                style={{ background: brandColor + '18', color: brandColor }}>Running Batches</span>
-              <h2 className="text-3xl sm:text-4xl font-black text-slate-900 mt-2">Join an Active Batch</h2>
-              <p className="text-slate-500 mt-3">Live, structured programs with expert faculty and cohort learning.</p>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {batches.map(b => (
-                <div key={b.id}
-                  className="bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 p-5 flex flex-col">
-                  {/* Category chip */}
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-[11px] font-black px-2.5 py-1 rounded-full"
-                      style={{ background: (CAT_COLORS[b.category] || brandColor) + '18', color: CAT_COLORS[b.category] || brandColor }}>
-                      {CAT_ICONS[b.category] || '📚'} {b.category}
-                    </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">● Live</span>
+      {/* ── BATCHES (Running + Upcoming split) ─────────────────── */}
+      {(() => {
+        const today = new Date(); today.setHours(0,0,0,0);
+        const running  = batches.filter(b => !b.start_date || new Date(b.start_date) <= today);
+        const upcoming = batches.filter(b => b.start_date && new Date(b.start_date) > today);
+
+        const BatchCard = ({ b, isUpcoming }) => {
+          const timeStr = (b.class_time || b.schedule_time || '').slice(0,5);
+          const seatPct = b.max_students > 0 ? Math.min(100, Math.round((b.enrolled_count||0)/b.max_students*100)) : 0;
+          return (
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 p-5 flex flex-col">
+              <div className="flex items-start justify-between mb-3">
+                <span className="text-[11px] font-black px-2.5 py-1 rounded-full"
+                  style={{ background: (CAT_COLORS[b.category] || brandColor) + '18', color: CAT_COLORS[b.category] || brandColor }}>
+                  {CAT_ICONS[b.category] || '📚'} {b.category || 'Course'}
+                </span>
+                {isUpcoming
+                  ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">🗓 Upcoming</span>
+                  : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">● Running</span>
+                }
+              </div>
+              <h3 className="font-black text-slate-900 text-base mb-0.5 leading-snug">{b.name}</h3>
+              {b.course_title && <p className="text-xs font-semibold text-slate-500 mb-2">{b.course_title}</p>}
+              {b.description && <p className="text-xs text-slate-400 mb-3 line-clamp-2">{b.description}</p>}
+
+              <div className="space-y-1.5 mb-4 flex-1">
+                {b.start_date && (
+                  <div className="flex items-center gap-2 text-xs text-slate-600">
+                    <span>🗓</span>
+                    <span>{fmtDate(b.start_date)}{b.end_date ? ` — ${fmtDate(b.end_date)}` : ''}</span>
                   </div>
-                  <h3 className="font-black text-slate-900 text-base mb-1 leading-snug">{b.name}</h3>
-                  <p className="text-xs text-slate-500 font-medium mb-3">{b.course_title}</p>
-                  {b.description && <p className="text-xs text-slate-400 mb-3 line-clamp-2">{b.description}</p>}
-                  <div className="space-y-1.5 mb-4">
-                    {[
-                      ['🗓', `${fmtDate(b.start_date)} — ${b.end_date ? fmtDate(b.end_date) : 'Ongoing'}`],
-                      ['⏰', `${b.class_time || '—'} · ${b.duration_minutes || 60} min`],
-                      ['📆', parseDays(b.schedule_days).join(' · ')],
-                      b.trainer_name && ['👨‍🏫', b.trainer_name],
-                      b.max_students && ['👥', `${b.enrolled_count || 0} / ${b.max_students} seats`],
-                    ].filter(Boolean).map(([icon, val]) => (
-                      <div key={icon} className="flex items-center gap-2 text-xs text-slate-600">
-                        <span>{icon}</span><span>{val}</span>
-                      </div>
-                    ))}
+                )}
+                {timeStr && (
+                  <div className="flex items-center gap-2 text-xs text-slate-600">
+                    <span>⏰</span>
+                    <span>{timeStr} · {b.duration_minutes || 60} min/session</span>
                   </div>
-                  <div className="mt-auto flex items-center justify-between pt-4 border-t border-slate-100">
-                    <div>
-                      <div className="text-lg font-black text-slate-900">{fmt(b.course_price)}</div>
-                      <div className="text-[10px] text-slate-400 font-semibold">course fee</div>
-                    </div>
-                    <button onClick={() => openEnroll({ title: b.name })}
-                      className="px-4 py-2 rounded-xl text-xs font-black text-white hover:opacity-90 hover:shadow-md transition-all"
-                      style={{ background: brandColor }}>
-                      Join Batch →
-                    </button>
+                )}
+                {b.schedule_days && (
+                  <div className="flex items-center gap-2 text-xs text-slate-600">
+                    <span>📆</span>
+                    <span>{parseDays(b.schedule_days).join(' · ')}</span>
                   </div>
-                  {/* Seats bar */}
-                  {b.max_students > 0 && (
-                    <div className="mt-3">
-                      <div className="flex justify-between text-[10px] text-slate-400 mb-1">
-                        <span>Seats filling</span>
-                        <span>{Math.round((b.enrolled_count||0)/b.max_students*100)}%</span>
-                      </div>
-                      <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100,Math.round((b.enrolled_count||0)/b.max_students*100))}%`, background: brandColor }} />
-                      </div>
-                    </div>
-                  )}
+                )}
+                {b.trainer_name && (
+                  <div className="flex items-center gap-2 text-xs text-slate-600">
+                    <span>👨‍🏫</span><span>{b.trainer_name}</span>
+                  </div>
+                )}
+                {b.max_students > 0 && (
+                  <div className="flex items-center gap-2 text-xs text-slate-600">
+                    <span>👥</span><span>{b.enrolled_count || 0} / {b.max_students} seats filled</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Seats progress bar */}
+              {b.max_students > 0 && (
+                <div className="mb-4">
+                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full transition-all"
+                      style={{ width: `${seatPct}%`, background: seatPct > 80 ? '#ef4444' : brandColor }} />
+                  </div>
+                  <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                    <span>{seatPct >= 80 ? '🔥 Almost full' : 'Seats available'}</span>
+                    <span>{seatPct}%</span>
+                  </div>
                 </div>
-              ))}
+              )}
+
+              <div className="mt-auto flex items-center justify-between pt-4 border-t border-slate-100 gap-2">
+                {b.course_price ? (
+                  <div>
+                    <div className="text-lg font-black text-slate-900">{fmt(b.course_price)}</div>
+                    <div className="text-[10px] text-slate-400 font-semibold">course fee</div>
+                  </div>
+                ) : <div />}
+                <div className="flex gap-2">
+                  {b.course_id && (
+                    <button onClick={() => openDetail(b.course_id)}
+                      className="px-3 py-2 rounded-xl text-xs font-bold border transition-all hover:shadow-sm"
+                      style={{ borderColor: brandColor + '40', color: brandColor, background: brandColor + '08' }}>
+                      Details
+                    </button>
+                  )}
+                  <button onClick={() => openEnroll({ title: b.name })}
+                    className="px-4 py-2 rounded-xl text-xs font-black text-white hover:opacity-90 hover:shadow-md transition-all"
+                    style={{ background: brandColor }}>
+                    {isUpcoming ? 'Pre-Enroll →' : 'Join →'}
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
-        </section>
-      )}
+          );
+        };
+
+        return (
+          <section ref={batchesRef} className="py-20 px-4 scroll-mt-16"
+            style={{ background: `linear-gradient(135deg, ${brandColor}08, ${brandColor}04, #f8fafc)` }}>
+            <div className="max-w-6xl mx-auto">
+              <div className="text-center mb-12">
+                <span className="text-xs font-black uppercase tracking-widest px-3 py-1.5 rounded-full mb-4 inline-block"
+                  style={{ background: brandColor + '18', color: brandColor }}>Batches</span>
+                <h2 className="text-3xl sm:text-4xl font-black text-slate-900 mt-2">Join a Batch</h2>
+                <p className="text-slate-500 mt-3">Live, structured programs with expert faculty and cohort learning.</p>
+              </div>
+
+              {/* Running batches */}
+              {running.length > 0 && (
+                <div className="mb-12">
+                  <div className="flex items-center gap-3 mb-5">
+                    <span className="text-sm font-black text-slate-900">🟢 Currently Running</span>
+                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700">{running.length} batch{running.length > 1 ? 'es' : ''}</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {running.map(b => <BatchCard key={b.id} b={b} isUpcoming={false} />)}
+                  </div>
+                </div>
+              )}
+
+              {/* Upcoming batches */}
+              {upcoming.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-3 mb-5">
+                    <span className="text-sm font-black text-slate-900">🗓 Upcoming Batches</span>
+                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700">{upcoming.length} batch{upcoming.length > 1 ? 'es' : ''} starting soon</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {upcoming.map(b => <BatchCard key={b.id} b={b} isUpcoming={true} />)}
+                  </div>
+                </div>
+              )}
+
+              {/* Empty state */}
+              {batches.length === 0 && (
+                <div className="text-center py-16 bg-white rounded-2xl border border-dashed border-slate-200">
+                  <div className="text-5xl mb-3">🗓</div>
+                  <p className="font-black text-slate-700 text-lg">New batch programs are being scheduled.</p>
+                  <p className="text-slate-400 text-sm mt-1">Sign up to get notified when enrollment opens.</p>
+                  <button onClick={() => { setAuthMode('signup'); setAuthOpen(true); }}
+                    className="mt-5 px-6 py-2.5 rounded-xl text-sm font-bold text-white hover:opacity-90 transition-all"
+                    style={{ background: brandColor }}>
+                    🔔 Get Notified →
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
+        );
+      })()}
 
       {/* ── UPCOMING LIVE CLASSES ───────────────────────────────── */}
       {liveClasses.length > 0 && (

@@ -476,10 +476,10 @@ app.get('/api/courses', async (req, res) => {
 });
 
 app.post('/api/admin/courses', authMiddleware(['super_admin']), async (req, res) => {
-  const { title, category, description, price, duration_weeks } = req.body;
+  const { title, category, description, price, duration_weeks, thumbnail_url, is_live_class } = req.body;
   const [result] = await getPool().query(
-    'INSERT INTO courses (title, category, description, price, duration_weeks) VALUES (?,?,?,?,?)',
-    [title, category, description, price, duration_weeks || 12]
+    'INSERT INTO courses (title, category, description, price, duration_weeks, thumbnail_url, is_live_class, is_active) VALUES (?,?,?,?,?,?,?,1)',
+    [title, category, description, price, duration_weeks || 12, thumbnail_url || null, is_live_class ? 1 : 0]
   );
   res.json({ id: result.insertId });
 });
@@ -877,9 +877,11 @@ app.get('/api/tenant/:slug', async (req, res) => {
 // ─── PUBLIC LANDING PAGE APIs (no auth) ───────────────────────
 app.get('/api/public/:slug/courses', async (req, res) => {
   try {
-    // Return all active courses (courses are platform-wide, not per-agency)
+    // Show courses unless explicitly deactivated (is_active=0).
+    // Courses created before the is_active column existed will have NULL → still show.
     const [rows] = await getPool().query(
-      'SELECT id, title, category, description, price, duration_weeks, thumbnail_url, is_live_class FROM courses WHERE is_active=1 ORDER BY category, title'
+      `SELECT id, title, category, description, price, duration_weeks, thumbnail_url, is_live_class
+       FROM courses WHERE COALESCE(is_active,1)=1 ORDER BY category, title`
     );
     res.json(rows);
   } catch (e) { res.json([]); }
@@ -890,18 +892,19 @@ app.get('/api/public/:slug/batches', async (req, res) => {
     const [[agency]] = await getPool().query('SELECT id FROM agencies WHERE slug=?', [req.params.slug]);
     if (!agency) return res.json([]);
     const [rows] = await getPool().query(
-      `SELECT b.id, b.course_id, b.name, b.start_date, b.end_date,
+      `SELECT b.id, b.course_id, b.name, b.description, b.start_date, b.end_date,
         b.schedule_days, b.schedule_time, b.class_time, b.duration_minutes,
         b.max_students, b.jitsi_room_prefix, b.jitsi_meeting_id,
-        c.title as course_title, c.category,
+        c.title as course_title, c.category, c.price as course_price,
+        c.description as course_description,
         u.name as trainer_name,
-        COUNT(be.id) as enrolled
+        COUNT(be.id) as enrolled_count
        FROM batches b
        LEFT JOIN courses c ON b.course_id = c.id
        LEFT JOIN users u ON b.trainer_id = u.id
        LEFT JOIN batch_enrollments be ON b.id = be.batch_id AND be.status='active'
        WHERE b.agency_id=? AND b.status='active'
-       GROUP BY b.id ORDER BY b.start_date ASC LIMIT 20`,
+       GROUP BY b.id ORDER BY b.start_date ASC LIMIT 50`,
       [agency.id]
     );
     res.json(rows);
